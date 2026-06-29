@@ -1,0 +1,41 @@
+# Override para staging/produção — use com:
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+
+services:
+  backend:
+    environment:
+      - AUTH_ENABLED=${AUTH_ENABLED:-false}
+      - TRUST_PROXY_HEADERS=${TRUST_PROXY_HEADERS:-false}
+      - PUBLIC_BASE_URL=${PUBLIC_BASE_URL:-http://localhost:8000}
+      - OIDC_ENABLED=${OIDC_ENABLED:-false}
+      - OIDC_ISSUER_URL=${OIDC_ISSUER_URL:-}
+      - OIDC_CLIENT_ID=${OIDC_CLIENT_ID:-}
+      - OIDC_CLIENT_SECRET=${OIDC_CLIENT_SECRET:-}
+      - OIDC_REDIRECT_URI=${OIDC_REDIRECT_URI:-http://localhost:8000/api/v1/auth/oidc/callback}
+      - OIDC_FRONTEND_REDIRECT=${OIDC_FRONTEND_REDIRECT:-http://localhost:3000/}
+      - AUTH_PASSWORD_LOGIN_ENABLED=${AUTH_PASSWORD_LOGIN_ENABLED:-true}
+      - AUTH_JWT_SECRET=${AUTH_JWT_SECRET:-sinidu-trocar-secret-minimo-32-caracteres}
+      - AUTH_ADMIN_PASSWORD=${AUTH_ADMIN_PASSWORD:-admin}
+      - AUTH_GESTOR_PASSWORD=${AUTH_GESTOR_PASSWORD:-gestor}
+      - AUTH_LEITOR_PASSWORD=${AUTH_LEITOR_PASSWORD:-leitor}
+      - MULTI_TENANT_ENABLED=${MULTI_TENANT_ENABLED:-false}
+      - AUTH_GESTOR_TENANT_UF=${AUTH_GESTOR_TENANT_UF:-PE}
+      - AUTH_LEITOR_TENANT_UF=${AUTH_LEITOR_TENANT_UF:-PE}
+      - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:3000}
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health/ready')\""]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 120s
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.prod
+    environment:
+      - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-https://localhost}
+    ports:
+      - "3000:3000"
+    command: ["node", "server.js"]
+    volumes: !reset []

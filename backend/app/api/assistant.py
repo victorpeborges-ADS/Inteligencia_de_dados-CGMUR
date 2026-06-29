@@ -1,0 +1,132 @@
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from sqlalchemy.orm import Session
+from app.db import get_db
+from app.models import Municipio
+from app.schemas import (
+    AIProviderOption,
+    AIProvidersResponse,
+    AIProvidersStatusRequest,
+    AIProviderTestRequest,
+    AIProviderTestResponse,
+    ChatRequest,
+    ChatResponse,
+    CasoSucessoOut,
+    MunicipalAssistantContext,
+    MunicipalDataSource,
+    RagSource,
+)
+from app.services.municipal_assistant_context import build_municipal_assistant_context
+from app.services.semantic_search import SuccessCaseSearchService
+from rag.chat import rag_assistant
+from rag.providers.registry import (
+    default_chat_provider_id,
+    list_chat_providers,
+    test_chat_provider,
+)
+from app.security.municipio_access import get_accessible_municipio
+from typing import List
+import json
+from shapely.geometry import shape
+
+router = APIRouter()
+
+
+def municipality_focus(db: Session, muni: Municipio):
+    geom = shape(json.loads(db.scalar(muni.geom.ST_AsGeoJSON())))
+    centroid = geom.centroid
+    return [round(centroid.y, 5), round(centroid.x, 5)]
+
+
+@router.get("/providers", response_model=AIProvidersResponse)
+def list_ai_providers():
+    """Lista provedores de LLM (disponibilidade via env/server)."""
+    providers = [AIProviderOption(**p.__dict__) for p in list_chat_providers()]
+    return AIProvidersResponse(
+        default_provider=default_chat_provider_id(),
+        providers=providers,
+    )
+
+
+@router.post("/providers/status", response_model=AIProvidersResponse)
+def providers_status(payload: AIProvidersStatusRequest):
+    """Atualiza disponibilidade considerando API keys informadas pelo usuário."""
+    providers = [AIProviderOption(**p.__dict__) for p in list_chat_providers(payload.api_keys)]
+    return AIProvidersResponse(
+        default_provider=default_chat_provider_id(),
+        providers=providers,
+    )
+
+
+@router.post("/providers/test", response_model=AIProviderTestResponse)
+def test_ai_provider(payload: AIProviderTestRequest):
+    """Testa conexão instantânea com o LLM usando API key do usuário."""
+    result = test_chat_provider(
+        payload.ai_provider,
+        api_key=payload.ai_api_key,
+        model=payload.ai_model,
+    )
+    return AIProviderTestResponse(**result)
+
+
+@router.get("/municipal/{codigo_ibge}/context", response_model=MunicipalAssistantContext)
+def get_municipal_assistant_context(codigo_ibge: str, request: Request, db: Session = Depends(get_db)):
+    muni = get_accessible_municipio(db, codigo_ibge, request=request)
+    return build_municipal_assistant_context(db, muni)
+
+
+@router.get("/municipal/{codigo_ibge}/suggestions")
+def get_municipal_suggestions(codigo_ibge: str, request: Request, db: Session = Depends(get_db)):
+    muni = get_accessible_municipio(db, codigo_ibge, request=request)
+    ctx = build_municipal_assistant_context(db, muni)
+    return {"suggestions": ctx.get("suggested_questions") or []}
+
+
+@router.post("/chat", response_model=ChatResponse)
+def assistant_chat(payload: ChatRequest, request: Request, db: Session = Depends(get_db)):
+    muni = get_accessible_municipio(db, payload.codigo_ibge, request=request)
+    history = [{"role": h.role, "content": h.content} for h in payload.history]
+    result = rag_assistant.chat(
+        db,
+        muni,
+        payload.message,
+        history,
+        ai_provider=payload.ai_provider,
+        ai_model=payload.ai_model,
+        ai_api_key=payload.ai_api_key,
+    )
+
+    coords = result.get("coordinates")
+    if result.get("suggested_layer") and not coords:
+        coords = municipality_focus(db, muni)
+
+    rag_sources = [RagSource(**src) for src in result.get("rag_sources", [])]
+    municipal_sources = [MunicipalDataSource(**src) for src in result.get("municipal_sources", [])]
+
+    return ChatResponse(
+        response=result["response"],
+        suggested_layer=result.get("suggested_layer"),
+        coordinates=coords,
+        zoom=result.get("zoom", 13),
+        source_url=result.get("source_url"),
+        rag_sources=rag_sources,
+        municipal_sources=municipal_sources,
+        suggested_questions=result.get("suggested_questions") or [],
+        response_time_ms=result.get("response_time_ms"),
+        ai_provider=result.get("ai_provider"),
+        ai_model=result.get("ai_model"),
+    )
+
+
+@router.get("/eval/retrieval")
+def rag_retrieval_eval(db: Session = Depends(get_db)):
+    """Avaliação de retrieval RAG contra dataset fixo (sem LLM)."""
+    from rag.eval.runner import run_retrieval_eval
+
+    return run_retrieval_eval(db)
+
+
+@router.get("/cases/search", response_model=List[CasoSucessoOut])
+def search_success_cases(q: str = Query(..., min_length=2), db: Session = Depends(get_db)):
+    """Busca semântica de casos de sucesso em adaptação municipal."""
+    results = SuccessCaseSearchService.search(db, q)
+    return results

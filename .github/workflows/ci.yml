@@ -1,0 +1,114 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+jobs:
+  backend-tests:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgis/postgis:15-3.4
+        env:
+          POSTGRES_USER: sinidu_user
+          POSTGRES_PASSWORD: sinidu_pass
+          POSTGRES_DB: sinidu_db
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U sinidu_user -d sinidu_db"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Install dependencies
+        working-directory: backend
+        run: |
+          pip install -r requirements.txt
+
+      - name: Run pytest (serviços críticos + cobertura ≥60%)
+        working-directory: backend
+        env:
+          DATABASE_URL: postgresql://sinidu_user:sinidu_pass@localhost:5432/sinidu_db
+          AUTH_ENABLED: "false"
+        run: |
+          pytest tests/ \
+            --ignore=tests/test_flood_ml.py \
+            --ignore=tests/test_rag.py \
+            -q --tb=short \
+            --cov=app.data_connectors \
+            --cov=app.services.maturity_engine \
+            --cov=app.services.onboarding_engine \
+            --cov=app.services.postgis_backup \
+            --cov=app.observability \
+            --cov-report=term-missing:skip-covered \
+            --cov-fail-under=60
+
+      - name: Testes Fase 4 (tenant, OIDC, auditoria/SEI)
+        working-directory: backend
+        env:
+          DATABASE_URL: postgresql://sinidu_user:sinidu_pass@localhost:5432/sinidu_db
+          AUTH_ENABLED: "false"
+        run: |
+          pytest tests/test_tenant.py tests/test_oidc.py tests/test_audit_sei_export.py -q --tb=short
+
+      - name: Testes Fase 7/8 (jobs, catálogo, system)
+        working-directory: backend
+        env:
+          DATABASE_URL: postgresql://sinidu_user:sinidu_pass@localhost:5432/sinidu_db
+          AUTH_ENABLED: "false"
+        run: |
+          pytest tests/test_background_jobs.py tests/test_data_catalog_engine.py tests/test_system.py -q --tb=short --no-cov
+
+      - name: Testes Fase 9 (OSRM, batch, fontes externas)
+        working-directory: backend
+        env:
+          DATABASE_URL: postgresql://sinidu_user:sinidu_pass@localhost:5432/sinidu_db
+          AUTH_ENABLED: "false"
+        run: |
+          pytest tests/test_osrm_router.py tests/test_batch_export.py tests/test_external_sources_collector.py -q --tb=short --no-cov
+
+      - name: Smoke health + metrics
+        working-directory: backend
+        env:
+          DATABASE_URL: postgresql://sinidu_user:sinidu_pass@localhost:5432/sinidu_db
+          AUTH_ENABLED: "false"
+        run: |
+          python -c "
+          from fastapi.testclient import TestClient
+          from main import app
+          c = TestClient(app)
+          assert c.get('/health/live').status_code == 200
+          assert c.get('/metrics').status_code == 200
+          assert 'sinidu_http_requests_total' in c.get('/metrics').text
+          "
+
+  frontend-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "18"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install and build (standalone)
+        working-directory: frontend
+        env:
+          NEXT_PUBLIC_API_URL: http://localhost:8000
+          NEXT_TELEMETRY_DISABLED: "1"
+        run: |
+          npm ci
+          npm run build
+          test -f .next/standalone/server.js

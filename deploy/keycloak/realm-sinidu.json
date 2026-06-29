@@ -1,0 +1,124 @@
+{
+  "realm": "sinidu",
+  "enabled": true,
+  "sslRequired": "external",
+  "registrationAllowed": false,
+  "loginWithEmailAllowed": true,
+  "duplicateEmailsAllowed": false,
+  "resetPasswordAllowed": false,
+  "editUsernameAllowed": false,
+  "bruteForceProtected": true,
+  "roles": {
+    "realm": [
+      { "name": "sinidu-admin", "description": "Administrador Sinidu+Clima" },
+      { "name": "sinidu-gestor", "description": "Gestor municipal" },
+      { "name": "sinidu-leitor", "description": "Leitor" },
+      { "name": "default-roles-sinidu", "description": "Roles padrão", "composite": true }
+    ]
+  },
+  "groups": [
+    { "name": "sinidu-admin" },
+    { "name": "sinidu-gestor" },
+    { "name": "sinidu-leitor" }
+  ],
+  "users": [
+    {
+      "username": "admin.sinidu",
+      "enabled": true,
+      "emailVerified": true,
+      "firstName": "Admin",
+      "lastName": "Sinidu",
+      "email": "admin.sinidu@mcid.local",
+      "credentials": [{ "type": "password", "value": "admin", "temporary": false }],
+      "realmRoles": ["sinidu-admin"],
+      "groups": ["/sinidu-admin"]
+    },
+    {
+      "username": "gestor.pe",
+      "enabled": true,
+      "emailVerified": true,
+      "firstName": "Gestor",
+      "lastName": "PE",
+      "email": "gestor.pe@mcid.local",
+      "attributes": { "tenant_uf": ["PE"] },
+      "credentials": [{ "type": "password", "value": "gestor", "temporary": false }],
+      "realmRoles": ["sinidu-gestor"],
+      "groups": ["/sinidu-gestor"]
+    },
+    {
+      "username": "leitor.pe",
+      "enabled": true,
+      "emailVerified": true,
+      "firstName": "Leitor",
+      "lastName": "PE",
+      "email": "leitor.pe@mcid.local",
+      "attributes": { "tenant_uf": ["PE"] },
+      "credentials": [{ "type": "password", "value": "leitor", "temporary": false }],
+      "realmRoles": ["sinidu-leitor"],
+      "groups": ["/sinidu-leitor"]
+    }
+  ],
+  "clients": [
+    {
+      "clientId": "sinidu-clima",
+      "name": "Sinidu+Clima",
+      "enabled": true,
+      "publicClient": false,
+      "secret": "sinidu-local-secret-change-me",
+      "redirectUris": [
+        "http://localhost/*",
+        "https://localhost/*",
+        "http://localhost:8000/*",
+        "https://localhost/api/v1/auth/oidc/callback",
+        "http://localhost/api/v1/auth/oidc/callback"
+      ],
+      "webOrigins": ["+"],
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "fullScopeAllowed": true,
+      "protocol": "openid-connect",
+      "defaultClientScopes": ["web-origins", "acr", "profile", "roles", "email"],
+      "optionalClientScopes": ["address", "phone", "offline_access", "microprofile-jwt", "sinidu-groups"]
+    }
+  ],
+  "clientScopes": [
+    {
+      "name": "sinidu-groups",
+      "description": "Grupos Sinidu no token",
+      "protocol": "openid-connect",
+      "attributes": { "include.in.token.scope": "true", "display.on.consent.screen": "false" },
+      "protocolMappers": [
+        {
+          "name": "groups",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-group-membership-mapper",
+          "consentRequired": false,
+          "config": {
+            "full.path": "false",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "claim.name": "groups",
+            "userinfo.token.claim": "true"
+          }
+        },
+        {
+          "name": "tenant_uf",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-attribute-mapper",
+          "consentRequired": false,
+          "config": {
+            "user.attribute": "tenant_uf",
+            "claim.name": "tenant_uf",
+            "jsonType.label": "String",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "userinfo.token.claim": "true"
+          }
+        }
+      ]
+    }
+  ],
+  "defaultDefaultClientScopes": ["role_list", "profile", "email", "roles", "web-origins", "acr"],
+  "defaultOptionalClientScopes": ["offline_access", "address", "phone", "microprofile-jwt", "sinidu-groups"]
+}

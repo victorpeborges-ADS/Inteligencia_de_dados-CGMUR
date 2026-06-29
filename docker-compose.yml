@@ -1,0 +1,156 @@
+version: '3.8'
+
+services:
+  db:
+    build:
+      context: ./docker/postgres
+      dockerfile: Dockerfile
+    container_name: sinidu_db
+    environment:
+      - POSTGRES_USER=sinidu_user
+      - POSTGRES_PASSWORD=sinidu_pass
+      - POSTGRES_DB=sinidu_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sinidu_user -d sinidu_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  ollama:
+    image: ollama/ollama:latest
+    container_name: sinidu_ollama
+    volumes:
+      - ./ollama_data:/root/.ollama
+      - ./docker/ollama/entrypoint.sh:/entrypoint.sh:ro
+    entrypoint: ["/bin/sh", "/entrypoint.sh"]
+    ports:
+      - "11434:11434"
+    mem_limit: 12g
+    healthcheck:
+      test: ["CMD-SHELL", "ollama list || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 300s
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: sinidu_backend
+    environment:
+      - DATABASE_URL=postgresql://sinidu_user:sinidu_pass@db:5432/sinidu_db
+      - REDIS_URL=redis://redis:6379/0
+      - ENVIRONMENT=development
+      - REPORTS_DIR=/data/reports
+      - MODELS_DIR=/data/models
+      - ML_DATA_DIR=/data/ml
+      - DEM_DIR=/data/dem
+      - OPENTOPOGRAPHY_API_KEY=
+      - OSRM_URL=http://osrm:5000
+      - OSRM_REGION=nordeste
+      - OSRM_COVERED_UFS=PE,AL,SE,PB,RN,CE,PI,MA
+      - GOTIFY_URL=http://gotify:80
+      - GOTIFY_TOKEN=
+      - OLLAMA_BASE_URL=http://ollama:11434
+      - OLLAMA_CHAT_MODEL=llama3.1:8b-instruct-q4_K_M
+      - OLLAMA_EMBED_MODEL=nomic-embed-text
+      - AI_CHAT_PROVIDER=ollama
+      - AUTH_ENABLED=false
+      - AUTH_JWT_SECRET=sinidu-dev-secret-trocar-em-producao
+      - CORS_ORIGINS=http://localhost:3000
+      - BACKUP_DIR=/data/backups
+      - BACKUP_RETENTION_DAYS=7
+      - LOG_FORMAT=json
+      # Produção: docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+      # Mapa satélite Google no PDF (Static Maps API — opcional):
+      # - GOOGLE_MAPS_API_KEY=
+      # - OPENAI_API_KEY=
+      # - OPENAI_CHAT_MODEL=gpt-4o-mini
+      # - ANTHROPIC_API_KEY=
+      # - GEMINI_API_KEY=
+      # - GEMINI_CHAT_MODEL=gemini-2.0-flash
+      # - GROQ_API_KEY=
+      # - OPENROUTER_API_KEY=
+      # - MISTRAL_API_KEY=
+      # - MISTRAL_CHAT_MODEL=mistral-small-latest
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      ollama:
+        condition: service_started
+    volumes:
+      - ./backend:/app
+      - ./documentacao:/app/documentacao:ro
+      - reports_data:/data/reports
+      - models_data:/data/models
+      - ml_data:/data/ml
+      - dem_data:/data/dem
+      - backups_data:/data/backups
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8000/health/live || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    command: ["bash", "./docker-entrypoint.sh"]
+
+  redis:
+    image: redis:7-alpine
+    container_name: sinidu_redis
+    ports:
+      - "6379:6379"
+
+  osrm:
+    image: osrm/osrm-backend
+    container_name: sinidu_osrm
+    entrypoint: ["/bin/sh", "/entrypoint.sh"]
+    command: []
+    ports:
+      - "5000:5000"
+    environment:
+      - OSRM_REGION=nordeste
+    volumes:
+      - ./docker/osrm:/data
+      - ./docker/osrm/docker-entrypoint.sh:/entrypoint.sh:ro
+    restart: unless-stopped
+
+  gotify:
+    image: gotify/server:latest
+    container_name: sinidu_gotify
+    ports:
+      - "8888:80"
+    environment:
+      - GOTIFY_DEFAULTUSER_PASS=admin
+    volumes:
+      - gotify_data:/app/data
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: sinidu_frontend
+    environment:
+      - NEXT_PUBLIC_API_URL=http://localhost:8000
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
+
+volumes:
+  pgdata:
+  reports_data:
+  models_data:
+  ml_data:
+  dem_data:
+  gotify_data:
+  backups_data:

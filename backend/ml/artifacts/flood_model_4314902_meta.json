@@ -1,0 +1,27 @@
+{
+  "codigo_ibge": "4314902",
+  "model_version": "1.0",
+  "model_kind": "baseline_synthetic",
+  "auc_roc_cv": 0.989,
+  "n_samples": 900,
+  "n_positive": 783,
+  "threshold_mm_24h": 35.0,
+  "terrain": {
+    "impermeabilizacao_pct": 48.0,
+    "cobertura_vegetal_pct": 18.0,
+    "declividade_media": 3.2
+  },
+  "feature_columns": [
+    "precip_24h",
+    "precip_48h",
+    "precip_72h",
+    "precip_7d",
+    "mes_do_ano",
+    "impermeabilizacao_pct",
+    "cobertura_vegetal_pct",
+    "declividade_media"
+  ],
+  "trained_at": "2026-06-25T17:07:04Z",
+  "training_seconds": 2.38,
+  "note": "Modelo baseline sintético. Execute etl/etl_flood_ml.py --municipio 4314902 para retreinar com OpenMeteo + S2ID."
+}

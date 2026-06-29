@@ -1,0 +1,94 @@
+# Conjunto de avaliação RAG — perguntas com fontes e termos esperados no retrieve/resposta.
+version: 1
+cases:
+  - id: pnpdec_competencia_municipal
+    question: "Quais são as competências municipais na Política Nacional de Proteção e Defesa Civil?"
+    expected_source_labels:
+      - "Lei nº 12.608/2012"
+    expected_keywords:
+      - "municip"
+      - "risco"
+      - "defesa civil"
+    min_retrieval_similarity: 0.35
+
+  - id: pnpdec_instrumentos
+    question: "Quais instrumentos o município deve manter segundo a PNPDEC?"
+    expected_source_labels:
+      - "Lei nº 12.608/2012"
+    expected_keywords:
+      - "plano"
+      - "alerta"
+    min_retrieval_similarity: 0.35
+
+  - id: saneamento_marco
+    question: "O que estabelece o marco legal do saneamento básico sobre drenagem urbana?"
+    expected_source_labels:
+      - "Lei nº 14.026/2020"
+    expected_keywords:
+      - "drenagem"
+      - "saneamento"
+    min_retrieval_similarity: 0.35
+
+  - id: conama_369
+    question: "Qual a resolução CONAMA trata de qualidade de água para balneabilidade?"
+    expected_source_labels:
+      - "Resolução CONAMA 369"
+    expected_keywords:
+      - "balne"
+      - "água"
+    min_retrieval_similarity: 0.30
+
+  - id: conama_app
+    question: "O que são APPs segundo a resolução CONAMA 303?"
+    expected_source_labels:
+      - "Resolução CONAMA 303"
+    expected_keywords:
+      - "app"
+      - "preservação"
+    min_retrieval_similarity: 0.30
+
+  - id: adapta_clima
+    question: "Como o AdaptaBrasil apoia a adaptação climática municipal?"
+    expected_source_labels:
+      - "AdaptaBrasil"
+    expected_keywords:
+      - "clim"
+      - "adapt"
+    min_retrieval_similarity: 0.30
+
+  - id: sedec_manual
+    question: "O que o manual SEDEC orienta sobre gestão de riscos e desastres?"
+    expected_source_labels:
+      - "Manual de Gestão de Riscos"
+    expected_keywords:
+      - "risco"
+      - "desastre"
+    min_retrieval_similarity: 0.30
+
+  - id: mcid_cidades_inteligentes
+    question: "O que prevê a Portaria MCID 1012 sobre Cidades +Inteligentes?"
+    expected_source_labels:
+      - "Portaria MCID"
+    expected_keywords:
+      - "cidades"
+      - "inteligent"
+    min_retrieval_similarity: 0.30
+
+  - id: sinidu_camadas
+    question: "Quais camadas territoriais o Sinidu+Clima integra para análise de risco?"
+    expected_source_labels:
+      - "Sinidu+Clima"
+    expected_keywords:
+      - "camada"
+      - "risco"
+    min_retrieval_similarity: 0.25
+
+  - id: cemaden_alertas
+    question: "Como usar alertas do CEMADEN no planejamento de contingência municipal?"
+    expected_keywords:
+      - "alerta"
+      - "cemaden"
+    expected_source_labels:
+      - "Sinidu+Clima"
+      - "Manual de Gestão de Riscos"
+    min_retrieval_similarity: 0.25

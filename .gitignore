@@ -1,0 +1,40 @@
+# Certificados TLS locais — nunca commitar chaves privadas
+deploy/nginx/certs/*.pem
+deploy/nginx/certs/*.key
+
+# Ambiente local
+.env
+.env.*
+!.env.*.example
+
+# macOS
+.DS_Store
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+htmlcov/
+.coverage
+
+# Node / Next.js
+node_modules/
+.next/
+out/
+*.tsbuildinfo
+
+# Dados locais de runtime (não versionar)
+ollama_data/
+*.log
+.cache.sqlite
+*.sqlite
+
+# OSRM / DEM / volumes Docker locais
+docker/osrm/data/
+*.osrm
+*.osrm.*

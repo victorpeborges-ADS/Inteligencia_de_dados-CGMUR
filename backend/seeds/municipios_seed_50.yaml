@@ -1,0 +1,76 @@
+# 61 municípios prioritários Sinidu+Clima
+# 27 capitais + 15 S2ID (decretos emergência 2010–2024) + 19 Cidades +Inteligentes
+# Edital SNDUM 1/2026: 22 municípios selecionados; Belém, Natal e Curitiba já constam como capitais
+
+municipios:
+  # --- 27 Capitais ---
+  - { codigo_ibge: "1200401", nome: "Rio Branco", uf: "AC", criterio: "capital", decretos: 12, prioridade: 1 }
+  - { codigo_ibge: "2704302", nome: "Maceió", uf: "AL", criterio: "capital", decretos: 19, prioridade: 1 }
+  - { codigo_ibge: "1600303", nome: "Macapá", uf: "AP", criterio: "capital", decretos: 14, prioridade: 1 }
+  - { codigo_ibge: "1302603", nome: "Manaus", uf: "AM", criterio: "capital", decretos: 22, prioridade: 1 }
+  - { codigo_ibge: "2927408", nome: "Salvador", uf: "BA", criterio: "capital", decretos: 34, prioridade: 1 }
+  - { codigo_ibge: "2304400", nome: "Fortaleza", uf: "CE", criterio: "capital", decretos: 28, prioridade: 1 }
+  - { codigo_ibge: "5300108", nome: "Brasília", uf: "DF", criterio: "capital", decretos: 11, prioridade: 1 }
+  - { codigo_ibge: "3205309", nome: "Vitória", uf: "ES", criterio: "capital", decretos: 16, prioridade: 1 }
+  - { codigo_ibge: "5208707", nome: "Goiânia", uf: "GO", criterio: "capital", decretos: 18, prioridade: 1 }
+  - { codigo_ibge: "2111300", nome: "São Luís", uf: "MA", criterio: "capital", decretos: 21, prioridade: 1 }
+  - { codigo_ibge: "5103403", nome: "Cuiabá", uf: "MT", criterio: "capital", decretos: 17, prioridade: 1 }
+  - { codigo_ibge: "5002704", nome: "Campo Grande", uf: "MS", criterio: "capital", decretos: 15, prioridade: 1 }
+  - { codigo_ibge: "3106200", nome: "Belo Horizonte", uf: "MG", criterio: "capital", decretos: 26, prioridade: 1 }
+  - { codigo_ibge: "1501402", nome: "Belém", uf: "PA", criterio: "capital", decretos: 24, prioridade: 1 }
+  - { codigo_ibge: "2507507", nome: "João Pessoa", uf: "PB", criterio: "capital", decretos: 20, prioridade: 1 }
+  - { codigo_ibge: "4106902", nome: "Curitiba", uf: "PR", criterio: "capital", decretos: 17, prioridade: 1 }
+  - { codigo_ibge: "2611606", nome: "Recife", uf: "PE", criterio: "capital", decretos: 32, prioridade: 1 }
+  - { codigo_ibge: "2211001", nome: "Teresina", uf: "PI", criterio: "capital", decretos: 19, prioridade: 1 }
+  - { codigo_ibge: "3304557", nome: "Rio de Janeiro", uf: "RJ", criterio: "capital", decretos: 41, prioridade: 1 }
+  - { codigo_ibge: "2408102", nome: "Natal", uf: "RN", criterio: "capital", decretos: 18, prioridade: 1 }
+  - { codigo_ibge: "4314902", nome: "Porto Alegre", uf: "RS", criterio: "capital", decretos: 29, prioridade: 1 }
+  - { codigo_ibge: "1100205", nome: "Porto Velho", uf: "RO", criterio: "capital", decretos: 16, prioridade: 1 }
+  - { codigo_ibge: "1400100", nome: "Boa Vista", uf: "RR", criterio: "capital", decretos: 13, prioridade: 1 }
+  - { codigo_ibge: "4205407", nome: "Florianópolis", uf: "SC", criterio: "capital", decretos: 15, prioridade: 1 }
+  - { codigo_ibge: "2800308", nome: "Aracaju", uf: "SE", criterio: "capital", decretos: 17, prioridade: 1 }
+  - { codigo_ibge: "3550308", nome: "São Paulo", uf: "SP", criterio: "capital", decretos: 38, prioridade: 1 }
+  - { codigo_ibge: "1721000", nome: "Palmas", uf: "TO", criterio: "capital", decretos: 14, prioridade: 1 }
+
+  # --- 15 municípios S2ID — maior número de decretos de emergência ---
+  - { codigo_ibge: "3303906", nome: "Petrópolis", uf: "RJ", criterio: "s2id_emergencia", decretos: 28, prioridade: 2 }
+  - { codigo_ibge: "3303401", nome: "Nova Friburgo", uf: "RJ", criterio: "s2id_emergencia", decretos: 31, prioridade: 2 }
+  - { codigo_ibge: "3305802", nome: "Teresópolis", uf: "RJ", criterio: "s2id_emergencia", decretos: 26, prioridade: 2 }
+  - { codigo_ibge: "3550704", nome: "São Sebastião", uf: "SP", criterio: "s2id_emergencia", decretos: 24, prioridade: 2 }
+  - { codigo_ibge: "3300100", nome: "Angra dos Reis", uf: "RJ", criterio: "s2id_emergencia", decretos: 23, prioridade: 2 }
+  - { codigo_ibge: "4202404", nome: "Blumenau", uf: "SC", criterio: "s2id_emergencia", decretos: 27, prioridade: 2 }
+  - { codigo_ibge: "1504208", nome: "Marabá", uf: "PA", criterio: "s2id_emergencia", decretos: 25, prioridade: 2 }
+  - { codigo_ibge: "3143906", nome: "Mariana", uf: "MG", criterio: "s2id_emergencia", decretos: 22, prioridade: 2 }
+  - { codigo_ibge: "2914802", nome: "Itabuna", uf: "BA", criterio: "s2id_emergencia", decretos: 21, prioridade: 2 }
+  - { codigo_ibge: "2913606", nome: "Ilhéus", uf: "BA", criterio: "s2id_emergencia", decretos: 20, prioridade: 2 }
+  - { codigo_ibge: "4316907", nome: "Santa Maria", uf: "RS", criterio: "s2id_emergencia", decretos: 19, prioridade: 2 }
+  - { codigo_ibge: "3109006", nome: "Brumadinho", uf: "MG", criterio: "s2id_emergencia", decretos: 18, prioridade: 2 }
+  - { codigo_ibge: "2602902", nome: "Cabo de Santo Agostinho", uf: "PE", criterio: "s2id_emergencia", decretos: 18, prioridade: 2 }
+  - { codigo_ibge: "4318908", nome: "São Luiz Gonzaga", uf: "RS", criterio: "s2id_emergencia", decretos: 17, prioridade: 2 }
+  - { codigo_ibge: "3201506", nome: "Colatina", uf: "ES", criterio: "s2id_emergencia", decretos: 16, prioridade: 2 }
+
+  # --- 19 Cidades +Inteligentes (Edital SNDUM 1/2026 — 22 selecionados; 3 já como capitais) ---
+  # Norte
+  - { codigo_ibge: "1702109", nome: "Araguaína", uf: "TO", criterio: "cidades_mais_inteligentes", decretos: 11, prioridade: 3 }
+  - { codigo_ibge: "1400233", nome: "Caroebe", uf: "RR", criterio: "cidades_mais_inteligentes", decretos: 9, prioridade: 3 }
+  # Nordeste
+  - { codigo_ibge: "2604106", nome: "Caruaru", uf: "PE", criterio: "cidades_mais_inteligentes", decretos: 14, prioridade: 3 }
+  - { codigo_ibge: "2407104", nome: "Macaíba", uf: "RN", criterio: "cidades_mais_inteligentes", decretos: 10, prioridade: 3 }
+  - { codigo_ibge: "2924009", nome: "Paulo Afonso", uf: "BA", criterio: "cidades_mais_inteligentes", decretos: 13, prioridade: 3 }
+  - { codigo_ibge: "2806701", nome: "São Cristóvão", uf: "SE", criterio: "cidades_mais_inteligentes", decretos: 12, prioridade: 3 }
+  # Centro-Oeste
+  - { codigo_ibge: "5201108", nome: "Anápolis", uf: "GO", criterio: "cidades_mais_inteligentes", decretos: 15, prioridade: 3 }
+  - { codigo_ibge: "5208905", nome: "Goiás", uf: "GO", criterio: "cidades_mais_inteligentes", decretos: 10, prioridade: 3 }
+  - { codigo_ibge: "5218805", nome: "Rio Verde", uf: "GO", criterio: "cidades_mais_inteligentes", decretos: 11, prioridade: 3 }
+  # Sul
+  - { codigo_ibge: "4302105", nome: "Bento Gonçalves", uf: "RS", criterio: "cidades_mais_inteligentes", decretos: 12, prioridade: 3 }
+  - { codigo_ibge: "4304606", nome: "Canoas", uf: "RS", criterio: "cidades_mais_inteligentes", decretos: 13, prioridade: 3 }
+  - { codigo_ibge: "4104907", nome: "Castro", uf: "PR", criterio: "cidades_mais_inteligentes", decretos: 10, prioridade: 3 }
+  - { codigo_ibge: "4305108", nome: "Caxias do Sul", uf: "RS", criterio: "cidades_mais_inteligentes", decretos: 14, prioridade: 3 }
+  # Sudeste
+  - { codigo_ibge: "3200607", nome: "Aracruz", uf: "ES", criterio: "cidades_mais_inteligentes", decretos: 11, prioridade: 3 }
+  - { codigo_ibge: "3509502", nome: "Campinas", uf: "SP", criterio: "cidades_mais_inteligentes", decretos: 12, prioridade: 3 }
+  - { codigo_ibge: "3138203", nome: "Lavras", uf: "MG", criterio: "cidades_mais_inteligentes", decretos: 10, prioridade: 3 }
+  - { codigo_ibge: "3548708", nome: "São Bernardo do Campo", uf: "SP", criterio: "cidades_mais_inteligentes", decretos: 13, prioridade: 3 }
+  - { codigo_ibge: "3549904", nome: "São José dos Campos", uf: "SP", criterio: "cidades_mais_inteligentes", decretos: 12, prioridade: 3 }
+  - { codigo_ibge: "3305505", nome: "Saquarema", uf: "RJ", criterio: "cidades_mais_inteligentes", decretos: 11, prioridade: 3 }

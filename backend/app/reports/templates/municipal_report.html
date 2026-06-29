@@ -1,0 +1,582 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <title>Relatório Sinidu+Clima — {{ municipio.nome }}/{{ municipio.uf }}</title>
+  <style>
+    @page {
+      size: A4;
+      margin: 1.6cm 1.4cm 2.4cm 1.4cm;
+      @bottom-left {
+        content: "Dados demonstrativos. Não substitui estudos técnicos oficiais.";
+        font-size: 7pt;
+        color: #64748b;
+      }
+      @bottom-center {
+        content: "Gerado pelo Sinidu+Clima · CGMUR/DDUM/SNDUM/MCID · {{ footer_date }}";
+        font-size: 7.5pt;
+        color: #475569;
+      }
+      @bottom-right {
+        content: "Pág. " counter(page) " / " counter(pages);
+        font-size: 7.5pt;
+        color: #475569;
+      }
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      font-family: "DejaVu Sans", sans-serif;
+      font-size: 9.5pt;
+      color: #1e293b;
+      line-height: 1.45;
+      margin: 0;
+    }
+
+    h1, h2, h3 { color: #0f172a; margin: 0 0 8px; }
+    h2 {
+      font-size: 13pt;
+      border-bottom: 2px solid #6366f1;
+      padding-bottom: 4px;
+      margin-top: 0;
+      page-break-after: avoid;
+    }
+    h3 { font-size: 10.5pt; margin-top: 14px; color: #334155; }
+    a { color: #4338ca; text-decoration: underline; }
+
+    .page { page-break-after: always; }
+    .page:last-child { page-break-after: auto; }
+
+    .cover {
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      min-height: 24cm;
+      text-align: center;
+      background: linear-gradient(160deg, #0f172a 0%, #1e1b4b 55%, #312e81 100%);
+      color: #f8fafc;
+      padding: 2cm;
+      border-radius: 8px;
+    }
+    .cover-logo {
+      font-size: 28pt;
+      font-weight: 800;
+      letter-spacing: -0.5px;
+      margin-bottom: 6px;
+    }
+    .cover-logo span { color: #a5b4fc; }
+    .cover-sub { font-size: 10pt; letter-spacing: 0.18em; text-transform: uppercase; color: #94a3b8; }
+    .cover-muni { font-size: 22pt; font-weight: 700; margin: 1.2cm 0 0.4cm; }
+    .cover-meta { font-size: 10pt; color: #cbd5e1; }
+    .cover-badge {
+      display: inline-block;
+      margin-top: 1.2cm;
+      padding: 6px 14px;
+      border: 1px solid #f43f5e;
+      color: #fecdd3;
+      border-radius: 999px;
+      font-size: 8pt;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+
+    .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
+
+    .card {
+      border: 1px solid #e2e8f0;
+      border-radius: 8px;
+      padding: 10px 12px;
+      background: #f8fafc;
+    }
+    .card-label { font-size: 7.5pt; text-transform: uppercase; letter-spacing: 0.06em; color: #64748b; }
+    .card-value { font-size: 14pt; font-weight: 800; color: #0f172a; margin-top: 2px; }
+    .card-note { font-size: 7.5pt; color: #64748b; margin-top: 2px; }
+
+    .map-img {
+      width: 100%;
+      max-height: 280px;
+      object-fit: contain;
+      border: 1px solid #cbd5e1;
+      border-radius: 8px;
+      margin: 10px 0;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 8.5pt;
+      margin-top: 8px;
+    }
+    th, td {
+      border: 1px solid #e2e8f0;
+      padding: 5px 7px;
+      text-align: left;
+      vertical-align: top;
+    }
+    th { background: #eef2ff; color: #3730a3; font-weight: 700; }
+    tr:nth-child(even) td { background: #f8fafc; }
+
+    .score-box {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      padding: 12px;
+      border: 2px solid #6366f1;
+      border-radius: 10px;
+      background: #eef2ff;
+      margin: 10px 0;
+    }
+    .score-value {
+      font-size: 32pt;
+      font-weight: 900;
+      color: #4338ca;
+      line-height: 1;
+    }
+    .score-detail { font-size: 8.5pt; color: #475569; }
+
+    .pill {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 999px;
+      font-size: 7.5pt;
+      font-weight: 700;
+      text-transform: uppercase;
+    }
+    .pill-alto { background: #fee2e2; color: #b91c1c; }
+    .pill-medio { background: #ffedd5; color: #c2410c; }
+    .pill-baixo { background: #dbeafe; color: #1d4ed8; }
+    .pill-ok { background: #dcfce7; color: #15803d; }
+    .pill-warn { background: #fef9c3; color: #a16207; }
+    .pill-bad { background: #fee2e2; color: #b91c1c; }
+
+    .action-block {
+      border-left: 3px solid #6366f1;
+      padding: 8px 10px;
+      margin: 8px 0;
+      background: #f8fafc;
+    }
+    .action-block strong { display: block; color: #312e81; margin-bottom: 3px; }
+    .muted { color: #64748b; font-size: 8pt; }
+    ul.compact { margin: 4px 0 0 16px; padding: 0; }
+    ul.compact li { margin-bottom: 3px; }
+  </style>
+</head>
+<body>
+
+  <!-- CAPA -->
+  <section class="page cover">
+    <div class="cover-logo">Sinidu<span>+Clima</span></div>
+    <div class="cover-sub">Plataforma de Inteligência Territorial</div>
+    <div class="cover-muni">{{ municipio.nome }} — {{ municipio.uf }}</div>
+    <div class="cover-meta">IBGE {{ municipio.codigo_ibge }}</div>
+    <div class="cover-meta">Gerado em {{ generated_at }}</div>
+    <div class="cover-badge">Documento interno — uso restrito</div>
+  </section>
+
+  <!-- PÁG 2 — PERFIL MUNICIPAL -->
+  <section class="page">
+    <h2>Perfil Municipal</h2>
+    <div class="grid-3">
+      <div class="card">
+        <div class="card-label">População</div>
+        <div class="card-value">{{ "{:,}".format(municipio.populacao).replace(",", ".") }}</div>
+        <div class="card-note">{{ municipio.populacao_fonte }}</div>
+      </div>
+      <div class="card">
+        <div class="card-label">Área territorial</div>
+        <div class="card-value">{{ format_number(municipio.area_km2) }} km²</div>
+        <div class="card-note">IBGE / base municipal</div>
+      </div>
+      <div class="card">
+        <div class="card-label">Densidade demográfica</div>
+        <div class="card-value">{{ format_number(municipio.densidade, 0) }}</div>
+        <div class="card-note">hab/km²</div>
+      </div>
+    </div>
+    <div class="grid-2" style="margin-top:10px;">
+      <div class="card">
+        <div class="card-label">IDH municipal</div>
+        <div class="card-value">{{ format_number(municipio.idh, 3) if municipio.idh else "—" }}</div>
+        <div class="card-note">{{ municipio.idh_fonte }}</div>
+      </div>
+      <div class="card">
+        <div class="card-label">PIB per capita</div>
+        <div class="card-value">{{ format_currency(municipio.pib_per_capita) if municipio.pib_per_capita else "—" }}</div>
+        <div class="card-note">IBGE — Pesquisa 38</div>
+      </div>
+    </div>
+
+    <h3>Mapa territorial</h3>
+    {% if maps.google_maps %}
+    <p class="muted">
+      <strong>Google Maps</strong> — {{ maps.google_maps.label }}:
+      <a href="{{ maps.google_maps.satellite }}">Abrir visão satélite</a> ·
+      <a href="{{ maps.google_maps.search }}">Abrir localização</a>
+    </p>
+    {% endif %}
+    {% if maps.satellite_b64 %}
+    <p class="muted"><strong>Visão satélite (imagem)</strong> — {{ maps.satellite_fonte }}</p>
+    <img class="map-img" src="data:image/png;base64,{{ maps.satellite_b64 }}" alt="Mapa satélite" />
+    {% endif %}
+    <p class="muted"><strong>Mapa temático</strong> — {{ maps.thematic_fonte }}</p>
+    <img class="map-img" src="data:image/png;base64,{{ maps.thematic_b64 or map_image_b64 }}" alt="Mapa municipal temático" />
+
+    <h3>Saúde fiscal (SICONFI / CAPAG)</h3>
+    <div class="capag-highlight" style="border:2px solid {% if fiscal.nota_capag in ['A','B'] %}#22c55e{% elif fiscal.nota_capag in ['C','D'] %}#ef4444{% else %}#94a3b8{% endif %}; border-radius:10px; padding:12px; margin-bottom:10px; background:#f8fafc;">
+      <div class="grid-2">
+        <div>
+          <div class="card-label">Nota CAPAG</div>
+          <div class="card-value" style="font-size:28pt;">{{ fiscal.nota_capag_raw or fiscal.nota_capag or "—" }}</div>
+        </div>
+        <div>
+          <div class="card-label">Interpretação</div>
+          <p style="font-size:8.5pt; margin:4px 0 0;">{{ fiscal.capag_interpretacao }}</p>
+        </div>
+      </div>
+      {% if fiscal.capag_meta.mensagem %}
+      <p class="muted" style="margin-top:8px;">{{ fiscal.capag_meta.mensagem }}</p>
+      {% endif %}
+      <p class="muted">Fonte: {{ fiscal.fonte }}{% if fiscal.exercicio %} · Exercício {{ fiscal.exercicio }}{% endif %}{% if fiscal.capag_origem_nota %} · {{ fiscal.capag_origem_nota }}{% endif %}</p>
+    </div>
+    {% if fiscal.capag_indicadores %}
+    <h3>Indicadores CAPAG (STN)</h3>
+    <table>
+      <thead>
+        <tr>
+          <th>Indicador</th>
+          <th>Valor</th>
+          <th>Nota</th>
+          <th>Interpretação</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for ind in fiscal.capag_indicadores %}
+        <tr>
+          <td><strong>{{ ind.numero }}. {{ ind.nome }}</strong></td>
+          <td>{{ ind.valor_fmt or "—" }}</td>
+          <td>{{ ind.nota or "—" }}</td>
+          <td>{{ ind.interpretacao }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    <p class="muted">Indicador 1: Endividamento · Indicador 2: Poupança Corrente · Indicador 3: Liquidez — metodologia CAPAG/Tesouro Nacional.</p>
+    {% endif %}
+    <div class="grid-3">
+      <div class="card">
+        <div class="card-label">RCL</div>
+        <div class="card-value" style="font-size:11pt;">{{ format_currency(fiscal.receita_corrente_liquida) }}</div>
+      </div>
+      <div class="card">
+        <div class="card-label">Desp. pessoal / RCL</div>
+        <div class="card-value">{{ format_number(fiscal.despesa_pessoal_pct_rcl) }}%</div>
+      </div>
+      <div class="card">
+        <div class="card-label">Dívida consolidada</div>
+        <div class="card-value" style="font-size:11pt;">{{ format_currency(fiscal.divida_consolidada) }}</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- PÁG 3-4 — DIAGNÓSTICO DE RISCO -->
+  <section class="page">
+    <h2>Diagnóstico de Risco Territorial</h2>
+    <div class="score-box">
+      <div class="score-value">{{ score.valor }}</div>
+      <div>
+        <strong>Score Sinidu+Clima</strong>
+        <div class="score-detail">{{ score.formula }}</div>
+        <div class="score-detail">IVC médio: {{ score.media_ivc }} · IRI médio: {{ score.media_iri }} · Adaptação média: {{ score.media_adaptacao }}</div>
+      </div>
+    </div>
+
+    <h3>Base teórica do Score</h3>
+    <p class="muted">{{ score.metodologia.escala }}</p>
+    <table>
+      <thead><tr><th>Componente</th><th>Descrição</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><strong>{{ score.metodologia.ivc.nome }}</strong></td>
+          <td>{{ score.metodologia.ivc.formula }}<br/>Exposição: {{ score.metodologia.ivc.exposicao }}<br/>Sensibilidade: {{ score.metodologia.ivc.sensibilidade }}<br/>Adaptação: {{ score.metodologia.ivc.adaptacao }}</td>
+        </tr>
+        <tr>
+          <td><strong>{{ score.metodologia.iri.nome }}</strong></td>
+          <td>{{ score.metodologia.iri.formula }}<br/>Fontes: {{ score.metodologia.iri.fontes }}</td>
+        </tr>
+      </tbody>
+    </table>
+    <h3>Interpretação do Score municipal</h3>
+    <ul class="compact">
+      {% for linha in score.metodologia.interpretacao %}
+      <li>{{ linha }}</li>
+      {% endfor %}
+    </ul>
+    <p class="muted">{{ score.metodologia.limitacoes }}</p>
+
+    <h3>Bairros críticos (ordenados por risco)</h3>
+    <table>
+      <thead>
+        <tr>
+          <th>#</th>
+          <th>Bairro</th>
+          <th>Score</th>
+          <th>IVC</th>
+          <th>IRI</th>
+          <th>Déf. adapt.</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in ranking %}
+        <tr>
+          <td>{{ loop.index }}</td>
+          <td>{{ row.bairro }}</td>
+          <td><strong>{{ row.score_sinidu }}</strong></td>
+          <td>{{ row.ivc }}</td>
+          <td>{{ row.iri }}</td>
+          <td>{{ row.deficit_adaptacao }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </section>
+
+  <section class="page">
+    <h2>Histórico de Desastres (S2ID — últimos 10 anos)</h2>
+    {% if desastres %}
+    <table>
+      <thead>
+        <tr>
+          <th>Data</th>
+          <th>Tipo</th>
+          <th>Pop. afetada</th>
+          <th>Danos materiais</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for d in desastres %}
+        <tr>
+          <td>{{ d.data }}</td>
+          <td>{{ d.tipo }}</td>
+          <td>{{ d.populacao_afetada }}</td>
+          <td>{{ d.danos_fmt }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <p class="muted">Nenhum registro S2ID disponível no período para este município.</p>
+    {% endif %}
+  </section>
+
+  <!-- PÁG 5 — AMBIENTAL -->
+  <section class="page">
+    <h2>Dados Ambientais e Climáticos</h2>
+    <div class="grid-2">
+      <div class="card">
+        <div class="card-label">Cobertura vegetal</div>
+        <div class="card-value">{{ format_number(ambiental.cobertura_vegetal_percent) }}%</div>
+        <div class="card-note">MapBiomas — classe floresta/vegetação</div>
+      </div>
+      <div class="card">
+        <div class="card-label">Impermeabilização estimada</div>
+        <div class="card-value">{{ format_number(ambiental.impermeabilizacao_pct) if ambiental.impermeabilizacao_pct else "—" }}%</div>
+        <div class="card-note">Área urbana / área municipal</div>
+      </div>
+    </div>
+
+    <h3>Alertas CEMADEN ativos</h3>
+    {% if ambiental.alertas %}
+    <table>
+      <thead><tr><th>Nível</th><th>Data</th><th>Descrição</th></tr></thead>
+      <tbody>
+        {% for a in ambiental.alertas %}
+        <tr>
+          <td>{{ a.nivel }}</td>
+          <td>{{ a.data }}</td>
+          <td>{{ a.descricao }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <p class="muted">Nenhum alerta ativo registrado.</p>
+    {% endif %}
+
+    <h3>Série de precipitação (últimos 12 meses)</h3>
+    <p class="muted">Fonte: {{ ambiental.precipitacao_fonte }}</p>
+    {% if ambiental.precipitacao_serie %}
+    <table>
+      <thead><tr><th>Período</th><th>Precipitação média diária (mm)</th></tr></thead>
+      <tbody>
+        {% for p in ambiental.precipitacao_serie %}
+        <tr><td>{{ p.periodo }}</td><td>{{ p.precipitacao_mm }}</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <p class="muted">Série histórica indisponível no momento da geração.</p>
+    {% endif %}
+  </section>
+
+  <!-- PÁG 6 — CAPACIDADE DE RESPOSTA -->
+  <section class="page">
+    <h2>Capacidade de Resposta</h2>
+    <div class="grid-3">
+      <div class="card">
+        <div class="card-label">CAPAG</div>
+        <div class="card-value">{{ fiscal.nota_capag or "—" }}</div>
+        <div class="card-note">{{ fiscal.capag_interpretacao[:60] }}{% if fiscal.capag_interpretacao|length > 60 %}…{% endif %}</div>
+      </div>
+      <div class="card">
+        <div class="card-label">Maturidade municipal</div>
+        <div class="card-value">{% if maturity %}{{ maturity.score|round(0)|int }}{% else %}{{ capacidade.maturidade_percentual }}{% endif %}</div>
+        <div class="card-note">{% if maturity %}{{ maturity.classificacao }}{% else %}{{ capacidade.classificacao }}{% endif %}</div>
+      </div>
+      <div class="card">
+        <div class="card-label">Dívida consolidada</div>
+        <div class="card-value" style="font-size:11pt;">{{ format_currency(fiscal.divida_consolidada) }}</div>
+      </div>
+    </div>
+
+    <h3>Gastos por função (SICONFI)</h3>
+    <table>
+      <thead><tr><th>Função</th><th>Valor executado</th></tr></thead>
+      <tbody>
+        <tr><td>Saúde</td><td>{{ format_currency(fiscal.exec_saude) }}</td></tr>
+        <tr><td>Saneamento</td><td>{{ format_currency(fiscal.exec_saneamento) }}</td></tr>
+        <tr><td>Defesa Civil / gestão de riscos</td><td>{{ format_currency(fiscal.exec_defesa_civil) }}</td></tr>
+      </tbody>
+    </table>
+
+    {% if capacidade.capacidade_investimento.alertas %}
+    <h3>Alertas fiscais</h3>
+    <ul class="compact">
+      {% for alerta in capacidade.capacidade_investimento.alertas %}
+      <li>{{ alerta }}</li>
+      {% endfor %}
+    </ul>
+    {% endif %}
+
+    <h3>Lacunas de dados identificadas</h3>
+    <table>
+      <thead><tr><th>Base</th><th>Status</th><th>Recomendação</th></tr></thead>
+      <tbody>
+        {% for base in capacidade.bases %}
+        <tr>
+          <td>{{ base.nome }}</td>
+          <td>{{ base.status }}</td>
+          <td>{{ base.recomendacao }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </section>
+
+  <!-- PÁG 7 — PLANO DE AÇÃO -->
+  <section class="page">
+    <h2>Plano de Ação Sugerido</h2>
+    <p class="muted">Cenário de referência: chuva extrema (120 mm) · Severidade estimada: <strong>{{ plano.severidade }}</strong></p>
+
+    <h3>Ações imediatas</h3>
+    {% for acao in plano.acoes_imediatas %}
+    <div class="action-block">
+      <strong>{{ acao.acao }}</strong>
+      <div class="muted">{{ acao.justificativa }}</div>
+    </div>
+    {% else %}
+    <p class="muted">Sem ações imediatas parametrizadas para o cenário.</p>
+    {% endfor %}
+
+    <h3>Curto prazo</h3>
+    {% for acao in plano.acoes_curto_prazo %}
+    <div class="action-block">
+      <strong>{{ acao.acao }}</strong>
+      <div class="muted">{{ acao.justificativa }}</div>
+    </div>
+    {% else %}
+    <p class="muted">Sem ações de curto prazo parametrizadas.</p>
+    {% endfor %}
+
+    <h3>Estruturais</h3>
+    {% for acao in plano.acoes_estruturais %}
+    <div class="action-block">
+      <strong>{{ acao.acao }}</strong>
+      <div class="muted">{{ acao.justificativa }}</div>
+    </div>
+    {% else %}
+    <p class="muted">Sem ações estruturais parametrizadas.</p>
+    {% endfor %}
+
+    <h3>Fontes de financiamento federal — programas e contatos institucionais</h3>
+    <p class="muted">Sugestão automática com base na severidade do cenário, CAPAG e vulnerabilidade. Validar elegibilidade junto ao órgão competente.</p>
+    <table>
+      <thead>
+        <tr>
+          <th>Programa</th>
+          <th>Órgão / Unidade</th>
+          <th>Contato / Site</th>
+          <th>Elegibilidade</th>
+          <th>Motivo sugerido</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for prog in plano.programas_federais %}
+        <tr>
+          <td><strong>{{ prog.nome }}</strong></td>
+          <td>{{ prog.orgao }}<br/><span class="muted">{{ prog.unidade }}</span></td>
+          <td>{{ prog.contato }}<br/><span class="muted">{{ prog.site }}</span></td>
+          <td>{{ prog.elegibilidade }}</td>
+          <td>{{ prog.motivo }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+
+    {% if plano.experiencias_municipais %}
+    <h3>Experiências municipais (S2ID)</h3>
+    {% for exp in plano.experiencias_municipais %}
+    <div class="action-block">
+      <strong>{{ exp.titulo }}</strong>
+      <div class="muted">{{ exp.descricao }}</div>
+      <div class="muted">Fonte: {{ exp.fonte }}</div>
+    </div>
+    {% endfor %}
+    {% endif %}
+
+    {% if plano.municipios_analogos %}
+    <h3>Municípios análogos</h3>
+    <table>
+      <thead><tr><th>Município</th><th>Similaridade</th></tr></thead>
+      <tbody>
+        {% for a in plano.municipios_analogos %}
+        <tr><td>{{ a.nome }}-{{ a.uf }}</td><td>{{ (a.coeficiente_similaridade * 100)|round(0) }}%</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
+
+    {% if plano.restricoes_plano_diretor %}
+    <h3>Restrições do Plano Diretor</h3>
+    {% for r in plano.restricoes_plano_diretor %}
+    <div class="action-block">
+      <strong>{{ r.tipo }}</strong>
+      <div class="muted">{{ r.descricao }}</div>
+      <div class="muted">Fonte: {{ r.fonte }}</div>
+    </div>
+    {% endfor %}
+    {% endif %}
+
+    {% if plano.lacunas %}
+    <h3>Lacunas do plano de ação</h3>
+    <ul class="compact">
+      {% for lac in plano.lacunas %}
+      <li>{{ lac }}</li>
+      {% endfor %}
+    </ul>
+    {% endif %}
+  </section>
+
+</body>
+</html>

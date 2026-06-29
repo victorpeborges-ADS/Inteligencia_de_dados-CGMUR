@@ -1,0 +1,894 @@
+'use client';
+
+import { useEffect, useState } from 'react';
+import { api, DataCoverage, ExecutiveDiagnostic, ExecutiveIndicators, IndicesResponse, IntegrationStatusResponse, MunicipalActionPlan, MunicipalMaturity, MunicipalReportRecord, OfficialUrbanClimateResponse } from '@/utils/api';
+import ActionPlanPanel from '@/components/Dashboard/ActionPlanPanel';
+import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, LineChart, Line, CartesianGrid, Legend } from 'recharts';
+import { Users, Trees, ShieldAlert, DollarSign, Waves, FileDown, Loader2, Award, FileText, Copy, ListChecks } from 'lucide-react';
+
+const TIER_STYLE: Record<string, { bg: string; text: string; border: string }> = {
+  Platina: { bg: 'bg-slate-400/15', text: 'text-slate-200', border: 'border-slate-400/40' },
+  Ouro: { bg: 'bg-amber-400/15', text: 'text-amber-300', border: 'border-amber-400/40' },
+  Prata: { bg: 'bg-zinc-400/15', text: 'text-zinc-300', border: 'border-zinc-400/40' },
+  Bronze: { bg: 'bg-orange-900/30', text: 'text-orange-300', border: 'border-orange-700/40' },
+};
+
+const SOURCE_STATUS_TEXT: Record<string, string> = {
+  OFICIAL: 'text-emerald-300',
+  DERIVADO: 'text-indigo-300',
+  ESTIMADO: 'text-amber-300',
+  LACUNA: 'text-rose-300',
+};
+
+const SOURCE_STATUS_STYLE: Record<string, string> = {
+  OFICIAL: 'bg-emerald-500/15 text-emerald-300',
+  DERIVADO: 'bg-indigo-500/15 text-indigo-300',
+  ESTIMADO: 'bg-amber-500/15 text-amber-300',
+  LACUNA: 'bg-rose-500/15 text-rose-300',
+};
+
+export default function ExecutiveDashboard({
+  codigoIbge,
+  municipioLoaded,
+  municipioEnsuring,
+  municipioNome,
+}: {
+  codigoIbge?: string;
+  municipioLoaded?: boolean;
+  municipioEnsuring?: boolean;
+  municipioNome?: string;
+}) {
+  const [indicators, setIndicators] = useState<ExecutiveIndicators | null>(null);
+  const [indices, setIndices] = useState<IndicesResponse | null>(null);
+  const [coverage, setCoverage] = useState<DataCoverage | null>(null);
+  const [maturity, setMaturity] = useState<MunicipalMaturity | null>(null);
+  const [officialClimate, setOfficialClimate] = useState<OfficialUrbanClimateResponse | null>(null);
+  const [integrationStatus, setIntegrationStatus] = useState<IntegrationStatusResponse | null>(null);
+  const [reportHistory, setReportHistory] = useState<MunicipalReportRecord[]>([]);
+  const [reportLoading, setReportLoading] = useState(false);
+  const [reportError, setReportError] = useState<string | null>(null);
+  const [pdfForceOverride, setPdfForceOverride] = useState(false);
+  const [diagnostic, setDiagnostic] = useState<ExecutiveDiagnostic | null>(null);
+  const [diagnosticLoading, setDiagnosticLoading] = useState(false);
+  const [diagnosticError, setDiagnosticError] = useState<string | null>(null);
+  const [actionPlan, setActionPlan] = useState<MunicipalActionPlan | null>(null);
+  const [actionPlanLoading, setActionPlanLoading] = useState(false);
+  const [actionPlanError, setActionPlanError] = useState<string | null>(null);
+  const [dashboardError, setDashboardError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+    const parseError = (err: unknown): string => {
+      if (err instanceof Error) return err.message;
+      return 'Erro desconhecido ao carregar dados';
+    };
+
+    const loadDashboardData = async () => {
+      setLoading(true);
+      setDashboardError(null);
+      setIndicators(null);
+      setIndices(null);
+      setCoverage(null);
+      setMaturity(null);
+      setOfficialClimate(null);
+      setIntegrationStatus(null);
+
+      if (!codigoIbge) {
+        setDashboardError('Nenhum município selecionado.');
+        setLoading(false);
+        return;
+      }
+
+      if (municipioEnsuring) {
+        setLoading(false);
+        return;
+      }
+
+      if (municipioLoaded === false) {
+        setDashboardError(
+          'Este município ainda não foi integrado ao banco. Abra a aba Municípios e execute o onboarding.',
+        );
+      }
+
+      let onboardingWarning: string | null =
+        municipioLoaded === false
+          ? 'Este município ainda não foi integrado ao banco. Abra a aba Municípios e execute o onboarding.'
+          : null;
+
+      const results = await Promise.allSettled([
+        api.getExecutiveIndicators(codigoIbge),
+        api.getRiskIndices(codigoIbge),
+        api.getDataCoverage(codigoIbge),
+        api.getMunicipalMaturity(codigoIbge),
+      ]);
+
+      const labels = ['indicadores', 'índices IVC/IRI', 'cobertura de dados', 'maturidade'];
+      const failures: string[] = [];
+
+      if (results[0].status === 'fulfilled') setIndicators(results[0].value);
+      else failures.push(labels[0]);
+
+      if (results[1].status === 'fulfilled') setIndices(results[1].value);
+      else failures.push(labels[1]);
+
+      if (results[2].status === 'fulfilled') setCoverage(results[2].value);
+      else failures.push(labels[2]);
+
+      if (results[3].status === 'fulfilled') setMaturity(results[3].value);
+
+      const firstReject = results.find((r) => r.status === 'rejected') as PromiseRejectedResult | undefined;
+      const rejectMsg = firstReject ? parseError(firstReject.reason) : '';
+
+      if (results[0].status === 'rejected') {
+        if (rejectMsg.includes('401') || rejectMsg.toLowerCase().includes('autentica')) {
+          setDashboardError('Sessão expirada ou acesso negado. Faça login no canto superior direito.');
+        } else if (rejectMsg.includes('404') || rejectMsg.toLowerCase().includes('not found')) {
+          setDashboardError(
+            'Município não encontrado no banco. Vá em Municípios → Validar → Executar onboarding.',
+          );
+        } else {
+          setDashboardError(`Não foi possível carregar os KPIs: ${rejectMsg}`);
+        }
+      } else if (failures.length > 0) {
+        setDashboardError(onboardingWarning ?? `Alguns dados não carregaram: ${failures.join(', ')}.`);
+      } else if (onboardingWarning) {
+        setDashboardError(onboardingWarning);
+      }
+
+      setLoading(false);
+
+      Promise.allSettled([
+        api.getOfficialUrbanClimate(codigoIbge),
+        api.getIntegrationStatus(),
+      ]).then((secondary) => {
+        if (secondary[0].status === 'fulfilled') setOfficialClimate(secondary[0].value);
+        if (secondary[1].status === 'fulfilled') setIntegrationStatus(secondary[1].value);
+      });
+    };
+    loadDashboardData();
+  }, [codigoIbge, municipioLoaded, municipioEnsuring]);
+
+  useEffect(() => {
+    if (!codigoIbge) {
+      setReportHistory([]);
+      setDiagnostic(null);
+      setActionPlan(null);
+      return;
+    }
+    api.getMunicipalReportHistory(codigoIbge)
+      .then(setReportHistory)
+      .catch((err) => console.error('Erro ao carregar histórico de relatórios:', err));
+    api.getExecutiveDiagnostic(codigoIbge)
+      .then(setDiagnostic)
+      .catch(() => setDiagnostic(null));
+    api.getActionPlan(codigoIbge)
+      .then(setActionPlan)
+      .catch(() => setActionPlan(null));
+  }, [codigoIbge]);
+
+  const handleGenerateReport = async (force = false) => {
+    if (!codigoIbge) {
+      setReportError('Município não selecionado. Recarregue a página.');
+      return;
+    }
+    setReportLoading(true);
+    setReportError(null);
+    try {
+      const record = await api.generateMunicipalReport(codigoIbge, force || pdfForceOverride);
+      setReportHistory((prev) => [record, ...prev.filter((item) => item.id !== record.id)]);
+      await api.downloadReport(record.download_url, record.nome_arquivo);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Erro ao gerar relatório';
+      setReportError(msg);
+      if (msg.includes('403') || msg.toLowerCase().includes('bloqueado') || msg.toLowerCase().includes('prata')) {
+        setPdfForceOverride(true);
+      }
+    } finally {
+      setReportLoading(false);
+    }
+  };
+
+  const handleGenerateDiagnostic = async () => {
+    if (!codigoIbge) {
+      setDiagnosticError('Município não selecionado.');
+      return;
+    }
+    setDiagnosticLoading(true);
+    setDiagnosticError(null);
+    try {
+      const record = await api.generateExecutiveDiagnostic(codigoIbge);
+      setDiagnostic(record);
+      api.getActionPlan(codigoIbge).then(setActionPlan).catch(() => setActionPlan(null));
+    } catch (err) {
+      setDiagnosticError(err instanceof Error ? err.message : 'Erro ao gerar diagnóstico');
+    } finally {
+      setDiagnosticLoading(false);
+    }
+  };
+
+  const handleCopyDiagnostic = async () => {
+    if (!diagnostic?.narrativa_md) return;
+    await navigator.clipboard.writeText(diagnostic.narrativa_md);
+  };
+
+  const handleGenerateActionPlan = async () => {
+    if (!codigoIbge) {
+      setActionPlanError('Município não selecionado.');
+      return;
+    }
+    setActionPlanLoading(true);
+    setActionPlanError(null);
+    try {
+      const plan = await api.generateActionPlan(codigoIbge);
+      setActionPlan(plan);
+    } catch (err) {
+      setActionPlanError(err instanceof Error ? err.message : 'Erro ao gerar plano de ação');
+    } finally {
+      setActionPlanLoading(false);
+    }
+  };
+
+  const formatReportDate = (value: string) => new Date(value).toLocaleString('pt-BR');
+
+  const formatCurrency = (value: number) => {
+    return value.toLocaleString('pt-BR', {
+      style: 'currency',
+      currency: 'BRL',
+      maximumFractionDigits: 0
+    });
+  };
+
+  const formatCompactCurrency = (value: number) => {
+    if (value >= 1_000_000_000) return `R$ ${(value / 1_000_000_000).toFixed(1)} bi`;
+    if (value >= 1_000_000) return `R$ ${(value / 1_000_000).toFixed(1)} mi`;
+    if (value >= 1_000) return `R$ ${(value / 1_000).toFixed(1)} mil`;
+    return formatCurrency(value);
+  };
+
+  if (!mounted || municipioEnsuring) {
+    return (
+      <div className="flex flex-col gap-5 p-1 animate-pulse">
+        <p className="rounded-lg border border-indigo-500/30 bg-indigo-950/20 px-3 py-2 text-[11px] text-indigo-200">
+          Carregando dados de {municipioNome || codigoIbge}…
+        </p>
+        <div className="grid grid-cols-2 gap-3">
+          {[1, 2, 3, 4].map((i) => (
+            <div key={i} className="h-24 bg-zinc-900 rounded-xl border border-zinc-800"></div>
+          ))}
+          <div className="h-24 col-span-2 bg-zinc-900 rounded-xl border border-zinc-800"></div>
+        </div>
+        <div className="h-64 bg-zinc-900 rounded-xl border border-zinc-800"></div>
+      </div>
+    );
+  }
+
+  if (loading) {
+    return (
+      <div className="flex flex-col gap-5 p-1 animate-pulse">
+        <div className="grid grid-cols-2 gap-3">
+          {[1, 2, 3, 4].map((i) => (
+            <div key={i} className="h-24 bg-zinc-900 rounded-xl border border-zinc-800"></div>
+          ))}
+          <div className="h-24 col-span-2 bg-zinc-900 rounded-xl border border-zinc-800"></div>
+        </div>
+        <div className="h-64 bg-zinc-900 rounded-xl border border-zinc-800"></div>
+      </div>
+    );
+  }
+
+  // Combine IVC and IRI per neighborhood for charts
+  const chartData = indices?.vulnerabilidade.map((v) => {
+    const flood = indices.inundacao.find((f) => f.bairro_nome === v.bairro_nome);
+    return {
+      name: v.bairro_nome,
+      Vulnerabilidade: v.indice_vulnerabilidade,
+      Inundaçao: flood ? flood.indice_risco_inundacao : 0
+    };
+  }) || [];
+
+  type DashboardCard = {
+    title: string;
+    value: string;
+    desc: string;
+    icon: typeof Users;
+    color: string;
+    border: string;
+    badge?: string;
+    quality?: string;
+    maturityMetrics?: MunicipalMaturity['fontes'];
+  };
+
+  const kpiQuality = (q?: string | null) => {
+    const v = (q || 'lacuna').toLowerCase();
+    if (v === 'oficial') return 'OFICIAL';
+    if (v === 'derivado') return 'DERIVADO';
+    if (v === 'estimado') return 'ESTIMADO';
+    return 'LACUNA';
+  };
+
+  const prataMin = 26;
+  const maturityScore = maturity?.score ?? coverage?.maturidade_percentual ?? 0;
+  const pdfBlocked = maturityScore < prataMin;
+
+  const cards: DashboardCard[] = [
+    {
+      title: 'População Estimada',
+      value: indicators?.populacao != null ? indicators.populacao.toLocaleString('pt-BR') : '—',
+      desc: `${indicators?.densidade_demografica || '—'} hab/km²`,
+      badge: indicators?.selo_ibge,
+      quality: kpiQuality(indicators?.populacao_qualidade),
+      icon: Users,
+      color: 'text-indigo-400',
+      border: 'hover:border-indigo-500/50'
+    },
+    {
+      title: 'Cobertura Vegetal',
+      value: indicators?.cobertura_vegetal_percent != null
+        ? `${indicators.cobertura_vegetal_percent}%`
+        : '—',
+      desc: 'Área verde urbana preservada',
+      quality: kpiQuality(indicators?.cobertura_qualidade),
+      icon: Trees,
+      color: 'text-accent-emerald',
+      border: 'hover:border-accent-emerald/50'
+    },
+    {
+      title: 'Risco Territorial Ativo',
+      value: indicators?.alertas_ativos_count != null ? String(indicators.alertas_ativos_count) : '—',
+      desc: 'Setores monitorados CEMADEN',
+      quality: kpiQuality(indicators?.alertas_qualidade),
+      icon: ShieldAlert,
+      color: indicators?.alertas_ativos_count ? 'text-accent-rose' : 'text-accent-amber',
+      border: 'hover:border-accent-rose/50'
+    },
+    {
+      title: 'Renda Média Mensal',
+      value: indicators?.renda_media_setores != null && indicators.renda_media_setores > 0
+        ? formatCurrency(indicators.renda_media_setores)
+        : '—',
+      desc: 'Estimativa mensal per capita (IBGE/PNAD)',
+      quality: kpiQuality(indicators?.renda_qualidade),
+      icon: DollarSign,
+      color: 'text-yellow-400',
+      border: 'hover:border-yellow-500/50'
+    },
+    {
+      title: 'Danos em Desastres (S2ID)',
+      value: indicators?.danos_materiais_total != null && indicators.danos_materiais_total > 0
+        ? formatCompactCurrency(indicators.danos_materiais_total)
+        : indicators?.historico_desastres_count
+          ? formatCompactCurrency(indicators.danos_materiais_total ?? 0)
+          : '—',
+      desc: indicators?.historico_desastres_count != null
+        ? `${indicators.historico_desastres_count} evento(s) histórico(s)`
+        : 'Sem registro S2ID',
+      quality: kpiQuality(indicators?.desastres_qualidade),
+      icon: Waves,
+      color: 'text-accent-sky',
+      border: 'hover:border-accent-sky/50'
+    },
+    {
+      title: 'Maturidade Municipal',
+      value: maturity
+        ? `${Math.round(maturity.score)}%`
+        : coverage?.maturidade_percentual != null
+          ? `${Math.round(coverage.maturidade_percentual)}%`
+          : '—',
+      desc: maturity
+        ? `${maturity.classificacao} · ${maturity.fontes_faltantes.length} fonte(s) faltante(s)`
+        : coverage
+          ? `${coverage.classificacao} · ${coverage.lacunas_prioritarias.length} lacuna(s)`
+          : 'Dados indisponíveis',
+      quality: maturityScore >= prataMin ? 'DERIVADO' : 'LACUNA',
+      maturityMetrics: maturity?.fontes,
+      icon: Award,
+      color: maturity?.classificacao === 'Platina' || maturity?.classificacao === 'Ouro'
+        ? 'text-emerald-400'
+        : maturity?.classificacao === 'Prata'
+          ? 'text-amber-400'
+          : 'text-orange-400',
+      border: 'hover:border-indigo-500/50'
+    }
+  ];
+
+  const officialClimateData = officialClimate?.historical_timeline
+    .filter((item) => item.temperatura_media !== null)
+    .map((item) => ({
+      ano: item.ano,
+      temp: item.temperatura_media,
+      area: item.area_urbanizada_km2,
+    })) || [];
+  const estimatedClimateData = officialClimate?.estimated_timeline
+    .map((item) => ({
+      ano: item.ano,
+      temp: item.temperatura_media,
+      area: item.area_urbanizada_km2,
+    })) || [];
+  const climateChartData = officialClimateData.length > 0 ? officialClimateData : estimatedClimateData;
+  const isEstimatedClimateChart = officialClimateData.length === 0;
+
+  return (
+    <div className="flex flex-col gap-5 overflow-y-auto max-h-[85vh] pr-2">
+      {dashboardError && (
+        <div className="rounded-xl border border-amber-500/40 bg-amber-950/30 px-4 py-3 text-[11px] leading-relaxed text-amber-100">
+          {dashboardError}
+        </div>
+      )}
+      {(indicators?.nome || municipioNome) && (
+        <div className="rounded-lg border border-zinc-800 bg-zinc-950/50 px-3 py-2">
+          <p className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">Município em análise</p>
+          <p className="text-sm font-extrabold text-zinc-100">
+            {indicators?.nome || municipioNome}
+            {indicators?.uf ? ` — ${indicators.uf}` : ''}
+            {codigoIbge ? <span className="ml-2 text-[10px] font-mono text-zinc-500">IBGE {codigoIbge}</span> : null}
+          </p>
+        </div>
+      )}
+      <div className="rounded-xl border border-indigo-500/30 bg-indigo-950/20 p-4">
+        <div className="mb-3 flex items-start justify-between gap-3">
+          <div>
+            <h4 className="text-xs font-extrabold uppercase tracking-wide text-indigo-200">Relatório territorial PDF</h4>
+            <p className="mt-1 text-[10px] leading-snug text-zinc-400">
+              Compila perfil municipal, risco, clima, fiscal e plano de ação para apresentação a gestores e Defesa Civil.
+              {pdfBlocked && (
+                <span className="mt-1 block text-amber-300/90">
+                  Requer maturidade Prata (≥{prataMin}%) — atual: {Math.round(maturityScore)}%.
+                </span>
+              )}
+            </p>
+          </div>
+          <div className="flex shrink-0 flex-col items-end gap-2">
+            {pdfBlocked && (
+              <label className="flex items-center gap-1.5 text-[9px] text-zinc-400">
+                <input
+                  type="checkbox"
+                  checked={pdfForceOverride}
+                  onChange={(e) => setPdfForceOverride(e.target.checked)}
+                  className="rounded border-zinc-600"
+                />
+                Override admin
+              </label>
+            )}
+            <button
+              type="button"
+              onClick={() => handleGenerateReport()}
+              disabled={reportLoading || !codigoIbge || (pdfBlocked && !pdfForceOverride)}
+              className="inline-flex shrink-0 items-center gap-2 rounded-lg border border-indigo-400/40 bg-indigo-500/15 px-3 py-2 text-[11px] font-bold text-indigo-100 transition hover:bg-indigo-500/25 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {reportLoading ? <Loader2 size={14} className="animate-spin" /> : <FileDown size={14} />}
+              {reportLoading ? 'Compilando dados...' : pdfBlocked && pdfForceOverride ? 'Gerar PDF (override)' : 'Gerar Relatório PDF'}
+            </button>
+          </div>
+        </div>
+        {reportError && (
+          <p className="mb-2 text-[10px] text-rose-300">{reportError}</p>
+        )}
+        {reportHistory.length > 0 && (
+          <div className="overflow-hidden rounded-lg border border-zinc-800">
+            <table className="w-full text-left text-[10px] text-zinc-300">
+              <thead className="bg-zinc-950/80 text-[9px] uppercase tracking-wide text-zinc-500">
+                <tr>
+                  <th className="px-2 py-1.5">Gerado em</th>
+                  <th className="px-2 py-1.5">Arquivo</th>
+                  <th className="px-2 py-1.5">Tamanho</th>
+                  <th className="px-2 py-1.5"></th>
+                </tr>
+              </thead>
+              <tbody>
+                {reportHistory.slice(0, 5).map((item) => (
+                  <tr key={item.id} className="border-t border-zinc-800/80">
+                    <td className="px-2 py-1.5">{formatReportDate(item.gerado_em)}</td>
+                    <td className="px-2 py-1.5 font-mono text-[9px]">{item.nome_arquivo}</td>
+                    <td className="px-2 py-1.5">{Math.round(item.tamanho_bytes / 1024)} KB</td>
+                    <td className="px-2 py-1.5">
+                      <button
+                        type="button"
+                        onClick={() => api.downloadReport(item.download_url, item.nome_arquivo)}
+                        className="text-indigo-300 hover:text-indigo-100"
+                      >
+                        Baixar
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      <div className="rounded-xl border border-emerald-500/30 bg-emerald-950/15 p-4">
+        <div className="mb-3 flex items-start justify-between gap-3">
+          <div>
+            <h4 className="text-xs font-extrabold uppercase tracking-wide text-emerald-200">Diagnóstico Executivo</h4>
+            <p className="mt-1 text-[10px] leading-snug text-zinc-400">
+              Narrativa institucional automática: perfil, fiscal, clima, desastres, riscos e lacunas — pronta para apresentação.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={handleGenerateDiagnostic}
+            disabled={diagnosticLoading || !codigoIbge}
+            className="inline-flex shrink-0 items-center gap-2 rounded-lg border border-emerald-400/40 bg-emerald-500/15 px-3 py-2 text-[11px] font-bold text-emerald-100 transition hover:bg-emerald-500/25 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {diagnosticLoading ? <Loader2 size={14} className="animate-spin" /> : <FileText size={14} />}
+            {diagnosticLoading ? 'Gerando...' : 'Gerar Diagnóstico'}
+          </button>
+        </div>
+        {diagnosticError && <p className="mb-2 text-[10px] text-rose-300">{diagnosticError}</p>}
+        {diagnostic ? (
+          <div className="space-y-2">
+            <div className="flex items-start justify-between gap-2">
+              <p className="text-[11px] font-semibold leading-snug text-zinc-200">{diagnostic.headline}</p>
+              <button
+                type="button"
+                onClick={handleCopyDiagnostic}
+                className="inline-flex shrink-0 items-center gap-1 rounded border border-zinc-700 px-2 py-1 text-[9px] text-zinc-400 hover:text-zinc-200"
+              >
+                <Copy size={10} /> Copiar
+              </button>
+            </div>
+            <p className="text-[9px] text-zinc-500">
+              v{diagnostic.versao} · {diagnostic.origem} · {formatReportDate(diagnostic.gerado_em || '')}
+            </p>
+            <pre className="max-h-48 overflow-y-auto whitespace-pre-wrap rounded-lg border border-zinc-800 bg-zinc-950/80 p-3 text-[10px] leading-relaxed text-zinc-300">
+              {diagnostic.narrativa_md}
+            </pre>
+          </div>
+        ) : (
+          <p className="text-[10px] text-zinc-500">
+            Nenhum diagnóstico salvo. Gere manualmente ou conclua o onboarding municipal.
+          </p>
+        )}
+      </div>
+
+      <div className="rounded-xl border border-amber-500/30 bg-amber-950/15 p-4">
+        <div className="mb-3 flex items-start justify-between gap-3">
+          <div>
+            <h4 className="text-xs font-extrabold uppercase tracking-wide text-amber-200">Plano de Ação Territorial</h4>
+            <p className="mt-1 text-[10px] leading-snug text-zinc-400">
+              Ações por horizonte (curto, médio, longo prazo) com classificação de custo e programas federais sugeridos.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={handleGenerateActionPlan}
+            disabled={actionPlanLoading || !codigoIbge}
+            className="inline-flex shrink-0 items-center gap-2 rounded-lg border border-amber-400/40 bg-amber-500/15 px-3 py-2 text-[11px] font-bold text-amber-100 transition hover:bg-amber-500/25 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {actionPlanLoading ? <Loader2 size={14} className="animate-spin" /> : <ListChecks size={14} />}
+            {actionPlanLoading ? 'Gerando...' : 'Gerar Plano de Ação'}
+          </button>
+        </div>
+        {actionPlanError && <p className="mb-2 text-[10px] text-rose-300">{actionPlanError}</p>}
+        {actionPlan ? (
+          <ActionPlanPanel plan={actionPlan} />
+        ) : (
+          <p className="text-[10px] text-zinc-500">
+            Nenhum plano salvo. Gere após o diagnóstico executivo ou manualmente.
+          </p>
+        )}
+      </div>
+
+      {/* Overview Cards Grid */}
+      <div className="grid grid-cols-2 gap-3">
+        {cards.map((c, i) => {
+          const Icon = c.icon;
+          const hasMaturityBreakdown = Boolean(c.maturityMetrics?.length);
+          return (
+            <div
+              key={i}
+              className={`bg-card/70 backdrop-blur-md border border-border p-3.5 rounded-xl transition-all duration-300 ${c.border} ${
+                i >= 4 ? 'col-span-2' : ''
+              } ${hasMaturityBreakdown ? 'flex flex-col gap-0' : 'flex items-center justify-between'}`}
+            >
+              <div className={`flex w-full ${hasMaturityBreakdown ? 'items-start justify-between' : 'items-center justify-between'}`}>
+                <div className="min-w-0 flex-1">
+                  <span className="text-[9px] uppercase font-bold text-zinc-500 tracking-wider">{c.title}</span>
+                  {c.quality && (
+                    <span className={`ml-1.5 inline-flex rounded px-1.5 py-0.5 text-[7px] font-bold uppercase tracking-wide ${SOURCE_STATUS_STYLE[c.quality] || 'bg-zinc-800 text-zinc-400'}`}>
+                      {c.quality}
+                    </span>
+                  )}
+                  {c.badge && (
+                    <span className="ml-2 inline-flex rounded-full border border-emerald-500/30 bg-emerald-500/10 px-1.5 py-0.5 text-[8px] font-bold uppercase tracking-wide text-emerald-300">
+                      {c.badge}
+                    </span>
+                  )}
+                  <h3 className="text-lg font-extrabold text-zinc-100 mt-0.5">{c.value}</h3>
+                  <span className="text-[10px] text-zinc-400 mt-0.5 block leading-tight">{c.desc}</span>
+                </div>
+                <div className={`p-2 rounded-lg bg-zinc-950/80 border border-zinc-800 shrink-0 ${c.color}`}>
+                  <Icon size={18} />
+                </div>
+              </div>
+
+              {hasMaturityBreakdown && (
+                <div className="mt-3 border-t border-zinc-800 pt-2.5">
+                  <p className="mb-2 text-[8px] font-extrabold uppercase tracking-wider text-zinc-500">
+                    Composição do score (8 fontes · máx. 12,5 pts cada)
+                  </p>
+                  <div className="grid grid-cols-2 gap-1.5">
+                    {c.maturityMetrics!.map((fonte) => (
+                      <div
+                        key={fonte.id}
+                        className="flex items-center justify-between gap-1.5 rounded-md border border-zinc-800/80 bg-zinc-950/50 px-2 py-1"
+                      >
+                        <div className="min-w-0 flex-1">
+                          <span className="block truncate text-[9px] font-semibold text-zinc-300">{fonte.nome}</span>
+                          <span className={`text-[8px] font-bold uppercase ${SOURCE_STATUS_TEXT[fonte.status] || 'text-zinc-500'}`}>
+                            {fonte.status}
+                          </span>
+                        </div>
+                        <span className="shrink-0 font-mono text-[10px] font-bold text-zinc-200">
+                          {fonte.pontos.toFixed(1)}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                  {maturity && (
+                    <p className="mt-2 text-right text-[9px] font-mono text-zinc-500">
+                      Total: {maturity.fontes.reduce((sum, f) => sum + f.pontos, 0).toFixed(1)} / 100
+                    </p>
+                  )}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      {indicators && (
+        <div className="rounded-xl border border-border bg-card/40 p-4">
+          <div className="mb-3 flex items-center justify-between gap-2">
+            <h4 className="text-xs font-extrabold uppercase tracking-wide text-zinc-200">Saúde Fiscal</h4>
+            {indicators.siconfi_ia_url && (
+              <a
+                href={indicators.siconfi_ia_url}
+                target="_blank"
+                rel="noreferrer"
+                className="rounded-full border border-sky-500/30 bg-sky-500/10 px-2 py-0.5 text-[10px] font-bold text-sky-200 hover:bg-sky-500/20"
+              >
+                Ver no Siconfi.IA ↗
+              </a>
+            )}
+          </div>
+
+          <div className="mb-3 flex items-center gap-3">
+            <span className="text-[10px] text-zinc-500">CAPAG</span>
+            <span className={`inline-flex h-10 w-10 items-center justify-center rounded-xl border text-lg font-black ${
+              indicators.nota_capag === 'A' || indicators.nota_capag === 'B'
+                ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300'
+                : indicators.nota_capag === 'C'
+                  ? 'border-amber-500/40 bg-amber-500/10 text-amber-300'
+                  : indicators.nota_capag === 'D'
+                    ? 'border-rose-500/40 bg-rose-500/10 text-rose-300'
+                    : 'border-zinc-700 bg-zinc-900 text-zinc-400'
+            }`}>
+              {indicators.nota_capag || '—'}
+            </span>
+            <div className="text-[10px] text-zinc-400">
+              {indicators.selo_fiscal || 'Dados fiscais integrados via SICONFI'}
+              {indicators.receita_corrente_liquida != null && (
+                <p className="mt-1 text-zinc-300">RCL: {formatCompactCurrency(indicators.receita_corrente_liquida)}</p>
+              )}
+            </div>
+          </div>
+
+          {indicators.despesa_pessoal_pct_rcl != null && (
+            <div className="mb-3">
+              <div className="mb-1 flex justify-between text-[10px] text-zinc-400">
+                <span>Despesa com Pessoal % RCL</span>
+                <span className={indicators.despesa_pessoal_pct_rcl > 60 ? 'text-rose-300' : 'text-emerald-300'}>
+                  {indicators.despesa_pessoal_pct_rcl.toFixed(1)}% / limite 60%
+                </span>
+              </div>
+              <div className="h-2 overflow-hidden rounded-full bg-zinc-900">
+                <div
+                  className={`h-full rounded-full ${indicators.despesa_pessoal_pct_rcl > 60 ? 'bg-rose-500' : 'bg-emerald-500'}`}
+                  style={{ width: `${Math.min(100, (indicators.despesa_pessoal_pct_rcl / 60) * 100)}%` }}
+                />
+              </div>
+            </div>
+          )}
+
+          {indicators.divida_consolidada_pct_rcl != null && (
+            <div>
+              <div className="mb-1 flex justify-between text-[10px] text-zinc-400">
+                <span>Dívida Consolidada % RCL</span>
+                <span className={indicators.divida_consolidada_pct_rcl > 120 ? 'text-rose-300' : 'text-emerald-300'}>
+                  {indicators.divida_consolidada_pct_rcl.toFixed(1)}% / limite 120%
+                </span>
+              </div>
+              <div className="h-2 overflow-hidden rounded-full bg-zinc-900">
+                <div
+                  className={`h-full rounded-full ${indicators.divida_consolidada_pct_rcl > 120 ? 'bg-rose-500' : 'bg-sky-500'}`}
+                  style={{ width: `${Math.min(100, (indicators.divida_consolidada_pct_rcl / 120) * 100)}%` }}
+                />
+              </div>
+            </div>
+          )}
+
+          {!indicators.nota_capag && indicators.despesa_pessoal_pct_rcl == null && indicators.divida_consolidada_pct_rcl == null && (
+            <p className="text-[10px] text-zinc-500">
+              Dados fiscais ainda não sincronizados. Execute a integração SICONFI/CAPAG ou consulte diretamente o Siconfi.IA.
+            </p>
+          )}
+        </div>
+      )}
+
+      {indicators && indicators.pib_per_capita != null && (
+        <div className="rounded-xl border border-border bg-card/40 p-4">
+          <h4 className="mb-2 text-xs font-extrabold uppercase tracking-wide text-zinc-200">PIB Municipal</h4>
+          <p className="text-lg font-extrabold text-zinc-100">{formatCurrency(indicators.pib_per_capita)}</p>
+          <p className="text-[9px] text-emerald-300">{indicators.pib_qualidade === 'oficial' ? 'Oficial IBGE' : 'Estimado'}</p>
+        </div>
+      )}
+
+      {integrationStatus && (
+        <div className="rounded-xl border border-border bg-card/30 p-3">
+          <h4 className="mb-2 text-[10px] font-extrabold uppercase tracking-wide text-zinc-400">Status das integrações públicas</h4>
+          <div className="flex flex-wrap gap-2">
+            {integrationStatus.sources.map((source) => (
+              <span
+                key={source.source}
+                className={`rounded-full border px-2 py-0.5 text-[9px] font-bold uppercase ${
+                  source.status === 'OK'
+                    ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300'
+                    : source.status === 'FALHA'
+                      ? 'border-rose-500/30 bg-rose-500/10 text-rose-300'
+                      : 'border-amber-500/30 bg-amber-500/10 text-amber-300'
+                }`}
+              >
+                {source.source}: {source.status} ({source.records_count})
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {maturity && (
+        <div className={`rounded-xl border p-4 ${TIER_STYLE[maturity.classificacao]?.border || 'border-zinc-700'} ${TIER_STYLE[maturity.classificacao]?.bg || 'bg-zinc-900/40'}`}>
+          <div className="mb-3 flex items-center justify-between gap-2">
+            <h4 className="flex items-center gap-2 text-xs font-extrabold uppercase tracking-wide text-zinc-200">
+              <Award size={14} className={TIER_STYLE[maturity.classificacao]?.text} />
+              Score de Maturidade Municipal
+            </h4>
+            <span className={`rounded-full border px-3 py-1 text-[11px] font-extrabold uppercase ${TIER_STYLE[maturity.classificacao]?.border} ${TIER_STYLE[maturity.classificacao]?.text}`}>
+              {maturity.classificacao}
+            </span>
+          </div>
+          <div className="mb-3 flex items-end gap-3">
+            <span className="text-4xl font-black text-zinc-100">{Math.round(maturity.score)}</span>
+            <span className="pb-1 text-sm text-zinc-500">/ 100</span>
+            <span className="pb-1 ml-auto text-[10px] text-zinc-500">
+              Completude {Math.round(maturity.completeness_score)}%
+            </span>
+          </div>
+          <p className="mb-3 text-[10px] text-zinc-400">{maturity.resumo}</p>
+          <div className="grid grid-cols-2 gap-2">
+            {maturity.fontes.map((fonte) => (
+              <div key={fonte.id} className="rounded-lg border border-zinc-800 bg-zinc-950/60 p-2">
+                <div className="flex items-center justify-between gap-1">
+                  <strong className="truncate text-[10px] text-zinc-200">{fonte.nome}</strong>
+                  <span className={`shrink-0 rounded px-1.5 py-0.5 text-[8px] font-bold uppercase ${SOURCE_STATUS_STYLE[fonte.status] || 'bg-zinc-800 text-zinc-400'}`}>
+                    {fonte.status}
+                  </span>
+                </div>
+                <p className="mt-0.5 text-[9px] text-zinc-500">{fonte.detail || fonte.recomendacao}</p>
+              </div>
+            ))}
+          </div>
+          {maturity.fontes_faltantes.length > 0 && (
+            <p className="mt-3 text-[9px] text-rose-300/80">
+              Faltantes: {maturity.fontes_faltantes.map((f) => f.nome).join(' · ')}
+            </p>
+          )}
+        </div>
+      )}
+
+      {coverage && (
+        <div className="rounded-xl border border-border bg-card/40 p-4">
+          <div className="mb-3 flex items-center justify-between">
+            <h4 className="text-xs font-extrabold uppercase tracking-wide text-zinc-200">Radar de Integração de Dados</h4>
+            <span className="rounded-full border border-indigo-500/30 bg-indigo-500/10 px-2 py-0.5 text-[10px] font-bold text-indigo-200">
+              {coverage.classificacao}
+            </span>
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            {coverage.lacunas_prioritarias.slice(0, 4).map((item) => (
+              <div key={item.id} className="rounded-lg border border-zinc-800 bg-zinc-950/60 p-2">
+                <div className="flex items-center justify-between gap-2">
+                  <strong className="truncate text-[10px] text-zinc-200">{item.nome}</strong>
+                  <span className={`shrink-0 rounded px-1.5 py-0.5 text-[8px] font-bold uppercase ${
+                    item.status === 'Ausente' ? 'bg-rose-500/15 text-rose-300' : 'bg-amber-500/15 text-amber-300'
+                  }`}>
+                    {item.status}
+                  </span>
+                </div>
+                <p className="mt-1 line-clamp-2 text-[9px] leading-snug text-zinc-500">{item.recomendacao}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Recharts Graphics List */}
+      <div className="flex flex-col gap-4">
+        {/* Neighborhood indices comparison */}
+        <div className="bg-card/40 backdrop-blur-md border border-border p-4.5 rounded-xl flex flex-col">
+          <div className="mb-3">
+            <h4 className="font-extrabold text-zinc-200 text-xs uppercase tracking-wide">Vulnerabilidade por Bairro</h4>
+            <p className="text-[10px] text-zinc-400 mt-0.5">Comparação entre os índices IVC e IRI (0 a 1.0)</p>
+          </div>
+          <div className="h-56 w-full text-[10px]">
+            {chartData.length > 0 ? (
+              <ResponsiveContainer width="99%" height="100%">
+                <BarChart data={chartData} margin={{ left: -20, right: 10, bottom: 5 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#27272a" />
+                  <XAxis dataKey="name" stroke="#71717a" />
+                  <YAxis stroke="#71717a" domain={[0, 1.0]} />
+                  <Tooltip
+                    contentStyle={{ backgroundColor: '#18181b', border: '1px solid #27272a', borderRadius: '8px' }}
+                    itemStyle={{ color: '#e4e4e7' }}
+                  />
+                  <Legend iconSize={8} />
+                  <Bar dataKey="Vulnerabilidade" fill="#f43f5e" name="Vulnerabilidade (IVC)" radius={[2, 2, 0, 0]} />
+                  <Bar dataKey="Inundaçao" fill="#0ea5e9" name="Risco Inundação (IRI)" radius={[2, 2, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            ) : (
+              <div className="flex h-full items-center justify-center rounded-lg border border-dashed border-zinc-700 bg-zinc-900/40 px-4 text-center text-[11px] text-zinc-400">
+                {indices
+                  ? 'Nenhum bairro com índices IVC/IRI calculados para este município.'
+                  : 'Índices de vulnerabilidade indisponíveis. Verifique se o onboarding foi concluído.'}
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Heat Island historical trends */}
+        <div className="bg-card/40 backdrop-blur-md border border-border p-4.5 rounded-xl flex flex-col">
+          <div className="mb-3">
+            <h4 className="font-extrabold text-zinc-200 text-xs uppercase tracking-wide">
+              Uso de Solo vs Clima Urbano - {isEstimatedClimateChart ? 'Série Estimada' : 'Fonte Oficial'}
+            </h4>
+            <p className="text-[10px] text-zinc-400 mt-0.5">
+              {!isEstimatedClimateChart && officialClimate?.station
+                ? `Temperatura do ar: INMET ${officialClimate.station.nome} (${officialClimate.station.codigo}), ${officialClimate.station.distancia_km} km`
+                : 'Série estimada exibida porque as fontes oficiais ainda não retornaram dados completos'}
+            </p>
+          </div>
+          {climateChartData.length > 0 ? (
+            <div className="h-56 w-full text-[10px]">
+              <ResponsiveContainer width="99%" height="100%">
+                <LineChart data={climateChartData} margin={{ left: -20, right: 10, bottom: 5 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#27272a" />
+                  <XAxis dataKey="ano" stroke="#71717a" />
+                  <YAxis yAxisId="left" stroke="#10b981" domain={isEstimatedClimateChart ? [25, 30] : ['auto', 'auto']} />
+                  <YAxis yAxisId="right" orientation="right" stroke="#6366f1" domain={isEstimatedClimateChart ? [50, 250] : ['auto', 'auto']} />
+                  <Tooltip contentStyle={{ backgroundColor: '#18181b', border: '1px solid #27272a', borderRadius: '8px' }} />
+                  <Legend iconSize={8} />
+                  <Line yAxisId="left" type="monotone" dataKey="temp" stroke="#10b981" strokeWidth={2} name={isEstimatedClimateChart ? 'Temp. estimada (°C)' : 'Temp. média INMET (°C)'} dot={{ r: 3 }} />
+                  <Line yAxisId="right" type="monotone" dataKey="area" stroke="#6366f1" strokeWidth={2} name={isEstimatedClimateChart ? 'Área urbanizada estimada (km²)' : 'Área urbanizada MapBiomas (km²)'} dot={{ r: 3 }} connectNulls={false} />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+          ) : (
+            <div className="rounded-lg border border-zinc-800 bg-zinc-950/50 p-4 text-[10px] leading-relaxed text-zinc-400">
+              Ainda não há série anual oficial retornada pela API pública do INMET para a estação selecionada. O gráfico demonstrativo foi removido para evitar interpretação indevida.
+            </div>
+          )}
+          <p className="mt-2 rounded-lg border border-amber-500/20 bg-amber-950/10 p-2 text-[9px] leading-relaxed text-amber-200/80">
+            Fonte: {isEstimatedClimateChart ? (officialClimate?.estimated_source || 'Estimativa interna Sinidu+Clima') : (officialClimate?.source || 'INMET + MapBiomas pendente')}. {isEstimatedClimateChart ? officialClimate?.estimated_methodology : officialClimate?.source_note}
+            {officialClimate?.lacunas?.length ? ` Lacunas: ${officialClimate.lacunas.join(' ')}` : ''}
+          </p>
+        </div>
+      </div>
+
+    </div>
+  );
+
+}

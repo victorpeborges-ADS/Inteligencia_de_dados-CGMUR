@@ -1,0 +1,49 @@
+# Keycloak local — homologação OIDC (Fase 5.5)
+# Uso combinado com proxy TLS:
+#   ./scripts/homolog-up.sh
+#
+# Console Keycloak: http://localhost:8080 (admin / admin)
+# Issuer: http://localhost:8080/realms/sinidu
+
+services:
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.0
+    container_name: sinidu_keycloak
+    command: start-dev --import-realm
+    environment:
+      KC_HOSTNAME: localhost
+      KC_HOSTNAME_STRICT: "false"
+      KC_HTTP_ENABLED: "true"
+      KC_HEALTH_ENABLED: "true"
+      KC_BOOTSTRAP_ADMIN_USERNAME: admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: admin
+    ports:
+      - "${KEYCLOAK_HTTP_PORT:-8080}:8080"
+    volumes:
+      - ./deploy/keycloak/realm-sinidu.json:/opt/keycloak/data/import/realm-sinidu.json:ro
+    healthcheck:
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/8080 && printf 'GET /realms/sinidu HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n' >&3 && head -1 <&3 | grep -q '200'"]
+      interval: 10s
+      timeout: 5s
+      retries: 18
+      start_period: 60s
+    restart: unless-stopped
+
+  backend:
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      - AUTH_ENABLED=${AUTH_ENABLED:-false}
+      - AUTH_PASSWORD_LOGIN_ENABLED=${AUTH_PASSWORD_LOGIN_ENABLED:-true}
+      - OIDC_ENABLED=${OIDC_ENABLED:-false}
+      - OIDC_ISSUER_URL=${OIDC_ISSUER_URL:-http://host.docker.internal:8080/realms/sinidu}
+      - OIDC_CLIENT_ID=${OIDC_CLIENT_ID:-sinidu-clima}
+      - OIDC_CLIENT_SECRET=${OIDC_CLIENT_SECRET:-sinidu-local-secret-change-me}
+      - OIDC_REDIRECT_URI=${OIDC_REDIRECT_URI:-https://localhost/api/v1/auth/oidc/callback}
+      - OIDC_FRONTEND_REDIRECT=${OIDC_FRONTEND_REDIRECT:-https://localhost/}
+      - OIDC_ADMIN_GROUPS=sinidu-admin
+      - OIDC_GESTOR_GROUPS=sinidu-gestor
+      - OIDC_LEITOR_GROUPS=sinidu-leitor
+    depends_on:
+      keycloak:
+        condition: service_started

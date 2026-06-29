@@ -1,0 +1,45 @@
+documents:
+  - id: sinidu_tecnica
+    label: "Sinidu+Clima — Documentação Técnica"
+    path: "../documentacao/Sinidu_Clima_Documentacao_Tecnica.pdf"
+    category: sinidu
+
+  - id: sinidu_simplificada
+    label: "Sinidu+Clima — Explicação Simplificada"
+    path: "../documentacao/Sinidu_Clima_Explicacao_Simplificada.pdf"
+    category: sinidu
+
+  - id: lei_12608
+    label: "Lei nº 12.608/2012 — PNPDEC"
+    path: "corpus/texts/lei_12608_pnpdec.md"
+    category: legislacao
+
+  - id: lei_14026
+    label: "Lei nº 14.026/2020 — Marco do Saneamento"
+    path: "corpus/texts/lei_14026_saneamento.md"
+    category: legislacao
+
+  - id: conama_369
+    label: "Resolução CONAMA 369/2006"
+    path: "corpus/texts/conama_369.md"
+    category: legislacao
+
+  - id: conama_303
+    label: "Resolução CONAMA 303/2002 — APPs"
+    path: "corpus/texts/conama_303.md"
+    category: legislacao
+
+  - id: portaria_mcid_1012
+    label: "Portaria MCID nº 1.012/2025 — Cidades +Inteligentes"
+    path: "corpus/texts/portaria_mcid_1012.md"
+    category: legislacao
+
+  - id: adapta_brasil
+    label: "AdaptaBrasil — Guia de Adaptação Climática (INPE)"
+    path: "corpus/texts/adapta_brasil_guia.md"
+    category: guias
+
+  - id: manual_sedec
+    label: "Manual de Gestão de Riscos e Desastres — SEDEC/MI"
+    path: "corpus/texts/manual_gestao_riscos_sedec.md"
+    category: guias

@@ -1,0 +1,39 @@
+# TLS na borda — homologação / staging MCID
+# Uso:
+#   ./scripts/generate-dev-certs.sh
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml \
+#     -f docker-compose.proxy-tls.yml up -d
+#
+# Acesso: https://localhost (aceite certificado autoassinado no browser)
+
+services:
+  proxy:
+    image: nginx:1.27-alpine
+    container_name: sinidu_proxy
+    ports:
+      - "${PROXY_HTTP_PORT:-80}:80"
+      - "${PROXY_HTTPS_PORT:-443}:443"
+    volumes:
+      - ./deploy/nginx/nginx-tls.conf:/etc/nginx/nginx.conf:ro
+      - ./deploy/nginx/certs:/etc/nginx/certs:ro
+    depends_on:
+      backend:
+        condition: service_healthy
+      frontend:
+        condition: service_started
+    restart: unless-stopped
+
+  backend:
+    environment:
+      - TRUST_PROXY_HEADERS=true
+      - PUBLIC_BASE_URL=${PUBLIC_BASE_URL:-https://localhost}
+      - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:3000,https://localhost}
+      - OIDC_REDIRECT_URI=${OIDC_REDIRECT_URI:-https://localhost/api/v1/auth/oidc/callback}
+      - OIDC_FRONTEND_REDIRECT=${OIDC_FRONTEND_REDIRECT:-https://localhost/}
+      - TLS_FULLCHAIN=/etc/nginx/certs/fullchain.pem
+    volumes:
+      - ./deploy/nginx/certs:/etc/nginx/certs:ro
+
+  frontend:
+    environment:
+      - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-https://localhost}

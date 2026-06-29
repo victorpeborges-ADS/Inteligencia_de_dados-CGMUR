@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8"/>
+  <title>Plano de Contingência — {{ muni.nome if muni else plan.id }}</title>
+  <style>
+    body { font-family: Arial, sans-serif; font-size: 11pt; color: #111; margin: 24px; }
+    h1 { color: #0f766e; font-size: 18pt; }
+    h2 { color: #134e4a; font-size: 13pt; margin-top: 20px; border-bottom: 1px solid #ccc; }
+    table { width: 100%; border-collapse: collapse; margin: 8px 0; }
+    th, td { border: 1px solid #ddd; padding: 6px 8px; text-align: left; }
+    th { background: #f0fdfa; }
+    .badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-weight: bold; }
+    .verde { background: #dcfce7; color: #166534; }
+    .amarelo { background: #fef9c3; color: #854d0e; }
+    .laranja { background: #ffedd5; color: #9a3412; }
+    .vermelho { background: #fee2e2; color: #991b1b; }
+    ul { margin: 4px 0; padding-left: 20px; }
+    .meta { color: #666; font-size: 9pt; }
+  </style>
+</head>
+<body>
+  <h1>Plano de Contingenciamento</h1>
+  <p class="meta">
+    {{ muni.nome if muni else '—' }} — {{ muni.uf if muni else '' }} ·
+    Cenário: {{ plan.cenario_tipo }} · Status: {{ plan.status }} · v{{ plan.versao }}<br/>
+    Gerado em {{ gerado_em }}
+  </p>
+
+  <p>Nível de alerta referência:
+    <span class="badge {{ plan.nivel_alerta|lower }}">{{ plan.nivel_alerta }}</span>
+  </p>
+
+  <h2>1. Zonas de evacuação ({{ plan.zonas_evacuacao|length }})</h2>
+  <table>
+    <tr><th>Nome</th><th>Capacidade</th><th>Prioridade</th></tr>
+    {% for z in plan.zonas_evacuacao %}
+    <tr><td>{{ z.nome }}</td><td>{{ z.capacidade | default('—') }}</td><td>{{ z.prioridade | default('—') }}</td></tr>
+    {% else %}
+    <tr><td colspan="3">Nenhuma zona definida</td></tr>
+    {% endfor %}
+  </table>
+
+  <h2>2. Rotas de fuga ({{ plan.rotas_fuga|length }})</h2>
+  <table>
+    <tr><th>Rota</th><th>Origem</th><th>Destino</th><th>Prioridade</th></tr>
+    {% for r in plan.rotas_fuga %}
+    <tr>
+      <td>{{ r.nome }}</td>
+      <td>{{ r.zona_origem | default('—') }}</td>
+      <td>{{ r.ponto_destino | default('—') }}</td>
+      <td>{{ r.prioridade | default('—') }}</td>
+    </tr>
+    {% else %}
+    <tr><td colspan="4">Nenhuma rota definida</td></tr>
+    {% endfor %}
+  </table>
+
+  <h2>3. Pontos de apoio ({{ plan.pontos_apoio|length }})</h2>
+  <table>
+    <tr><th>Nome</th><th>Tipo</th><th>Fonte</th></tr>
+    {% for p in plan.pontos_apoio[:30] %}
+    <tr><td>{{ p.nome }}</td><td>{{ p.tipo | default('—') }}</td><td>{{ p.fonte | default('—') }}</td></tr>
+    {% endfor %}
+  </table>
+
+  <h2>4. Contatos Defesa Civil</h2>
+  <table>
+    <tr><th>Nome</th><th>Cargo</th><th>Telefone</th><th>WhatsApp</th></tr>
+    {% for c in plan.contatos_defesa_civil %}
+    <tr><td>{{ c.nome }}</td><td>{{ c.cargo | default('—') }}</td><td>{{ c.telefone | default('—') }}</td><td>{{ c.whatsapp | default('—') }}</td></tr>
+    {% endfor %}
+  </table>
+
+  <h2>5. Ações por nível COBRADE</h2>
+  {% for nivel, acoes in plan.acoes_por_nivel.items() %}
+  <h3>{{ nivel }}</h3>
+  <ul>{% for a in acoes %}<li>{{ a }}</li>{% endfor %}</ul>
+  {% endfor %}
+</body>
+</html>

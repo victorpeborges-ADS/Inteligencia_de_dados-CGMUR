@@ -1,0 +1,77 @@
+import type { MunicipalityOption } from '@/utils/api';
+
+export type ActiveTab =
+  | 'dashboard'
+  | 'simulation'
+  | 'assistant'
+  | 'cases'
+  | 'contingency'
+  | 'monitoring'
+  | 'onboarding'
+  | 'catalog'
+  | 'audit'
+  | 'system';
+
+export type LayerQuality = 'Oficial' | 'Estimado' | 'Derivado Sinidu+Clima';
+
+export type LayerOption = {
+  id: string;
+  label: string;
+  group: 'Base' | 'Dados urbanos' | 'Clima e riscos' | 'Planejamento' | 'Saúde e segurança';
+  source: string;
+  quality: LayerQuality;
+};
+
+export const TAB_ROUTES: Record<ActiveTab, string> = {
+  dashboard: '/painel',
+  onboarding: '/municipios',
+  catalog: '/catalogo',
+  simulation: '/simulacoes',
+  monitoring: '/monitor',
+  contingency: '/contingencia',
+  assistant: '/assistente',
+  cases: '/casos',
+  audit: '/auditoria',
+  system: '/sistema',
+};
+
+export const ROUTE_TO_TAB: Record<string, ActiveTab> = Object.fromEntries(
+  Object.entries(TAB_ROUTES).map(([tab, path]) => [path, tab as ActiveTab]),
+) as Record<string, ActiveTab>;
+
+export const DEFAULT_LAYER_OPTIONS: LayerOption[] = [
+  { id: 'municipio', label: 'Limite Municipal', group: 'Base', source: 'IBGE / Geocidades', quality: 'Oficial' },
+  { id: 'bairros', label: 'Malha de Bairros', group: 'Base', source: 'Prefeitura / CTM', quality: 'Estimado' },
+  { id: 'infraestrutura', label: 'Equipamentos e Redes', group: 'Dados urbanos', source: 'OSM / bases locais', quality: 'Estimado' },
+  { id: 'socioeconomico', label: 'Socioeconômico (IBGE/CTM)', group: 'Dados urbanos', source: 'IBGE / CTM', quality: 'Estimado' },
+  { id: 'cobertura', label: 'Uso do Solo (MapBiomas)', group: 'Clima e riscos', source: 'MapBiomas', quality: 'Oficial' },
+  { id: 'vulnerabilidade', label: 'Vulnerabilidade Climática', group: 'Clima e riscos', source: 'Sinidu+Clima: IBGE + MapBiomas + S2ID', quality: 'Derivado Sinidu+Clima' },
+  { id: 'inundacao', label: 'Risco de Inundação', group: 'Clima e riscos', source: 'Sinidu+Clima: S2ID + hidrografia', quality: 'Derivado Sinidu+Clima' },
+  { id: 'alertas', label: 'Alertas Ativos (CEMADEN)', group: 'Clima e riscos', source: 'CEMADEN / GeoRiscos', quality: 'Oficial' },
+  { id: 'desastres', label: 'Histórico de Desastres (S2ID)', group: 'Clima e riscos', source: 'S2ID / SEDEC', quality: 'Oficial' },
+  { id: 'saneamento_drenagem', label: 'Saneamento e Drenagem', group: 'Planejamento', source: 'SNIS/SINISA + estimativa Sinidu+Clima', quality: 'Derivado Sinidu+Clima' },
+  { id: 'adaptacao_climatica', label: 'Capacidade de Adaptação', group: 'Planejamento', source: 'Adapta Brasil + MapBiomas', quality: 'Derivado Sinidu+Clima' },
+  { id: 'prioridade_planejamento', label: 'Prioridade de Planejamento', group: 'Planejamento', source: 'Planos locais + Score Sinidu+Clima', quality: 'Derivado Sinidu+Clima' },
+  { id: 'lacunas_dados', label: 'Lacunas de Dados', group: 'Planejamento', source: 'Radar de Integração Sinidu+Clima', quality: 'Derivado Sinidu+Clima' },
+  { id: 'saude_risco', label: 'Saúde × Risco', group: 'Saúde e segurança', source: 'CNES/DataSUS × risco climático', quality: 'Derivado Sinidu+Clima' },
+  { id: 'seguranca_publica', label: 'Segurança Pública', group: 'Saúde e segurança', source: 'SINESP / dados.gov.br', quality: 'Estimado' },
+  { id: 'vulnerabilidade_multidimensional', label: 'Vulnerabilidade Multidimensional (VM)', group: 'Saúde e segurança', source: 'VM Sinidu+Clima', quality: 'Derivado Sinidu+Clima' },
+];
+
+export function mergeMunicipalities(
+  seeds: MunicipalityOption[],
+  loaded: MunicipalityOption[] | null,
+): MunicipalityOption[] {
+  const byCode = new Map<string, MunicipalityOption>(
+    seeds.map((item) => [item.codigo_ibge, { ...item, loaded: false }]),
+  );
+  loaded?.forEach((item) => {
+    const existing = byCode.get(item.codigo_ibge);
+    byCode.set(item.codigo_ibge, {
+      ...existing,
+      ...item,
+      loaded: true,
+    });
+  });
+  return Array.from(byCode.values()).sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR'));
+}
