@@ -10,6 +10,9 @@ from typing import Any, Callable
 
 from app.db import SessionLocal
 from app.config import settings
+from app.services.job_store import load_job as load_persisted_job
+from app.services.job_store import save_job as persist_job
+from app.services.job_store import list_persisted_jobs
 
 logger = logging.getLogger(__name__)
 
@@ -36,25 +39,36 @@ def create_job(job_type: str, *, label: str = "") -> str:
             "result": None,
             "error": None,
         }
+        persist_job(_jobs[job_id])
     return job_id
 
 
 def get_job(job_id: str) -> dict[str, Any] | None:
     with _lock:
         job = _jobs.get(job_id)
-        return dict(job) if job else None
+        if job:
+            return dict(job)
+    persisted = load_persisted_job(job_id)
+    if persisted:
+        with _lock:
+            _jobs[job_id] = persisted
+        return dict(persisted)
+    return None
 
 
 def list_jobs(limit: int = 20) -> list[dict[str, Any]]:
     with _lock:
-        rows = sorted(_jobs.values(), key=lambda item: item["created_at"], reverse=True)
-        return [dict(row) for row in rows[:limit]]
+        memory_rows = sorted(_jobs.values(), key=lambda item: item["created_at"], reverse=True)
+    if memory_rows:
+        return [dict(row) for row in memory_rows[:limit]]
+    return list_persisted_jobs(limit)[:limit]
 
 
 def _update(job_id: str, **fields: Any) -> None:
     with _lock:
         if job_id in _jobs:
             _jobs[job_id].update(fields)
+            persist_job(_jobs[job_id])
 
 
 def _notify_job_finished(job_id: str) -> None:
@@ -138,10 +152,12 @@ def run_pipeline_job(onboarding_limit: int = 61) -> str:
 
         db = SessionLocal()
         try:
-            etl = IntegrationOrchestrator(db).sync_all()
+            # Onboarding primeiro — libera geometria PostGIS para diagnósticos/PDFs;
+            # ETL de indicadores e MapBiomas em seguida.
             onboarding = run_batch_onboarding(db, limit=onboarding_limit, status_filter="pendente", force=False)
+            etl = IntegrationOrchestrator(db).sync_all()
             mapbiomas = sync_mapbiomas_batch(db, limit=onboarding_limit, force=False)
-            return {"etl": etl, "onboarding": onboarding, "mapbiomas": mapbiomas}
+            return {"onboarding": onboarding, "etl": etl, "mapbiomas": mapbiomas}
         finally:
             db.close()
 
@@ -199,6 +215,96 @@ def run_external_sources_batch_job(limit: int = 61) -> str:
         try:
             codigos = TARGET_IBGE_CODES[: min(limit, 61)]
             return sync_external_sources_batch(db, codigos)
+        finally:
+            db.close()
+
+    run_in_background(job_id, _task)
+    return job_id
+
+
+def run_bairros_batch_job(limit: int = 61, force: bool = False) -> str:
+    job_id = create_job("bairros_batch", label=f"Malha oficial IBGE ({limit})")
+
+    def _task() -> dict[str, Any]:
+        from app.data_connectors.official_bairros_collector import sync_official_bairros_batch
+
+        db = SessionLocal()
+        try:
+            return sync_official_bairros_batch(db, limit=limit, force=force)
+        finally:
+            db.close()
+
+    run_in_background(job_id, _task)
+    return job_id
+
+
+def run_dem_batch_job(limit: int = 61, force: bool = False) -> str:
+    job_id = create_job("dem_batch", label=f"DEM LiDAR/SRTM ({limit})")
+
+    def _task() -> dict[str, Any]:
+        from app.services.dem_processor import sync_dem_batch
+
+        db = SessionLocal()
+        try:
+            return sync_dem_batch(db, limit=limit, force=force)
+        finally:
+            db.close()
+
+    run_in_background(job_id, _task)
+    return job_id
+
+
+def run_full_homologation_job(onboarding_limit: int = 61, force_dem: bool = False) -> str:
+    job_id = create_job("homologation_full", label="Pipeline MCID completo (61)")
+
+    def _task() -> dict[str, Any]:
+        from app.data_connectors.mapbiomas_collector import sync_mapbiomas_batch
+        from app.data_connectors.orchestrator import IntegrationOrchestrator
+        from app.services.batch_export_service import run_batch_diagnostics
+        from app.services.dem_processor import sync_dem_batch
+        from app.services.onboarding_engine import run_batch_onboarding
+
+        db = SessionLocal()
+        try:
+            onboarding = run_batch_onboarding(
+                db, limit=onboarding_limit, status_filter="pendente", force=False,
+            )
+            etl = IntegrationOrchestrator(db).sync_all()
+            mapbiomas = sync_mapbiomas_batch(db, limit=onboarding_limit, force=False)
+            dem = sync_dem_batch(db, limit=onboarding_limit, force=force_dem)
+            diagnostics = run_batch_diagnostics(db, limit=onboarding_limit, ensure_dem=False)
+            return {
+                "onboarding": onboarding,
+                "etl": etl,
+                "mapbiomas": mapbiomas,
+                "dem": dem,
+                "diagnostics": diagnostics,
+            }
+        finally:
+            db.close()
+
+    run_in_background(job_id, _task)
+    return job_id
+
+
+def run_catalog_refresh_job(codigo_ibge: str) -> str:
+    """Recarrega fontes Integrado do catálogo municipal com progresso visível."""
+    job_id = create_job("catalog_refresh", label=f"Catálogo {codigo_ibge}")
+
+    def _progress(payload: dict[str, Any]) -> None:
+        _update(job_id, progress=payload.get("progress", 0), result=payload)
+
+    def _task() -> dict[str, Any]:
+        from app.services.catalog_sync_service import refresh_integrated_sources
+
+        db = SessionLocal()
+        try:
+            return refresh_integrated_sources(
+                db,
+                codigo_ibge,
+                job_id=job_id,
+                progress_callback=_progress,
+            )
         finally:
             db.close()
 

@@ -8,8 +8,8 @@ from sqlalchemy.orm import Session
 
 from app.assistant.siconfi_ia_bridge import answer_fiscal_question, detect_fiscal_intent
 from app.models import Municipio
-from rag.config import GEMINI_API_KEY, SYSTEM_PROMPT_TEMPLATE
-from rag.providers.registry import get_chat_provider, resolve_chat_provider_with_fallback
+from rag.config import SYSTEM_PROMPT_TEMPLATE
+from rag.providers.registry import resolve_chat_provider_with_fallback
 from rag.retriever import retrieve
 from rag.store import RetrievedChunk
 from app.services.municipal_assistant_context import (
@@ -48,8 +48,7 @@ def _suggested_layer(query: str, response: str) -> Optional[str]:
 def _unavailable_message(provider_label: str) -> str:
     return (
         f"O provedor **{provider_label}** não está disponível. "
-        "Informe a **API key** no campo acima e clique em **Conectar**, "
-        "ou selecione **Ollama (local)**."
+        "Verifique se **MISTRAL_API_KEY** está configurada no servidor."
     )
 
 
@@ -144,25 +143,10 @@ class RagAssistant:
         except Exception as exc:
             logger.exception("Falha no provedor %s", provider.id)
             used_provider = provider
-            if provider.id == "ollama" and GEMINI_API_KEY.strip():
-                try:
-                    fallback = get_chat_provider("gemini")
-                    if fallback.is_available():
-                        answer = fallback.chat(messages, model=fallback.info().default_model)
-                        used_provider = fallback
-                        model = fallback.info().default_model
-                    else:
-                        raise exc
-                except Exception:
-                    answer = (
-                        f"Não foi possível gerar resposta via **{provider_info.label}**: {exc}. "
-                        "Tente outro provedor ou verifique a configuração."
-                    )
-            else:
-                answer = (
-                    f"Não foi possível gerar resposta via **{provider_info.label}**: {exc}. "
-                    "Tente outro provedor ou verifique a configuração."
-                )
+            answer = (
+                f"Não foi possível gerar resposta via **{provider_info.label}**: {exc}. "
+                "Verifique a configuração da API Mistral."
+            )
 
         elapsed = int((time.time() - start) * 1000)
         rag_sources = [

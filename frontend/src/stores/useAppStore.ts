@@ -5,6 +5,14 @@ import { DEFAULT_MAP_LAYERS } from '@/utils/municipalitySync';
 import type { MunicipalityOption } from '@/utils/api';
 import { SEED_MUNICIPALITIES } from '@/data/municipalities_seed';
 
+export type AgentMessage = {
+  id: string;
+  role: 'user' | 'assistant';
+  content: string;
+  ts: number;
+  proactive?: boolean;
+};
+
 type AppStore = {
   activeTab: ActiveTab;
   setActiveTab: (tab: ActiveTab) => void;
@@ -34,7 +42,33 @@ type AppStore = {
   alertNivel: string;
   setAlertNivel: (nivel: string) => void;
   resetMapLayers: () => void;
+  agenteAberto: boolean;
+  setAgenteAberto: (aberto: boolean) => void;
+  agenteMensagens: AgentMessage[];
+  addAgenteMensagem: (msg: Omit<AgentMessage, 'id' | 'ts'> & Partial<Pick<AgentMessage, 'id' | 'ts'>>) => void;
+  clearAgenteMensagens: () => void;
+  agenteNaoLidas: number;
+  markAgenteLidas: () => void;
+  pushAgenteProativo: (content: string) => void;
+  agenteLoading: boolean;
+  setAgenteLoading: (loading: boolean) => void;
+  proactiveShownKeys: string[];
+  markProactiveShown: (key: string) => void;
+  hasProactiveShown: (key: string) => boolean;
+  notifyDiagnosticGenerated: (payload: {
+    versao?: string;
+    score?: number;
+    prioridade?: string;
+    riscos?: string[];
+  }) => void;
 };
+
+let msgCounter = 0;
+
+function nextMsgId() {
+  msgCounter += 1;
+  return `agent-${Date.now()}-${msgCounter}`;
+}
 
 export const useAppStore = create<AppStore>((set, get) => ({
   activeTab: 'dashboard',
@@ -75,4 +109,64 @@ export const useAppStore = create<AppStore>((set, get) => ({
   alertNivel: 'VERDE',
   setAlertNivel: (nivel) => set({ alertNivel: nivel }),
   resetMapLayers: () => set({ activeLayers: [...DEFAULT_MAP_LAYERS] }),
+  agenteAberto: false,
+  setAgenteAberto: (aberto) =>
+    set((state) => ({
+      agenteAberto: aberto,
+      agenteNaoLidas: aberto ? 0 : state.agenteNaoLidas,
+    })),
+  agenteMensagens: [],
+  addAgenteMensagem: (msg) =>
+    set((state) => ({
+      agenteMensagens: [
+        ...state.agenteMensagens,
+        {
+          id: msg.id || nextMsgId(),
+          ts: msg.ts ?? Date.now(),
+          role: msg.role,
+          content: msg.content,
+          proactive: msg.proactive,
+        },
+      ],
+    })),
+  clearAgenteMensagens: () => set({ agenteMensagens: [], agenteNaoLidas: 0 }),
+  agenteNaoLidas: 0,
+  markAgenteLidas: () => set({ agenteNaoLidas: 0 }),
+  pushAgenteProativo: (content) =>
+    set((state) => ({
+      agenteMensagens: [
+        ...state.agenteMensagens,
+        {
+          id: nextMsgId(),
+          ts: Date.now(),
+          role: 'assistant',
+          content,
+          proactive: true,
+        },
+      ],
+      agenteNaoLidas: state.agenteAberto ? 0 : state.agenteNaoLidas + 1,
+    })),
+  agenteLoading: false,
+  setAgenteLoading: (loading) => set({ agenteLoading: loading }),
+  proactiveShownKeys: [],
+  markProactiveShown: (key) =>
+    set((state) => ({
+      proactiveShownKeys: state.proactiveShownKeys.includes(key)
+        ? state.proactiveShownKeys
+        : [...state.proactiveShownKeys, key],
+    })),
+  hasProactiveShown: (key) => get().proactiveShownKeys.includes(key),
+  notifyDiagnosticGenerated: (payload) => {
+    const versao = payload.versao || 'v12';
+    const score = payload.score ?? '?';
+    const prioridade = payload.prioridade || 'Alta';
+    const riscos = (payload.riscos || []).slice(0, 3).join(', ') || 'não listados';
+    const content =
+      `Diagnóstico **${versao}** gerado. Score **${score}** = prioridade **${prioridade}**. ` +
+      `Principais riscos: ${riscos}. Quer que eu prepare um resumo executivo para apresentação?`;
+    get().pushAgenteProativo(content);
+    if (!get().agenteAberto) {
+      set({ agenteAberto: true, agenteNaoLidas: 0 });
+    }
+  },
 }));

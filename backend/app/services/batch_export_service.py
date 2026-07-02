@@ -18,10 +18,12 @@ def run_batch_diagnostics(
     *,
     limit: int = 61,
     codigos: list[str] | None = None,
+    ensure_dem: bool = True,
 ) -> dict[str, Any]:
     targets = (codigos or TARGET_IBGE_CODES)[: min(limit, 61)]
     processed = 0
     skipped = 0
+    dem_prepared = 0
     errors: list[dict[str, str]] = []
 
     for codigo in targets:
@@ -31,18 +33,27 @@ def run_batch_diagnostics(
             errors.append({"codigo_ibge": codigo, "error": "município não carregado no PostGIS"})
             continue
         try:
+            if ensure_dem:
+                from app.services.dem_processor import is_processed, process_municipality_dem
+
+                if not is_processed(codigo):
+                    process_municipality_dem(db, codigo, force=False)
+                    dem_prepared += 1
+
             from app.services.executive_diagnostic_engine import generate_executive_diagnostic
 
             generate_executive_diagnostic(db, codigo, origem="batch")
             processed += 1
         except Exception as exc:
             logger.exception("Diagnóstico batch falhou %s", codigo)
+            db.rollback()
             errors.append({"codigo_ibge": codigo, "error": str(exc)})
 
     return {
         "requested": len(targets),
         "processed": processed,
         "skipped": skipped,
+        "dem_prepared": dem_prepared,
         "errors": errors,
     }
 
@@ -94,6 +105,7 @@ def run_batch_reports(
                 errors.append({"codigo_ibge": codigo, "error": record.erro_mensagem or "falha na geração"})
         except Exception as exc:
             logger.exception("PDF batch falhou %s", codigo)
+            db.rollback()
             errors.append({"codigo_ibge": codigo, "error": str(exc)})
 
     return {

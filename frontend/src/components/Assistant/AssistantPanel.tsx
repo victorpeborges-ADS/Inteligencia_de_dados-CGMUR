@@ -65,7 +65,7 @@ export default function AssistantPanel({ onToggleLayer, onFocusMap, codigoIbge }
   const [sourceModal, setSourceModal] = useState<RagSource | null>(null);
   const [municipalSourceModal, setMunicipalSourceModal] = useState<MunicipalDataSource | null>(null);
   const [providers, setProviders] = useState<AIProviderOption[]>([]);
-  const [selectedProvider, setSelectedProvider] = useState('ollama');
+  const [selectedProvider, setSelectedProvider] = useState('mistral');
   const [selectedModel, setSelectedModel] = useState('');
   const [apiKeyInput, setApiKeyInput] = useState('');
   const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>('idle');
@@ -151,15 +151,15 @@ export default function AssistantPanel({ onToggleLayer, onFocusMap, codigoIbge }
       }
     }).catch(() => {
       setProviders([{
-        id: 'ollama',
-        label: 'Ollama (local)',
-        description: '',
-        available: true,
-        is_local: true,
-        requires_api_key: false,
-        default_model: 'llama3.1:8b-instruct-q4_K_M',
-        models: ['llama3.1:8b-instruct-q4_K_M'],
-        privacy_note: '',
+        id: 'mistral',
+        label: 'Mistral AI',
+        description: 'Modelos Mistral via API oficial.',
+        available: false,
+        is_local: false,
+        requires_api_key: true,
+        default_model: 'mistral-small-latest',
+        models: ['mistral-small-latest', 'mistral-large-latest'],
+        privacy_note: 'O contexto RAG e dados municipais são enviados ao provedor externo.',
       }]);
     });
   }, [runConnectionTest]);

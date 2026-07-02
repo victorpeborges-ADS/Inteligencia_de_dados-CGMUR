@@ -1,9 +1,21 @@
 'use client';
 
-import { useState } from 'react';
-import { api, MitigationPlan, SimulationAnalysis, SimulationOutput } from '@/utils/api';
-import { Play, RotateCcw, AlertTriangle, HelpCircle, Thermometer, Droplet, FileText, Waves, Layers, Mountain, Activity, Brain, Sparkles } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { api, MitigationPlan, RainfallComparison, SimulationInterpret, SimulationOutput, SlopeInterpretation } from '@/utils/api';
+import { Play, RotateCcw, AlertTriangle, HelpCircle, Thermometer, Droplet, FileText, Waves, Layers, Mountain, Activity, Sparkles, Copy, ClipboardCheck } from 'lucide-react';
 import PredictiveAnalysis from './PredictiveAnalysis';
+
+export type SimOverlayOptions = {
+  showFlood: boolean;
+  showContours: boolean;
+  showFlow: boolean;
+};
+
+export const DEFAULT_SIM_OVERLAYS: SimOverlayOptions = {
+  showFlood: true,
+  showContours: true,
+  showFlow: true,
+};
 
 interface SimulationProps {
   onSimulate: (payload: SimulationOutput | any) => void;
@@ -11,13 +23,26 @@ interface SimulationProps {
   codigoIbge?: string;
   municipioNome?: string;
   municipioLoaded?: boolean;
+  overlayOptions: SimOverlayOptions;
+  onOverlayChange: (options: SimOverlayOptions) => void;
 }
 
-export default function SimulationPanel({ onSimulate, onClear, codigoIbge, municipioNome, municipioLoaded }: SimulationProps) {
+export default function SimulationPanel({
+  onSimulate,
+  onClear,
+  codigoIbge,
+  municipioNome,
+  municipioLoaded,
+  overlayOptions,
+  onOverlayChange,
+}: SimulationProps) {
   const [activeTab, setActiveTab] = useState<'waterproofing' | 'veg_loss' | 'rainfall' | 'drainage' | 'predictive'>('rainfall');
   const [waterproofingPct, setWaterproofingPct] = useState(25);
   const [vegLossPct, setVegLossPct] = useState(40);
   const [rainfallMm, setRainfallMm] = useState(120);
+  const [compareRainfall, setCompareRainfall] = useState(true);
+  const [baselineRainfallMm, setBaselineRainfallMm] = useState(80);
+  const [rainfallComparison, setRainfallComparison] = useState<RainfallComparison | null>(null);
   const [drainageDeficitPct, setDrainageDeficitPct] = useState(45);
   
   const [loading, setLoading] = useState(false);
@@ -25,17 +50,89 @@ export default function SimulationPanel({ onSimulate, onClear, codigoIbge, munic
   const [planLoading, setPlanLoading] = useState(false);
   const [contingencyLoading, setContingencyLoading] = useState(false);
   const [mitigationPlan, setMitigationPlan] = useState<MitigationPlan | null>(null);
+  const [exportLoading, setExportLoading] = useState<'geojson' | 'pdf' | null>(null);
+  const [simInterpret, setSimInterpret] = useState<SimulationInterpret | null>(null);
+  const [slopeInterpret, setSlopeInterpret] = useState<SlopeInterpretation | null>(null);
   const [analysisLoading, setAnalysisLoading] = useState(false);
-  const [aiAnalysis, setAiAnalysis] = useState<SimulationAnalysis | null>(null);
+  const [interpretError, setInterpretError] = useState<string | null>(null);
+  const [copyOk, setCopyOk] = useState(false);
+  const [lidarUploading, setLidarUploading] = useState(false);
+  const [lidarMessage, setLidarMessage] = useState<string | null>(null);
 
-  const runAiAnalysis = async (data: SimulationOutput) => {
-    setAnalysisLoading(true);
+  useEffect(() => {
+    if (analysisLoading) {
+      document.getElementById('interpretacao-ia')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  }, [analysisLoading]);
+
+  const HYDRO_MODEL_VERSION = process.env.NEXT_PUBLIC_HYDRO_MODEL_VERSION ?? '2.3';
+  const displayedModelVersion = result?.simulation_meta?.model_version ?? HYDRO_MODEL_VERSION;
+
+  const PILOT_IBGE = '2611606';
+  const isPilot = codigoIbge?.replace(/\D/g, '').padStart(7, '0').slice(-7) === PILOT_IBGE;
+
+  const handleLidarUpload = async (file: File) => {
+    if (!codigoIbge) return;
+    setLidarUploading(true);
+    setLidarMessage(null);
     try {
-      const analysis = await api.analyzeSimulation(data, codigoIbge);
-      setAiAnalysis(analysis);
+      const result = await api.importLocalDem(codigoIbge, file, true);
+      const cfg = result.config as { dem_source?: string; dem_resolution_m?: number } | undefined;
+      setLidarMessage(
+        `DEM importado: ${cfg?.dem_source ?? 'LiDAR local'}${cfg?.dem_resolution_m != null ? ` (${cfg.dem_resolution_m} m)` : ''}`,
+      );
+    } catch (e) {
+      setLidarMessage(e instanceof Error ? e.message : 'Falha no upload LiDAR');
+    } finally {
+      setLidarUploading(false);
+    }
+  };
+
+  const simulationTipo = (): 'chuva' | 'asfalto' | 'vegetacao' | 'drenagem' => {
+    if (activeTab === 'waterproofing') return 'asfalto';
+    if (activeTab === 'veg_loss') return 'vegetacao';
+    if (activeTab === 'drainage') return 'drenagem';
+    return 'chuva';
+  };
+
+  const interpretForPdf = (interpret: SimulationInterpret) => ({
+    findings: interpret.findings?.length
+      ? interpret.findings
+      : [
+          interpret.resumo_executivo,
+          ...interpret.areas_criticas,
+          ...interpret.equipamentos_em_risco,
+          interpret.comparacao_historica,
+          ...interpret.recomendacoes_imediatas,
+        ].filter(Boolean),
+    resumo_executivo: interpret.resumo_executivo,
+    interpretacao_diferencial: interpret.interpretacao_diferencial,
+  });
+
+  const runInterpret = async (data: SimulationOutput, comparison: RainfallComparison | null) => {
+    if (!codigoIbge) return;
+    setAnalysisLoading(true);
+    setSimInterpret(null);
+    setSlopeInterpret(null);
+    setInterpretError(null);
+    try {
+      const interpret = await api.interpretSimulation({
+        municipio_codigo: codigoIbge,
+        tipo_simulacao: simulationTipo(),
+        parametro_atual: data.input_value,
+        parametro_referencia: baselineRainfallMm,
+        resultado_simulacao: data,
+        resultado_referencia: comparison?.baseline,
+        comparacao_delta: comparison?.delta,
+      });
+      setSimInterpret(interpret);
+      const meta = data.simulation_meta;
+      if (meta?.landslide_zones && Number(meta.landslide_zones) > 0) {
+        api.getSlopeInterpretation(codigoIbge, data.input_value).then(setSlopeInterpret).catch(() => null);
+      }
     } catch (err) {
-      console.error('Error running AI analysis:', err);
-      setAiAnalysis(null);
+      console.error('Interpretation failed:', err);
+      setInterpretError(err instanceof Error ? err.message : 'Falha ao gerar interpretação.');
     } finally {
       setAnalysisLoading(false);
     }
@@ -44,21 +141,29 @@ export default function SimulationPanel({ onSimulate, onClear, codigoIbge, munic
   const handleSimulate = async () => {
     setLoading(true);
     setMitigationPlan(null);
-    setAiAnalysis(null);
+    setSimInterpret(null);
+    setSlopeInterpret(null);
+    setInterpretError(null);
+    setRainfallComparison(null);
     try {
       let data: SimulationOutput;
+      let comparison: RainfallComparison | null = null;
       if (activeTab === 'waterproofing') {
         data = await api.simulateWaterproofing(waterproofingPct, codigoIbge);
       } else if (activeTab === 'veg_loss') {
         data = await api.simulateVegetationLoss(vegLossPct, codigoIbge);
       } else if (activeTab === 'drainage') {
         data = await api.simulateDrainageDeficit(drainageDeficitPct, codigoIbge);
+      } else if (compareRainfall) {
+        comparison = await api.compareRainfallScenarios(rainfallMm, baselineRainfallMm, codigoIbge);
+        setRainfallComparison(comparison);
+        data = comparison.scenario;
       } else {
         data = await api.simulateExtremeRainfall(rainfallMm, codigoIbge);
       }
       setResult(data);
       onSimulate(data);
-      void runAiAnalysis(data);
+      void runInterpret(data, compareRainfall && activeTab === 'rainfall' ? comparison : null);
     } catch (err) {
       console.error('Error running simulation:', err);
     } finally {
@@ -66,11 +171,80 @@ export default function SimulationPanel({ onSimulate, onClear, codigoIbge, munic
     }
   };
 
+  const handleExportGeojson = async () => {
+    if (!result) return;
+    setExportLoading('geojson');
+    try {
+      const meta = await api.exportSimulationGeojson(
+        result,
+        codigoIbge,
+        rainfallComparison?.delta,
+      );
+      await api.downloadReport(meta.download_url, meta.nome_arquivo);
+    } catch (err) {
+      console.error('Export GeoJSON failed:', err);
+    } finally {
+      setExportLoading(null);
+    }
+  };
+
+  const handleExportPdf = async () => {
+    if (!result) return;
+    setExportLoading('pdf');
+    try {
+      const meta = await api.exportSimulationPdf(result, codigoIbge, {
+        comparisonDelta: rainfallComparison?.delta,
+        analysis: simInterpret ? interpretForPdf(simInterpret) : undefined,
+      });
+      await api.downloadReport(meta.download_url, meta.nome_arquivo);
+    } catch (err) {
+      console.error('Export PDF failed:', err);
+    } finally {
+      setExportLoading(null);
+    }
+  };
+
   const handleReset = () => {
     setResult(null);
     setMitigationPlan(null);
-    setAiAnalysis(null);
+    setSimInterpret(null);
+    setSlopeInterpret(null);
+    setInterpretError(null);
+    setRainfallComparison(null);
     onClear();
+  };
+
+  const handleCopyInterpret = async () => {
+    if (!simInterpret) return;
+    const text = [
+      simInterpret.resumo_executivo,
+      '',
+      'ÁREAS CRÍTICAS:',
+      ...simInterpret.areas_criticas.map((a) => `• ${a}`),
+      '',
+      'EQUIPAMENTOS EM RISCO:',
+      ...simInterpret.equipamentos_em_risco.map((e) => `• ${e}`),
+      '',
+      `HISTÓRICO: ${simInterpret.comparacao_historica}`,
+      simInterpret.interpretacao_diferencial ? `\nCOMPARAÇÃO: ${simInterpret.interpretacao_diferencial}` : '',
+      '',
+      'RECOMENDAÇÕES:',
+      ...simInterpret.recomendacoes_imediatas.map((r) => `→ ${r}`),
+      '',
+      simInterpret.disclaimer,
+    ].join('\n');
+    await navigator.clipboard.writeText(text);
+    setCopyOk(true);
+    setTimeout(() => setCopyOk(false), 2000);
+  };
+
+  const handleIncludeInReport = () => {
+    if (!simInterpret || !codigoIbge) return;
+    sessionStorage.setItem(
+      `sinidu_sim_interpret_${codigoIbge}`,
+      JSON.stringify({ ...simInterpret, saved_at: new Date().toISOString() }),
+    );
+    void handleExportPdf();
   };
 
   const handleGenerateMitigationPlan = async () => {
@@ -108,7 +282,40 @@ export default function SimulationPanel({ onSimulate, onClear, codigoIbge, munic
   };
 
   return (
-    <div className="flex flex-col gap-5 p-1 overflow-y-auto max-h-[85vh]">
+    <div className="flex flex-col gap-5 p-1">
+      {codigoIbge && (
+        <div className="rounded-lg border border-sky-800/50 bg-sky-950/30 px-3 py-2">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <p className="text-xs font-semibold text-sky-200">
+                DEM / LiDAR{municipioNome ? ` — ${municipioNome}` : ''}
+              </p>
+              <p className="text-[10px] text-zinc-500">
+                GeoTIFF (.tif) para curvas de nível e simulação em alta resolução
+                {!isPilot && ' · piloto refinado: Recife (2611606)'}
+              </p>
+            </div>
+            <label
+              className={`inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-sky-700 bg-sky-900/40 px-3 py-1.5 text-xs font-medium text-sky-100 hover:bg-sky-800/50 ${lidarUploading ? 'opacity-50' : ''}`}
+            >
+              <Mountain className="h-3.5 w-3.5" />
+              {lidarUploading ? 'Enviando…' : 'Importar LiDAR'}
+              <input
+                type="file"
+                accept=".tif,.tiff,.geotiff"
+                className="hidden"
+                disabled={lidarUploading}
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) void handleLidarUpload(file);
+                  e.target.value = '';
+                }}
+              />
+            </label>
+          </div>
+          {lidarMessage && <p className="mt-2 text-[10px] text-sky-100">{lidarMessage}</p>}
+        </div>
+      )}
       {/* Simulation Selector tabs */}
       <div className="grid grid-cols-5 gap-1 bg-zinc-950 p-1 rounded-lg border border-border">
         {(['rainfall', 'predictive', 'waterproofing', 'veg_loss', 'drainage'] as const).map((tab) => (
@@ -151,7 +358,7 @@ export default function SimulationPanel({ onSimulate, onClear, codigoIbge, munic
                   </p>
                 </div>
                 <span className="shrink-0 rounded-md border border-sky-500/30 bg-sky-500/10 px-2 py-1 text-[9px] font-bold text-sky-200">
-                  v2.0
+                  v{displayedModelVersion}
                 </span>
               </div>
             </div>
@@ -195,6 +402,38 @@ export default function SimulationPanel({ onSimulate, onClear, codigoIbge, munic
               </div>
             </div>
 
+            <div className="rounded-lg border border-zinc-800 bg-zinc-950/50 p-3 space-y-3">
+              <label className="flex items-center justify-between gap-2 cursor-pointer">
+                <span className="text-[10px] font-bold text-zinc-300 uppercase tracking-wide">Comparar com referência</span>
+                <input
+                  type="checkbox"
+                  checked={compareRainfall}
+                  onChange={(e) => setCompareRainfall(e.target.checked)}
+                  className="accent-sky-500"
+                />
+              </label>
+              {compareRainfall && (
+                <div className="flex flex-col gap-1.5">
+                  <div className="flex justify-between text-[10px] text-zinc-400">
+                    <span>Referência (mm)</span>
+                    <span className="font-bold text-zinc-200">{baselineRainfallMm} mm</span>
+                  </div>
+                  <input
+                    type="range"
+                    min="40"
+                    max="150"
+                    step="10"
+                    value={baselineRainfallMm}
+                    onChange={(e) => setBaselineRainfallMm(Number(e.target.value))}
+                    className="w-full h-1.5 bg-zinc-800 rounded-lg appearance-none cursor-pointer accent-zinc-500"
+                  />
+                  <p className="text-[9px] text-zinc-500">
+                    Cenário atual ({rainfallMm} mm) será comparado com a referência para calcular delta de área, população e profundidade.
+                  </p>
+                </div>
+              )}
+            </div>
+
             <div className="rounded-lg border border-zinc-800 bg-zinc-950/50 p-3">
               <h5 className="mb-2 flex items-center gap-1.5 text-[10px] font-extrabold uppercase tracking-wide text-zinc-300">
                 <Layers size={13} className="text-lime-400" /> Camadas geradas no mapa
@@ -212,10 +451,11 @@ export default function SimulationPanel({ onSimulate, onClear, codigoIbge, munic
                 <Mountain size={13} /> Metodologia
               </h5>
               <p className="text-[10px] leading-relaxed text-zinc-400">
-                O motor cruza precipitação, raster SRTM 30 m, corpos d&apos;água MapBiomas, índice IRI
-                (modula profundidade por bairro), IVC, histórico S2ID e alertas CEMADEN. Deslizamentos
-                são derivados da declividade DEM (não mais bairros fixos). A cota de enchente simulada
-                parte do percentil 20 de elevação municipal + incremento pluviométrico.
+                O motor cruza precipitação, raster SRTM 30 m (±16 m vertical), acúmulo de fluxo D8,
+                índice de umidade topográfica (TWI), impermeabilização MapBiomas, corpos d&apos;água,
+                IRI por bairro, IVC, histórico S2ID e alertas CEMADEN.
+                Isolinhas com intervalo adaptativo ao desnível local; profundidade concentra-se
+                em vales e linhas de drenagem.
               </p>
               <p className="mt-2 text-[9px] italic leading-relaxed text-zinc-500">
                 Proxy territorial para planejamento — não substitui modelagem hidrodinâmica 2D/HEC-RAS.
@@ -398,16 +638,200 @@ export default function SimulationPanel({ onSimulate, onClear, codigoIbge, munic
               {result.simulation_meta?.dem_available && (
                 <p className="mt-0.5 text-[9px] text-lime-400/80 font-mono">
                   DEM: {result.simulation_meta.dem_source} · Δh max {result.simulation_meta.max_depth_m} m
+                  {result.simulation_meta.flood_patches != null && (
+                    <> · {result.simulation_meta.flood_patches} manchas</>
+                  )}
                 </p>
               )}
             </div>
             {result.simulation_meta?.method && (
               <span className="rounded border border-indigo-500/30 bg-indigo-500/10 px-2 py-0.5 text-[8px] font-bold uppercase text-indigo-200">
                 {result.simulation_meta.method}
+                {result.simulation_meta.model_version && (
+                  <> · v{result.simulation_meta.model_version}</>
+                )}
               </span>
             )}
           </div>
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={handleExportGeojson}
+              disabled={exportLoading !== null}
+              className="rounded-lg border border-lime-500/30 bg-lime-950/20 px-3 py-1.5 text-[10px] font-bold uppercase text-lime-200 hover:bg-lime-950/40 disabled:opacity-50"
+            >
+              {exportLoading === 'geojson' ? 'Exportando…' : 'Exportar GeoJSON'}
+            </button>
+            <button
+              type="button"
+              onClick={handleExportPdf}
+              disabled={exportLoading !== null}
+              className="rounded-lg border border-sky-500/30 bg-sky-950/20 px-3 py-1.5 text-[10px] font-bold uppercase text-sky-200 hover:bg-sky-950/40 disabled:opacity-50"
+            >
+              {exportLoading === 'pdf' ? 'Gerando PDF…' : 'PDF para oficina'}
+            </button>
+          </div>
           <div className="h-px bg-zinc-800 w-full" />
+
+          {(analysisLoading || simInterpret || interpretError) && (
+            <div
+              id="interpretacao-ia"
+              className="animate-fadeIn rounded-xl border border-zinc-800 border-l-4 border-l-[#1D9E75] bg-card/40 p-4 flex flex-col gap-3"
+            >
+              <div className="flex items-center justify-between gap-2">
+                <h4 className="font-extrabold text-zinc-200 text-xs uppercase tracking-wide flex items-center gap-1.5">
+                  <Sparkles size={14} className="text-[#1D9E75]" />
+                  Interpretação Sinidu·IA
+                </h4>
+                {simInterpret && (
+                  <span className="rounded border border-teal-500/30 bg-teal-950/30 px-2 py-0.5 text-[8px] font-bold uppercase text-teal-200">
+                    Modelo: {simInterpret.ai_provider === 'deterministic' ? 'Regras' : simInterpret.ai_provider || 'Mistral'}
+                  </span>
+                )}
+              </div>
+
+              {analysisLoading && (
+                <div className="space-y-2">
+                  <div className="h-3 w-full animate-pulse rounded bg-zinc-800/80" />
+                  <div className="h-3 w-5/6 animate-pulse rounded bg-zinc-800/60" />
+                  <p className="text-[10px] text-zinc-500">Analisando resultado da simulação… pode levar até 1 minuto.</p>
+                </div>
+              )}
+
+              {interpretError && !analysisLoading && (
+                <div className="rounded border border-rose-500/30 bg-rose-950/20 p-2">
+                  <p className="text-[10px] text-rose-200">{interpretError}</p>
+                  <button
+                    type="button"
+                    onClick={() => void runInterpret(result, rainfallComparison)}
+                    className="mt-2 text-[9px] font-bold uppercase text-rose-300 underline"
+                  >
+                    Tentar novamente
+                  </button>
+                </div>
+              )}
+
+              {simInterpret && !analysisLoading && (
+                <>
+                  <div>
+                    <span className="text-[9px] font-bold uppercase tracking-wider text-teal-400">Resumo</span>
+                    <p className="mt-1 text-[11px] leading-relaxed text-zinc-200">{simInterpret.resumo_executivo}</p>
+                  </div>
+
+                  {simInterpret.areas_criticas.length > 0 && (
+                    <div>
+                      <span className="text-[9px] font-bold uppercase tracking-wider text-teal-400">Áreas críticas</span>
+                      <ul className="mt-1 space-y-0.5">
+                        {simInterpret.areas_criticas.map((a) => (
+                          <li key={a} className="text-[10px] text-zinc-300">• {a}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+
+                  {simInterpret.equipamentos_em_risco.length > 0 && (
+                    <div>
+                      <span className="text-[9px] font-bold uppercase tracking-wider text-teal-400">Equipamentos em risco</span>
+                      <ul className="mt-1 space-y-0.5">
+                        {simInterpret.equipamentos_em_risco.slice(0, 4).map((e) => (
+                          <li key={e} className="text-[10px] text-amber-200/90">• {e}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+
+                  {simInterpret.comparacao_historica && (
+                    <p className="text-[10px] text-zinc-400">
+                      <span className="text-zinc-500">≈ Histórico:</span> {simInterpret.comparacao_historica}
+                    </p>
+                  )}
+
+                  {simInterpret.interpretacao_diferencial && (
+                    <div className="rounded border border-indigo-500/25 bg-indigo-950/20 p-2">
+                      <span className="text-[9px] font-bold uppercase text-indigo-300">Comparação vs referência</span>
+                      <p className="mt-1 text-[10px] leading-relaxed text-indigo-100/90">
+                        {simInterpret.interpretacao_diferencial}
+                      </p>
+                    </div>
+                  )}
+
+                  {simInterpret.recomendacoes_imediatas.length > 0 && (
+                    <div>
+                      <span className="text-[9px] font-bold uppercase tracking-wider text-emerald-400">Recomendações</span>
+                      <ul className="mt-1 space-y-0.5">
+                        {simInterpret.recomendacoes_imediatas.map((r) => (
+                          <li key={r} className="text-[10px] text-emerald-200/90">→ {r}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+
+                  {slopeInterpret && (
+                    <div className="rounded border border-rose-500/25 bg-rose-950/15 p-2">
+                      <span className="text-[9px] font-bold uppercase text-rose-300">
+                        Encostas · {slopeInterpret.nivel_suscetibilidade} · COBRADE {slopeInterpret.referencia_cobrade}
+                      </span>
+                      <p className="mt-1 text-[10px] leading-relaxed text-rose-100/80">{slopeInterpret.interpretacao_ia}</p>
+                    </div>
+                  )}
+
+                  <p className="text-[8px] italic text-zinc-600">{simInterpret.disclaimer}</p>
+
+                  <div className="flex flex-wrap gap-2 pt-1">
+                    <button
+                      type="button"
+                      onClick={handleIncludeInReport}
+                      disabled={exportLoading === 'pdf'}
+                      className="flex items-center gap-1 rounded-lg border border-teal-600/40 bg-teal-950/30 px-2.5 py-1.5 text-[9px] font-bold uppercase text-teal-200 hover:bg-teal-900/40 disabled:opacity-50"
+                    >
+                      <FileText size={11} />
+                      {exportLoading === 'pdf' ? 'Gerando…' : 'Incluir no Relatório PDF'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleCopyInterpret}
+                      className="flex items-center gap-1 rounded-lg border border-zinc-700 px-2.5 py-1.5 text-[9px] font-bold uppercase text-zinc-300 hover:bg-zinc-900"
+                    >
+                      {copyOk ? <ClipboardCheck size={11} className="text-teal-400" /> : <Copy size={11} />}
+                      {copyOk ? 'Copiado' : 'Copiar'}
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
+          )}
+
+          {rainfallComparison && activeTab === 'rainfall' && (
+            <div className="rounded-lg border border-amber-500/25 bg-amber-950/15 p-3">
+              <span className="text-[9px] font-extrabold uppercase tracking-wider text-amber-200 block mb-2">
+                Delta vs referência ({rainfallComparison.delta.baseline_mm} mm → {rainfallComparison.delta.scenario_mm} mm)
+              </span>
+              <div className="grid grid-cols-2 gap-2 text-[10px]">
+                <div className="rounded border border-zinc-800 bg-zinc-950/60 p-2">
+                  <span className="text-zinc-500 block">Área adicional</span>
+                  <strong className="text-amber-200">+{rainfallComparison.delta.affected_area_km2} km²</strong>
+                </div>
+                <div className="rounded border border-zinc-800 bg-zinc-950/60 p-2">
+                  <span className="text-zinc-500 block">População adicional</span>
+                  <strong className="text-amber-200">+{rainfallComparison.delta.affected_population.toLocaleString()} hab</strong>
+                </div>
+                <div className="rounded border border-zinc-800 bg-zinc-950/60 p-2">
+                  <span className="text-zinc-500 block">Δ profundidade máx.</span>
+                  <strong className="text-amber-200">+{rainfallComparison.delta.max_depth_m} m</strong>
+                </div>
+                <div className="rounded border border-zinc-800 bg-zinc-950/60 p-2">
+                  <span className="text-zinc-500 block">Novos bairros</span>
+                  <strong className="text-amber-200">{rainfallComparison.delta.bairros_novos.length}</strong>
+                </div>
+              </div>
+              {rainfallComparison.delta.bairros_novos.length > 0 && (
+                <p className="mt-2 text-[9px] text-zinc-400">
+                  Novos bairros expostos: {rainfallComparison.delta.bairros_novos.slice(0, 8).join(', ')}
+                  {rainfallComparison.delta.bairros_novos.length > 8 ? '…' : ''}
+                </p>
+              )}
+            </div>
+          )}
 
           <div className="grid grid-cols-2 gap-3">
             <div className="bg-zinc-950/60 p-2.5 rounded-lg border border-zinc-800">
@@ -427,23 +851,104 @@ export default function SimulationPanel({ onSimulate, onClear, codigoIbge, munic
           {result.simulation_meta?.dem_available && (
             <div className="grid grid-cols-3 gap-2">
               <div className="rounded-lg border border-lime-500/20 bg-lime-950/10 p-2 text-center">
-                <span className="block text-[8px] uppercase text-zinc-500">Cota min</span>
-                <span className="text-xs font-bold text-lime-300">{result.simulation_meta.altitude_min_m} m</span>
-              </div>
-              <div className="rounded-lg border border-lime-500/20 bg-lime-950/10 p-2 text-center">
-                <span className="block text-[8px] uppercase text-zinc-500">Cota média</span>
-                <span className="text-xs font-bold text-lime-300">{result.simulation_meta.altitude_media_m} m</span>
+                <span className="block text-[8px] uppercase text-zinc-500">Resolução DEM</span>
+                <span className="text-xs font-bold text-lime-300">
+                  ~{result.simulation_meta.dem_resolution_m ?? 30} m
+                </span>
               </div>
               <div className="rounded-lg border border-lime-500/20 bg-lime-950/10 p-2 text-center">
                 <span className="block text-[8px] uppercase text-zinc-500">Isolinhas</span>
-                <span className="text-xs font-bold text-lime-300">{result.simulation_meta.contour_interval_m} m</span>
+                <span className="text-xs font-bold text-lime-300">
+                  {result.simulation_meta.contour_interval_m} m
+                  {result.simulation_meta.contour_count != null && (
+                    <span className="block text-[8px] font-normal text-zinc-500">
+                      {result.simulation_meta.contour_count} curvas
+                    </span>
+                  )}
+                </span>
+              </div>
+              <div className="rounded-lg border border-lime-500/20 bg-lime-950/10 p-2 text-center">
+                <span className="block text-[8px] uppercase text-zinc-500">Incerteza vertical</span>
+                <span className="text-xs font-bold text-lime-300">
+                  ±{result.simulation_meta.vertical_accuracy_m ?? 16} m
+                </span>
+              </div>
+            </div>
+          )}
+
+          {result.simulation_meta?.precision_note && (
+            <p className="text-[9px] leading-relaxed text-zinc-500 italic">
+              {result.simulation_meta.precision_note}
+            </p>
+          )}
+
+          {result.simulation_meta?.dem_available && (
+            <div className="grid grid-cols-3 gap-2">
+              <div className="rounded-lg border border-zinc-800 bg-zinc-950/40 p-2 text-center">
+                <span className="block text-[8px] uppercase text-zinc-500">Cota mín.</span>
+                <span className="text-xs font-bold text-zinc-300">{result.simulation_meta.altitude_min_m} m</span>
+              </div>
+              <div className="rounded-lg border border-zinc-800 bg-zinc-950/40 p-2 text-center">
+                <span className="block text-[8px] uppercase text-zinc-500">Cota média</span>
+                <span className="text-xs font-bold text-zinc-300">{result.simulation_meta.altitude_media_m} m</span>
+              </div>
+              <div className="rounded-lg border border-zinc-800 bg-zinc-950/40 p-2 text-center">
+                <span className="block text-[8px] uppercase text-zinc-500">Cota máx.</span>
+                <span className="text-xs font-bold text-zinc-300">{result.simulation_meta.altitude_max_m} m</span>
+              </div>
+            </div>
+          )}
+
+          {result.scenario_type === 'ExtremeRainfall' && result.simulation_meta?.flow_accumulation_applied && (
+            <div className="grid grid-cols-3 gap-2">
+              <div className="rounded-lg border border-sky-500/20 bg-sky-950/10 p-2 text-center">
+                <span className="block text-[8px] uppercase text-zinc-500">Acúmulo D8</span>
+                <span className="text-xs font-bold text-sky-300">{result.simulation_meta.max_flow_accumulation ?? '—'}</span>
+              </div>
+              <div className="rounded-lg border border-sky-500/20 bg-sky-950/10 p-2 text-center">
+                <span className="block text-[8px] uppercase text-zinc-500">Impermeab.</span>
+                <span className="text-xs font-bold text-sky-300">
+                  {result.simulation_meta.mean_impermeability != null
+                    ? `${Math.round(result.simulation_meta.mean_impermeability * 100)}%`
+                    : '—'}
+                </span>
+              </div>
+              <div className="rounded-lg border border-sky-500/20 bg-sky-950/10 p-2 text-center">
+                <span className="block text-[8px] uppercase text-zinc-500">Bairros</span>
+                <span className="text-xs font-bold text-sky-300">
+                  {result.simulation_meta.bairros_atingidos_count ?? result.affected_bairros.length}
+                </span>
               </div>
             </div>
           )}
 
           {(result.contours?.features?.length > 0 || result.flow_paths?.features?.length > 0) && (
             <div className="rounded-lg border border-zinc-800 bg-zinc-950/40 p-2.5">
-              <span className="text-[9px] text-zinc-400 font-bold uppercase tracking-wider block mb-1.5">Camadas no mapa</span>
+              <span className="text-[9px] text-zinc-400 font-bold uppercase tracking-wider block mb-1.5">Visibilidade no mapa</span>
+              <div className="flex flex-wrap gap-2 mb-2">
+                {(
+                  [
+                    { key: 'showFlood' as const, label: 'Manchas de alagamento', activeClass: 'border-sky-500/40 bg-sky-500/15 text-sky-200' },
+                    { key: 'showContours' as const, label: 'Curvas de nível', activeClass: 'border-lime-500/40 bg-lime-500/15 text-lime-200' },
+                    { key: 'showFlow' as const, label: 'Escoamento D8', activeClass: 'border-cyan-500/40 bg-cyan-500/15 text-cyan-200' },
+                  ] as const
+                ).map(({ key, label, activeClass }) => {
+                  const active = overlayOptions[key];
+                  return (
+                    <button
+                      key={key}
+                      type="button"
+                      onClick={() => onOverlayChange({ ...overlayOptions, [key]: !active })}
+                      className={`rounded-full border px-2 py-0.5 text-[9px] transition ${
+                        active ? activeClass : 'border-zinc-700 bg-zinc-900 text-zinc-500 line-through'
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  );
+                })}
+              </div>
+              <span className="text-[9px] text-zinc-400 font-bold uppercase tracking-wider block mb-1.5">Camadas geradas</span>
               <div className="flex flex-wrap gap-2">
                 {result.geometry?.features?.length > 0 && (
                   <span className="rounded-full border border-sky-500/30 bg-sky-500/10 px-2 py-0.5 text-[9px] text-sky-200">
@@ -477,11 +982,21 @@ export default function SimulationPanel({ onSimulate, onClear, codigoIbge, munic
             <div>
               <span className="text-[9px] text-zinc-400 font-bold uppercase tracking-wider block mb-1">Bairros Atingidos</span>
               <div className="flex flex-wrap gap-1">
-                {result.affected_bairros.map((b) => (
-                  <span key={b} className="text-[9px] bg-zinc-950 border border-zinc-800 text-zinc-300 py-0.5 px-2 rounded-full font-medium">
-                    {b}
-                  </span>
-                ))}
+                {(result.simulation_meta?.bairros_exposicao?.length
+                  ? result.simulation_meta.bairros_exposicao.map((row) => (
+                      <span
+                        key={row.bairro}
+                        className="text-[9px] bg-zinc-950 border border-zinc-800 text-zinc-300 py-0.5 px-2 rounded-full font-medium"
+                        title={`${row.populacao_exposta.toLocaleString()} hab expostos`}
+                      >
+                        {row.bairro} · {row.exposicao_pct}%
+                      </span>
+                    ))
+                  : result.affected_bairros.map((b) => (
+                      <span key={b} className="text-[9px] bg-zinc-950 border border-zinc-800 text-zinc-300 py-0.5 px-2 rounded-full font-medium">
+                        {b}
+                      </span>
+                    )))}
               </div>
             </div>
           )}
@@ -502,105 +1017,6 @@ export default function SimulationPanel({ onSimulate, onClear, codigoIbge, munic
                 ))}
               </div>
             </div>
-          )}
-        </div>
-      )}
-
-      {(analysisLoading || aiAnalysis) && (
-        <div className="bg-card/40 border border-violet-500/25 p-4 rounded-xl flex flex-col gap-3 animate-fadeIn">
-          <div className="flex items-center justify-between gap-2">
-            <h4 className="font-extrabold text-zinc-200 text-xs uppercase tracking-wide flex items-center gap-1.5">
-              <Brain size={14} className="text-violet-400" />
-              Análise Interpretativa
-            </h4>
-            {aiAnalysis && (
-              <span className={`rounded border px-2 py-0.5 text-[8px] font-bold uppercase ${
-                aiAnalysis.ai_provider === 'deterministic'
-                  ? 'border-zinc-600 text-zinc-400'
-                  : 'border-violet-500/40 text-violet-200'
-              }`}>
-                {aiAnalysis.ai_provider === 'deterministic' ? 'Regras' : aiAnalysis.ai_provider}
-                {aiAnalysis.confidence && ` · ${aiAnalysis.confidence}`}
-              </span>
-            )}
-          </div>
-
-          {analysisLoading && (
-            <p className="text-[10px] text-zinc-500 flex items-center gap-1.5">
-              <Sparkles size={12} className="animate-pulse text-violet-400" />
-              Gerando interpretação territorial…
-            </p>
-          )}
-
-          {aiAnalysis && !analysisLoading && (
-            <>
-              {aiAnalysis.key_findings.length > 0 && (
-                <ul className="space-y-1">
-                  {aiAnalysis.key_findings.map((item, idx) => (
-                    <li key={idx} className="text-[10px] leading-relaxed text-zinc-300 flex gap-1.5">
-                      <span className="text-violet-400 shrink-0">•</span>
-                      {item}
-                    </li>
-                  ))}
-                </ul>
-              )}
-
-              {aiAnalysis.bairros_prioritarios.length > 0 && (
-                <div>
-                  <span className="text-[9px] text-zinc-400 font-bold uppercase tracking-wider block mb-1.5">
-                    Bairros prioritários
-                  </span>
-                  <div className="flex flex-col gap-1">
-                    {aiAnalysis.bairros_prioritarios.map((b) => (
-                      <div key={b.nome} className="rounded border border-violet-500/20 bg-violet-950/10 px-2 py-1.5">
-                        <div className="flex justify-between text-[10px]">
-                          <strong className="text-violet-200">{b.nome}</strong>
-                          {(b.ivc != null || b.iri != null) && (
-                            <span className="font-mono text-[9px] text-zinc-400">
-                              {b.ivc != null && `IVC ${b.ivc.toFixed(2)}`}
-                              {b.ivc != null && b.iri != null && ' · '}
-                              {b.iri != null && `IRI ${b.iri.toFixed(2)}`}
-                            </span>
-                          )}
-                        </div>
-                        {b.rationale && (
-                          <p className="mt-0.5 text-[9px] text-zinc-500">{b.rationale}</p>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {aiAnalysis.suggested_actions.length > 0 && (
-                <div>
-                  <span className="text-[9px] text-zinc-400 font-bold uppercase tracking-wider block mb-1.5">
-                    Ações sugeridas
-                  </span>
-                  <ul className="space-y-1">
-                    {aiAnalysis.suggested_actions.map((action, idx) => (
-                      <li key={idx} className="text-[10px] text-emerald-200/90 flex gap-1.5">
-                        <span className="text-emerald-500 shrink-0">→</span>
-                        {action}
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-
-              {aiAnalysis.data_gaps.length > 0 && (
-                <div className="rounded border border-amber-500/20 bg-amber-950/10 p-2">
-                  <span className="text-[9px] font-bold uppercase text-amber-300">Lacunas de dados</span>
-                  <ul className="mt-1 space-y-0.5">
-                    {aiAnalysis.data_gaps.map((gap, idx) => (
-                      <li key={idx} className="text-[9px] text-amber-200/70">{gap}</li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-
-              <p className="text-[8px] italic text-zinc-600">{aiAnalysis.disclaimer}</p>
-            </>
           )}
         </div>
       )}

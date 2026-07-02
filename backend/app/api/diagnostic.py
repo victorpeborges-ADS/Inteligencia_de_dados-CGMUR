@@ -1,14 +1,17 @@
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.db import get_db
 from app.models import DiagnosticoExecutivo, Municipio
 from app.security.municipio_access import assert_codigo_ibge_access, get_accessible_municipio
+from app.services.diagnostic_report import ensure_diagnostic_pdf
 from app.services.executive_diagnostic_engine import (
     diagnostic_to_dict,
     generate_executive_diagnostic,
 )
+from app.services.presentation_service import build_presentation_payload
 
 router = APIRouter()
 
@@ -22,8 +25,13 @@ class ExecutiveDiagnosticResponse(BaseModel):
     headline: str
     conteudo: dict
     narrativa_md: str
+    narrativa_ia: str | None = None
+    narrativa_ia_meta: dict | None = None
     origem: str
     gerado_em: str | None
+    nome_arquivo: str | None = None
+    tamanho_bytes: int | None = None
+    download_url: str | None = None
 
 
 @router.post("/generate/{codigo_ibge}", response_model=ExecutiveDiagnosticResponse)
@@ -50,6 +58,52 @@ def get_latest_diagnostic(codigo_ibge: str, request: Request, db: Session = Depe
     return diagnostic_to_dict(record)
 
 
+@router.get("/{codigo_ibge}/presentation")
+def get_presentation_data(codigo_ibge: str, request: Request, db: Session = Depends(get_db)):
+    assert_codigo_ibge_access(db, codigo_ibge, request=request)
+    try:
+        return build_presentation_payload(db, codigo_ibge)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@router.get("/{codigo_ibge}/download-pdf")
+def download_diagnostic_pdf(
+    codigo_ibge: str,
+    request: Request,
+    versao: int | None = Query(default=None),
+    db: Session = Depends(get_db),
+):
+    assert_codigo_ibge_access(db, codigo_ibge, request=request)
+    query = db.query(DiagnosticoExecutivo).filter(DiagnosticoExecutivo.codigo_ibge == codigo_ibge)
+    if versao is not None:
+        record = query.filter(DiagnosticoExecutivo.versao == versao).first()
+    else:
+        record = query.order_by(DiagnosticoExecutivo.gerado_em.desc()).first()
+    if not record:
+        raise HTTPException(status_code=404, detail="Diagnóstico não encontrado.")
+
+    muni = db.query(Municipio).filter(Municipio.codigo_ibge == codigo_ibge).first()
+    if not muni:
+        raise HTTPException(status_code=404, detail="Município não encontrado.")
+
+    try:
+        path = ensure_diagnostic_pdf(record, muni)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Falha ao gerar PDF: {exc}") from exc
+
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="Arquivo PDF não encontrado.")
+
+    return FileResponse(
+        path=str(path),
+        media_type="application/pdf",
+        filename=path.name,
+    )
+
+
 @router.get("/{codigo_ibge}/history")
 def list_diagnostic_history(codigo_ibge: str, request: Request, limit: int = 10, db: Session = Depends(get_db)):
     assert_codigo_ibge_access(db, codigo_ibge, request=request)
@@ -63,6 +117,7 @@ def list_diagnostic_history(codigo_ibge: str, request: Request, limit: int = 10,
     return {
         "items": [
             {
+                **diagnostic_to_dict(row),
                 "id": row.id,
                 "versao": row.versao,
                 "headline": row.headline,

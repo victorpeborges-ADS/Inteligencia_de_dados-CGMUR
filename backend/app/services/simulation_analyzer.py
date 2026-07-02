@@ -37,10 +37,22 @@ def _deterministic_analysis(
         f"Área estimada atingida: {area} km²; população exposta: {pop:,} hab.".replace(",", "."),
     ]
     if meta.get("dem_source"):
-        findings.append(f"Modelo espacial: {meta.get('method', 'dem_pluvial_proxy')} com {meta.get('dem_source')}.")
+        method = meta.get("method", "dem_pluvial_proxy")
+        findings.append(f"Modelo espacial: {method} com {meta.get('dem_source')}.")
+    if meta.get("flood_patches"):
+        findings.append(f"Manchas de alagamento vetorizadas: {meta.get('flood_patches')}.")
+    if meta.get("max_flow_accumulation"):
+        findings.append(f"Acúmulo D8 máximo: {meta.get('max_flow_accumulation')} células a montante.")
+    if meta.get("mean_impermeability") is not None:
+        findings.append(f"Impermeabilização média (MapBiomas): {int(meta.get('mean_impermeability', 0) * 100)}%.")
     if meta.get("max_depth_m"):
         findings.append(f"Profundidade máxima simulada: {meta.get('max_depth_m')} m.")
-    if bairros:
+    exposures = meta.get("bairros_exposicao") or []
+    if exposures:
+        top = exposures[:5]
+        summary = ", ".join(f"{row['bairro']} ({row['exposicao_pct']}%)" for row in top)
+        findings.append(f"Maior exposição por bairro: {summary}.")
+    elif bairros:
         findings.append(f"Bairros intersectados: {', '.join(bairros[:8])}{'…' if len(bairros) > 8 else ''}.")
 
     actions = []
@@ -145,26 +157,20 @@ def _llm_analysis(
     messages = [{"role": "system", "content": system}, {"role": "user", "content": user}]
 
     try:
-        if ai_provider and ai_provider.lower() not in ("ollama", "none", ""):
-            from rag.providers.registry import get_chat_provider
+        from rag.providers.registry import resolve_chat_provider_with_fallback
 
-            provider = get_chat_provider(ai_provider, ai_api_key)
-            raw = provider.chat(messages, model=ai_model, temperature=0.15)
-            provider_id = ai_provider
-        else:
-            from rag.ollama_client import ollama_client
-
-            if not ollama_client.health():
-                return None
-            raw = ollama_client.chat(messages, model=ai_model, temperature=0.15)
-            provider_id = "ollama"
+        provider = resolve_chat_provider_with_fallback(ai_provider, api_key=ai_api_key)
+        if not provider.is_available():
+            return None
+        model = ai_model or provider.info().default_model
+        raw = provider.chat(messages, model=model, temperature=0.15)
 
         parsed = _parse_llm_json(raw)
         if not parsed:
             return None
         parsed.setdefault("disclaimer", DISCLAIMER)
-        parsed["ai_provider"] = provider_id
-        parsed["ai_model"] = ai_model
+        parsed["ai_provider"] = provider.id
+        parsed["ai_model"] = model
         return parsed
     except Exception as exc:
         logger.warning("LLM simulation analysis failed: %s", exc)

@@ -1,176 +1,25 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.orm import Session
+from app.config import settings
 from app.db import get_db
-from app.models import Municipio, MunicipioSaneamento, MunicipioSeed
-from app.data_connectors.snis_sinisa_collector import snis_status_label
+from app.models import MunicipioSeed
 from app.security.municipio_access import filter_seed_query, get_accessible_municipio
 from app.security.auth import User, require_role, Role
 from app.services.audit_service import resolve_actor
-from app.services.data_catalog_engine import resolve_catalog_status
-from app.config import settings
+from app.services.catalog_coverage import BASE_CATALOG, coverage_for_code
+from app.services.catalog_impact_service import (
+    analyze_fonte_impact,
+    build_maturity_detail,
+    enrich_bases,
+    rank_lacunas,
+)
+from app.services.catalog_sync_service import (
+    get_source_preview,
+    get_source_sync_meta,
+    refresh_catalog_source,
+)
 
 router = APIRouter()
-
-STATUS_SCORE = {
-    "Integrado": 1.0,
-    "Estimado": 0.6,
-    "Em integracao": 0.35,
-    "Ausente": 0.0,
-}
-
-BASE_CATALOG = [
-    {"id": "ibge_cidades", "nome": "Cidades@ / IBGE", "grupo": "Dados urbanos e socioeconomicos", "camada": "municipio"},
-    {"id": "snis_sinisa", "nome": "SNIS/SINISA", "grupo": "Saneamento", "camada": "saneamento_drenagem"},
-    {"id": "s2id", "nome": "S2ID / SEDEC", "grupo": "Desastres", "camada": "desastres"},
-    {"id": "mapbiomas", "nome": "MapBiomas", "grupo": "Clima e uso do solo", "camada": "cobertura"},
-    {"id": "cemaden_georiscos", "nome": "CEMADEN / GeoRiscos", "grupo": "Risco e alertas", "camada": "alertas"},
-    {"id": "adapta_brasil", "nome": "AdaptaBrasil / INPE", "grupo": "Adaptacao climatica", "camada": "adaptacao_climatica"},
-    {"id": "geosgb", "nome": "GeoSGB / CPRM", "grupo": "Geologia", "camada": "vulnerabilidade"},
-    {"id": "sinter", "nome": "SINTER / Receita Federal", "grupo": "Cadastro territorial", "camada": "socioeconomico"},
-    {"id": "munic", "nome": "MUNIC / IBGE", "grupo": "Capacidade institucional", "camada": "prioridade_planejamento"},
-    {"id": "sirene", "nome": "SIRENE / MCTI", "grupo": "Emissoes", "camada": None},
-    {"id": "inde", "nome": "INDE", "grupo": "Infraestrutura de dados espaciais", "camada": "municipio"},
-    {"id": "brasil_mais", "nome": "Brasil MAIS", "grupo": "Monitoramento territorial", "camada": None},
-]
-
-MUNICIPALITY_STATUS = {
-    "2611606": {
-        "ibge_cidades": "Integrado",
-        "s2id": "Integrado",
-        "mapbiomas": "Integrado",
-        "cemaden_georiscos": "Integrado",
-        "adapta_brasil": "Estimado",
-        "geosgb": "Em integracao",
-        "sinter": "Estimado",
-        "munic": "Em integracao",
-        "sirene": "Ausente",
-        "inde": "Integrado",
-        "brasil_mais": "Em integracao",
-    },
-    "2927408": {
-        "ibge_cidades": "Integrado",
-        "s2id": "Integrado",
-        "mapbiomas": "Integrado",
-        "cemaden_georiscos": "Estimado",
-        "adapta_brasil": "Estimado",
-        "geosgb": "Em integracao",
-        "sinter": "Estimado",
-        "munic": "Em integracao",
-        "sirene": "Ausente",
-        "inde": "Integrado",
-        "brasil_mais": "Em integracao",
-    },
-    "4314902": {
-        "ibge_cidades": "Integrado",
-        "s2id": "Integrado",
-        "mapbiomas": "Integrado",
-        "cemaden_georiscos": "Estimado",
-        "adapta_brasil": "Em integracao",
-        "geosgb": "Estimado",
-        "sinter": "Estimado",
-        "munic": "Em integracao",
-        "sirene": "Ausente",
-        "inde": "Integrado",
-        "brasil_mais": "Em integracao",
-    },
-    "2507507": {
-        "ibge_cidades": "Integrado",
-        "s2id": "Estimado",
-        "mapbiomas": "Integrado",
-        "cemaden_georiscos": "Estimado",
-        "adapta_brasil": "Em integracao",
-        "geosgb": "Em integracao",
-        "sinter": "Estimado",
-        "munic": "Em integracao",
-        "sirene": "Ausente",
-        "inde": "Integrado",
-        "brasil_mais": "Ausente",
-    },
-    "1400233": {
-        "ibge_cidades": "Integrado",
-        "s2id": "Estimado",
-        "mapbiomas": "Estimado",
-        "cemaden_georiscos": "Em integracao",
-        "adapta_brasil": "Em integracao",
-        "geosgb": "Ausente",
-        "sinter": "Estimado",
-        "munic": "Ausente",
-        "sirene": "Ausente",
-        "inde": "Estimado",
-        "brasil_mais": "Ausente",
-    },
-    "5201108": {
-        "ibge_cidades": "Integrado",
-        "s2id": "Integrado",
-        "mapbiomas": "Integrado",
-        "cemaden_georiscos": "Estimado",
-        "adapta_brasil": "Em integracao",
-        "geosgb": "Em integracao",
-        "sinter": "Estimado",
-        "munic": "Em integracao",
-        "sirene": "Ausente",
-        "inde": "Integrado",
-        "brasil_mais": "Em integracao",
-    },
-    "4113700": {
-        "ibge_cidades": "Integrado",
-        "s2id": "Integrado",
-        "mapbiomas": "Integrado",
-        "cemaden_georiscos": "Estimado",
-        "adapta_brasil": "Em integracao",
-        "geosgb": "Estimado",
-        "sinter": "Estimado",
-        "munic": "Em integracao",
-        "sirene": "Ausente",
-        "inde": "Integrado",
-        "brasil_mais": "Em integracao",
-    },
-}
-
-
-def _snis_status(db: Session, codigo_ibge: str) -> str:
-    row = db.query(MunicipioSaneamento).filter(MunicipioSaneamento.codigo_ibge == codigo_ibge).first()
-    if row:
-        return snis_status_label(row.data_quality)
-    return "Ausente"
-
-
-def coverage_for_code(codigo_ibge: str, db: Session | None = None):
-    muni = db.query(Municipio).filter(Municipio.codigo_ibge == codigo_ibge).first() if db else None
-    from app.models import MunicipioSeed
-
-    seed = db.query(MunicipioSeed).filter(MunicipioSeed.codigo_ibge == codigo_ibge).first() if db else None
-
-    bases = []
-    weighted_score = 0.0
-    for item in BASE_CATALOG:
-        if db is not None:
-            status = resolve_catalog_status(db, codigo_ibge, item["id"], muni=muni, seed=seed)
-        else:
-            status = MUNICIPALITY_STATUS.get(codigo_ibge, {}).get(item["id"], "Ausente")
-        score = STATUS_SCORE.get(status, 0.0)
-        weighted_score += score
-        bases.append({
-            **item,
-            "status": status,
-            "score": score,
-            "recomendacao": recommendation_for_status(status, item["nome"]),
-        })
-
-    maturidade = round((weighted_score / len(BASE_CATALOG)) * 100)
-    gaps = [item for item in bases if item["status"] in ("Ausente", "Em integracao")]
-    return maturidade, bases, gaps
-
-
-def recommendation_for_status(status: str, nome: str):
-    if status == "Integrado":
-        return f"Manter rotina de atualizacao para {nome}."
-    if status == "Estimado":
-        return f"Substituir estimativa por carga oficial de {nome}."
-    if status == "Em integracao":
-        return f"Priorizar conector e validacao institucional de {nome}."
-    return f"Mapear responsavel e iniciar acordo de compartilhamento para {nome}."
-
 
 @router.get("/coverage")
 def get_data_coverage(
@@ -180,6 +29,9 @@ def get_data_coverage(
 ):
     muni = get_accessible_municipio(db, codigo_ibge, request=request)
     maturidade, bases, gaps = coverage_for_code(muni.codigo_ibge, db)
+    enriched = enrich_bases(db, muni.codigo_ibge, bases)
+    lacunas_ranking = rank_lacunas(bases)
+    maturity_detail = build_maturity_detail(db, muni.codigo_ibge)
     return {
         "municipio": {
             "codigo_ibge": muni.codigo_ibge,
@@ -188,8 +40,10 @@ def get_data_coverage(
         },
         "maturidade_percentual": maturidade,
         "classificacao": "Alta" if maturidade >= 75 else ("Media" if maturidade >= 50 else "Baixa"),
-        "bases": bases,
+        "bases": enriched,
         "lacunas_prioritarias": gaps[:5],
+        "lacunas_ranking": lacunas_ranking,
+        "maturity_detail": maturity_detail,
         "resumo": f"{muni.nome} possui {maturidade}% de maturidade informacional no radar Sinidu+Clima.",
     }
 
@@ -259,3 +113,72 @@ def get_national_data_coverage(
         "municipios": sorted(municipio_rows, key=lambda row: row["maturidade_percentual"]),
         "resumo": f"Panorama de {total} municípios prioritários — maturidade média {media_maturidade}%.",
     }
+
+
+@router.get("/impact-analysis/{codigo_ibge}/{fonte_id}")
+def get_impact_analysis(
+    codigo_ibge: str,
+    fonte_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    get_accessible_municipio(db, codigo_ibge, request=request)
+    try:
+        return analyze_fonte_impact(db, codigo_ibge, fonte_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.get("/source-preview/{codigo_ibge}/{fonte_id}")
+def get_source_data_preview(
+    codigo_ibge: str,
+    fonte_id: str,
+    request: Request,
+    limit: int = Query(default=5, ge=1, le=20),
+    db: Session = Depends(get_db),
+):
+    get_accessible_municipio(db, codigo_ibge, request=request)
+    return {
+        "fonte_id": fonte_id,
+        "codigo_ibge": codigo_ibge,
+        "meta": get_source_sync_meta(db, codigo_ibge, fonte_id),
+        "registros": get_source_preview(db, codigo_ibge, fonte_id, limit=limit),
+    }
+
+
+@router.post("/refresh-source/{codigo_ibge}/{fonte_id}")
+def refresh_source(
+    codigo_ibge: str,
+    fonte_id: str,
+    request: Request,
+    force: bool = Query(default=False),
+    db: Session = Depends(get_db),
+):
+    get_accessible_municipio(db, codigo_ibge, request=request)
+    result = refresh_catalog_source(db, codigo_ibge, fonte_id, force=force)
+    if not result.get("ok") and result.get("error"):
+        raise HTTPException(status_code=500, detail=result["error"])
+    return result
+
+
+@router.post("/refresh-all/{codigo_ibge}")
+def refresh_all_integrated_sources(
+    codigo_ibge: str,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    get_accessible_municipio(db, codigo_ibge, request=request)
+    from app.services.background_jobs import run_catalog_refresh_job
+
+    job_id = run_catalog_refresh_job(codigo_ibge)
+    return {"job_id": job_id, "status": "queued"}
+
+
+@router.get("/refresh-job/{job_id}")
+def get_refresh_job_status(job_id: str, request: Request):
+    from app.services.background_jobs import get_job
+
+    job = get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job não encontrado.")
+    return job

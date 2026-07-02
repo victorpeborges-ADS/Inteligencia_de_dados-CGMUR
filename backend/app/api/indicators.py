@@ -1,9 +1,10 @@
 import json
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.orm import Session
-from sqlalchemy import func
+from sqlalchemy import func, text
 from app.db import get_db
 from app.models import Municipio, Bairro, SetorCensitario, CoberturaVegetalMapBiomas, HistoricoDesastreS2ID, AlertaCemaden, InfraestruturaUrbana, MunicipioIbge, MunicipioFiscal, MunicipioSeed, MunicipioSeguranca, MunicipioSaneamento
+from app.services.municipio_audit_service import audit_municipio
 from app.config import settings
 from app.schemas import ExecutiveIndicators, GeoJSONFeatureCollection
 from app.services.analytical_engine import AnalyticalEngine
@@ -13,6 +14,12 @@ from app.assistant.siconfi_ia_bridge import build_siconfi_ia_url
 from app.services.maturity_engine import classify_tier
 from app.security.municipio_access import filter_municipio_query, filter_seed_query, get_accessible_municipio
 from app.services.audit_service import resolve_actor
+from app.data_connectors.mapbiomas_collector import vegetation_coverage_percent
+from app.data_connectors.s2id_collector import ensure_s2id_loaded, s2id_quality_label
+from app.data_connectors.territorial_mesh_collector import needs_territorial_refresh, sync_territorial_mesh
+from app.data_connectors.official_bairros_collector import is_official_ibge_mesh
+from app.data_connectors.mapbiomas_collector import ensure_spatial_coverage_polygons, needs_coverage_polygon_refresh
+from app.services.socioeconomic_engine import RECIFE_BAIRRO_RENDA
 
 router = APIRouter()
 
@@ -28,10 +35,13 @@ def quality_badge(layer_name: str, db: Session | None = None, codigo_ibge: str |
         if row and row.data_quality == "estimado":
             return "Estimado"
 
-    official_layers = {"municipio", "setores", "cobertura", "alertas", "desastres"}
+    official_layers = {"municipio", "setores", "alertas"}
+    derived_layers = {"cobertura", "vulnerabilidade", "inundacao", "desastres"}
     estimated_layers = {"bairros", "socioeconomico", "infraestrutura"}
     if layer_name in official_layers:
         return "Oficial"
+    if layer_name in derived_layers:
+        return "Derivado Sinidu+Clima"
     if layer_name in estimated_layers:
         return "Estimado"
     return "Derivado Sinidu+Clima"
@@ -47,6 +57,42 @@ def _saneamento_deficit(snis: MunicipioSaneamento | None) -> float:
     return 0.0
 
 
+def _drainage_risk_score(flood: dict, snis_deficit: float, has_snis: bool) -> tuple[float, str]:
+    iri = float(flood.get("indice_risco_inundacao", 0.0))
+    impermeabilizacao = float(flood.get("impermeabilizacao_score", 0.0))
+    hidrografia = float(flood.get("hidrografia_proximidade_score", 0.0))
+    if has_snis:
+        score = min(1.0, (iri * 0.35) + (impermeabilizacao * 0.25) + (hidrografia * 0.15) + (snis_deficit * 0.25))
+        explanation = "Score = 35% IRI + 25% impermeabilização + 15% prox. hidrografia + 25% déficit SNIS"
+    else:
+        score = min(1.0, (iri * 0.45) + (impermeabilizacao * 0.35) + (hidrografia * 0.20))
+        explanation = "Score territorial (IRI + impermeab. + hidrografia) — SNIS/SINISA pendente"
+    return round(score, 2), explanation
+
+
+def _drainage_class(score: float) -> str:
+    if score >= 0.66:
+        return "CRITICA"
+    if score >= 0.33:
+        return "ATENCAO"
+    return "MONITORAMENTO"
+
+
+def _percentile(sorted_vals: list[float], p: float) -> float:
+    if not sorted_vals:
+        return 0.0
+    idx = int(round((len(sorted_vals) - 1) * p))
+    return sorted_vals[max(0, min(idx, len(sorted_vals) - 1))]
+
+
+def _relative_tertile_class(value: float, p33: float, p66: float) -> str:
+    if value >= p66:
+        return "ALTA"
+    if value <= p33:
+        return "BAIXA"
+    return "MEDIA"
+
+
 @router.get("/layers/meta")
 def get_layers_meta(
     request: Request,
@@ -54,6 +100,12 @@ def get_layers_meta(
     db: Session = Depends(get_db),
 ):
     muni = get_accessible_municipio(db, codigo_ibge, request=request)
+
+    bairro_count = db.query(Bairro).filter(Bairro.municipio_id == muni.id).count()
+    if bairro_count == 0:
+        sync_territorial_mesh(db, muni, force=True)
+    ensure_spatial_coverage_polygons(db, muni)
+
     snis = _snis_row(db, muni.codigo_ibge)
     saneamento_quality = quality_badge("saneamento_drenagem", db, muni.codigo_ibge)
     saneamento_source = "SNIS/SINISA + estimativa Sinidu+Clima"
@@ -62,9 +114,119 @@ def get_layers_meta(
     elif snis and snis.data_quality == "estimado":
         saneamento_source = f"SNIS proxy UF + risco territorial Sinidu+Clima"
 
+    bairro_count = db.query(Bairro).filter(Bairro.municipio_id == muni.id).count()
+    infra_count = (
+        db.query(InfraestruturaUrbana)
+        .filter(InfraestruturaUrbana.municipio_id == muni.id)
+        .count()
+    )
+    is_official_mesh = is_official_ibge_mesh(db, muni)
+    is_recife_mesh = muni.codigo_ibge == "2611606" and bairro_count >= 85 and not is_official_mesh
+    is_recife_infra = muni.codigo_ibge == "2611606" and infra_count >= 12
+    is_recife_socio = muni.codigo_ibge == "2611606" and bairro_count >= 85 and len(RECIFE_BAIRRO_RENDA) >= 80
+    cobertura_spatial = not needs_coverage_polygon_refresh(db, muni)
+    s2id_count = (
+        db.query(HistoricoDesastreS2ID)
+        .filter(HistoricoDesastreS2ID.municipio_id == muni.id)
+        .count()
+    )
+
+    seed = db.query(MunicipioSeed).filter(MunicipioSeed.codigo_ibge == muni.codigo_ibge).first()
+    audit = audit_municipio(db, muni, persist=False)
+    malha_fonte = seed.malha_fonte if seed and seed.malha_fonte else audit.get("malha_fonte")
+    malha_disponivel = audit["flag_malha"] != "MALHA_AUSENTE"
+    camadas_bloqueadas: list[str] = []
+    if not malha_disponivel and muni.codigo_ibge != "2611606":
+        camadas_bloqueadas = [
+            "bairros",
+            "socioeconomico",
+            "vulnerabilidade",
+            "inundacao",
+            "prioridade_planejamento",
+            "saneamento_drenagem",
+            "adaptacao_climatica",
+            "saude_risco",
+            "vulnerabilidade_multidimensional",
+        ]
+
+    bairros_quality = (
+        "Oficial"
+        if is_official_mesh
+        else ("Referencia" if is_recife_mesh else ("Estimado" if malha_disponivel else "Indisponível"))
+    )
+    bairros_source = (
+        "IBGE Censo 2022 — malha oficial de bairros e setores censitários"
+        if is_official_mesh or malha_fonte in {"ibge_censo2022", "ibge_censo2022_setores"}
+        else (
+            "CTM Recife / malha Voronoi calibrada Sinidu+Clima"
+            if is_recife_mesh
+            else (
+                "Geometria aproximada (Voronoi Sinidu+Clima)"
+                if malha_disponivel
+                else "Malha de bairros não disponível para este município"
+            )
+        )
+    )
+
     return {
         "codigo_ibge": muni.codigo_ibge,
+        "malha_fonte": malha_fonte,
+        "malha_disponivel": malha_disponivel,
+        "camadas_bloqueadas": camadas_bloqueadas,
+        "score_confiabilidade": audit.get("score_confiabilidade"),
+        "confiabilidade_geral": audit.get("confiabilidade_geral"),
         "layers": {
+            "bairros": {
+                "quality": bairros_quality,
+                "source": bairros_source,
+                "count": bairro_count,
+                "disponivel": malha_disponivel or muni.codigo_ibge == "2611606",
+                "malha_fonte": malha_fonte,
+                "tooltip_estimado": (
+                    "Geometria aproximada. Dados socioeconômicos podem não refletir a realidade local."
+                    if bairros_quality == "Estimado"
+                    else None
+                ),
+            },
+            "infraestrutura": {
+                "quality": "Referencia" if is_recife_infra else quality_badge("infraestrutura"),
+                "source": (
+                    "OpenStreetMap / bases locais curadas (Recife)"
+                    if is_recife_infra
+                    else "OpenStreetMap / bases locais de infraestrutura urbana"
+                ),
+                "count": infra_count,
+            },
+            "cobertura": {
+                "quality": (
+                    "Referencia"
+                    if muni.codigo_ibge == "2611606" and cobertura_spatial
+                    else "Derivado Sinidu+Clima"
+                ),
+                "source": (
+                    "MapBiomas Coleção 10.1 + partição espacial Sinidu+Clima"
+                    if cobertura_spatial
+                    else "MapBiomas stats + polígonos derivados (atualizando…)"
+                ),
+            },
+            "socioeconomico": {
+                "quality": "Referencia" if is_recife_socio else quality_badge("socioeconomico"),
+                "source": (
+                    "IBGE + renda CTM Recife (49 bairros)"
+                    if is_recife_socio
+                    else "IBGE Censo 2022 / SIDRA (quando recarregado)"
+                ),
+                "disponivel": malha_disponivel or muni.codigo_ibge == "2611606",
+            },
+            "desastres": {
+                "quality": (
+                    s2id_quality_label(db, muni)
+                    if s2id_count > 0
+                    else quality_badge("desastres")
+                ),
+                "source": "S2ID / SEDEC — desastres naturais",
+                "count": s2id_count,
+            },
             "saneamento_drenagem": {
                 "quality": saneamento_quality,
                 "source": saneamento_source,
@@ -143,6 +305,8 @@ def get_executive_indicators(
     Returns general KPIs for the executive dashboard.
     """
     muni = get_accessible_municipio(db, codigo_ibge, request=request)
+
+    ensure_s2id_loaded(db, muni)
         
     # Count of active alerts
     alerts_count = db.query(AlertaCemaden).filter(AlertaCemaden.municipio_id == muni.id).count()
@@ -158,24 +322,15 @@ def get_executive_indicators(
     reference_income = RENDA_REFERENCIA_MENSAL.get(muni.codigo_ibge)
     income_value = reference_income if reference_income is not None else float(avg_income or 0.0)
     
-    # Calculate vegetation coverage percentage
-    # Total forest area vs total municipal area
-    total_area_deg = db.scalar(func.ST_Area(muni.geom))
-    forest_area_deg = db.query(func.sum(func.ST_Area(CoberturaVegetalMapBiomas.geom))).filter(
-        CoberturaVegetalMapBiomas.municipio_id == muni.id,
-        CoberturaVegetalMapBiomas.classe_uso == "Vegetação / Floresta"
-    ).scalar()
-    
-    veg_percent = 0.0
+    # Cobertura vegetal — estatísticas MapBiomas (ha) sobre área municipal
+    veg_percent, cobertura_qualidade = vegetation_coverage_percent(db, muni)
     veg_count = db.query(CoberturaVegetalMapBiomas).filter(
         CoberturaVegetalMapBiomas.municipio_id == muni.id
     ).count()
-    if forest_area_deg and total_area_deg:
-        veg_percent = (float(forest_area_deg) / float(total_area_deg)) * 100.0
-
-    cobertura_qualidade = "derivado" if veg_count > 0 else "lacuna"
+    if cobertura_qualidade == "lacuna" and veg_count > 0:
+        cobertura_qualidade = "derivado"
     alertas_qualidade = "derivado" if alerts_count > 0 else "lacuna"
-    desastres_qualidade = "derivado" if disasters_count > 0 else "lacuna"
+    desastres_qualidade = s2id_quality_label(db, muni) if disasters_count > 0 else "lacuna"
     renda_qualidade = "estimado"
     densidade_qualidade = "estimado"
         
@@ -242,6 +397,14 @@ def get_executive_indicators(
 
     siconfi_ia_url = build_siconfi_ia_url(muni.nome, muni.uf, f"Resumo fiscal de {muni.nome}")
 
+    audit = audit_municipio(db, muni, persist=False)
+    seed = db.query(MunicipioSeed).filter(MunicipioSeed.codigo_ibge == muni.codigo_ibge).first()
+    score_confiabilidade = (
+        seed.score_confiabilidade if seed and seed.score_confiabilidade else audit.get("score_confiabilidade")
+    )
+    confiabilidade_geral = audit.get("confiabilidade_geral")
+    malha_fonte = seed.malha_fonte if seed and seed.malha_fonte else audit.get("malha_fonte")
+
     return ExecutiveIndicators(
         codigo_ibge=muni.codigo_ibge,
         nome=muni.nome,
@@ -279,6 +442,9 @@ def get_executive_indicators(
         desastres_qualidade=desastres_qualidade,
         renda_qualidade=renda_qualidade,
         densidade_qualidade=densidade_qualidade,
+        score_confiabilidade=score_confiabilidade,
+        confiabilidade_geral=confiabilidade_geral,
+        malha_fonte=malha_fonte,
     )
 
 @router.get("/layers/{layer_name}", response_model=GeoJSONFeatureCollection)
@@ -295,6 +461,13 @@ def get_geojson_layer(
     desastres, alertas, cobertura, infraestrutura
     """
     muni = get_accessible_municipio(db, codigo_ibge, request=request)
+
+    if layer_name in ("bairros", "infraestrutura"):
+        bairro_count = db.query(Bairro).filter(Bairro.municipio_id == muni.id).count()
+        if bairro_count == 0:
+            sync_territorial_mesh(db, muni, force=True)
+    if layer_name == "cobertura":
+        ensure_spatial_coverage_polygons(db, muni)
         
     features = []
     
@@ -318,59 +491,155 @@ def get_geojson_layer(
             })
             
     elif layer_name == "bairros":
-        # Get neighborhood boundaries
+        audit = audit_municipio(db, muni, persist=False)
+        if audit["flag_malha"] == "MALHA_AUSENTE" and muni.codigo_ibge != "2611606":
+            return GeoJSONFeatureCollection(type="FeatureCollection", features=[])
+
         bairros = db.query(
             Bairro.id,
             Bairro.nome, Bairro.codigo_bairro,
             func.ST_AsGeoJSON(Bairro.geom).label("geojson")
         ).filter(Bairro.municipio_id == muni.id).all()
-        for b in bairros:
-            features.append({
-                "type": "Feature",
-                "geometry": json.loads(b.geojson),
-                "properties": {
-                    "nome": b.nome,
-                    "codigo_bairro": b.codigo_bairro,
-                    "fonte_referencia": "Cadastro Territorial Multifinalitario municipal / CTM",
-                    "qualidade_dado": quality_badge(layer_name)
-                }
-            })
+
+        setores = db.query(
+            SetorCensitario.id,
+            SetorCensitario.codigo_setor,
+            func.ST_AsGeoJSON(SetorCensitario.geom).label("geojson"),
+        ).filter(SetorCensitario.municipio_id == muni.id).all()
+
+        from app.data_connectors.territorial_mesh_collector import GENERIC_BAIRRO_NAMES
+
+        bairro_names = {b.nome for b in bairros}
+        is_estimated_mesh = bool(bairro_names) and bairro_names <= GENERIC_BAIRRO_NAMES
+        is_official_mesh = is_official_ibge_mesh(db, muni)
+        # Bairros densos (≥8 oficiais): plotar bairros. Caso contrário, setores censitários.
+        has_dense_bairros = len(bairros) >= 8 and is_official_mesh and not is_estimated_mesh
+        use_setores = len(setores) >= 4 and not has_dense_bairros
+
+        is_recife_mesh = muni.codigo_ibge == "2611606" and len(bairros) >= 85 and not is_official_mesh
+
+        if use_setores:
+            for s in setores:
+                label = f"Setor {s.codigo_setor[-4:]}" if s.codigo_setor else "Setor"
+                features.append({
+                    "type": "Feature",
+                    "geometry": json.loads(s.geojson),
+                    "properties": {
+                        "nome": label,
+                        "codigo_bairro": s.codigo_setor,
+                        "fonte_referencia": "IBGE Censo 2022 — setores censitários",
+                        "qualidade_dado": "Oficial",
+                        "malha_fonte": "ibge_censo2022_setores",
+                    },
+                })
+        else:
+            for b in bairros:
+                features.append({
+                    "type": "Feature",
+                    "geometry": json.loads(b.geojson),
+                    "properties": {
+                        "nome": b.nome,
+                        "codigo_bairro": b.codigo_bairro,
+                        "fonte_referencia": (
+                            "IBGE Censo 2022 — malha oficial de bairros"
+                            if is_official_mesh
+                            else (
+                                "CTM Recife / malha Voronoi calibrada Sinidu+Clima"
+                                if is_recife_mesh
+                                else "Malha territorial estimada Sinidu+Clima (Voronoi)"
+                            )
+                        ),
+                        "qualidade_dado": (
+                            "Oficial"
+                            if is_official_mesh
+                            else ("Referencia" if is_recife_mesh else quality_badge(layer_name))
+                        ),
+                        "malha_fonte": (
+                            "ibge_censo2022"
+                            if is_official_mesh
+                            else ("estimado_sinidu" if not is_recife_mesh else "prefeitura_oficial")
+                        ),
+                    }
+                })
 
     elif layer_name in ("vulnerabilidade", "inundacao"):
-        # The frontend can request thematic risk layers suggested by the assistant.
-        bairros = db.query(
-            Bairro.id,
-            Bairro.nome,
-            Bairro.codigo_bairro,
-            func.ST_AsGeoJSON(Bairro.geom).label("geojson")
-        ).filter(Bairro.municipio_id == muni.id).all()
+        setores = db.query(
+            SetorCensitario.id,
+            SetorCensitario.codigo_setor,
+            func.ST_AsGeoJSON(SetorCensitario.geom).label("geojson"),
+        ).filter(SetorCensitario.municipio_id == muni.id).all()
 
-        if layer_name == "vulnerabilidade":
-            scores = {
-                item["id"]: item
-                for item in AnalyticalEngine.calculate_climate_vulnerability(db, muni.id)
-            }
+        if len(setores) >= 4:
+            if layer_name == "vulnerabilidade":
+                scores = {
+                    item["id"]: item
+                    for item in AnalyticalEngine.calculate_climate_vulnerability_setores(db, muni.id)
+                }
+            else:
+                scores = {
+                    item["id"]: item
+                    for item in AnalyticalEngine.calculate_flood_risk_setores(db, muni.id)
+                }
+
+            ivc_tertis: tuple[float, float] | None = None
+            if layer_name == "vulnerabilidade" and len(scores) >= 3:
+                ordered_ivc = sorted(float(v.get("indice_vulnerabilidade", 0)) for v in scores.values())
+                ivc_tertis = (_percentile(ordered_ivc, 0.33), _percentile(ordered_ivc, 0.66))
+
+            for s in setores:
+                properties = {
+                    "nome": scores.get(s.id, {}).get("nome", f"Setor {s.codigo_setor[-4:]}"),
+                    "codigo_setor": s.codigo_setor,
+                    "layer": layer_name,
+                    "granularidade": "setor_censitario",
+                    "fonte_referencia": "Sinidu+Clima: IRI/IVC por setor (S2ID, MapBiomas, CEMADEN, hidrografia)",
+                    "qualidade_dado": quality_badge(layer_name),
+                }
+                properties.update(scores.get(s.id, {}))
+                if ivc_tertis and "indice_vulnerabilidade" in properties:
+                    ivc = float(properties["indice_vulnerabilidade"])
+                    properties["classe_vulnerabilidade"] = _relative_tertile_class(ivc, *ivc_tertis)
+                    properties["classificacao_relativa"] = True
+                features.append({
+                    "type": "Feature",
+                    "geometry": json.loads(s.geojson),
+                    "properties": properties,
+                })
         else:
-            scores = {
-                item["id"]: item
-                for item in AnalyticalEngine.calculate_flood_risk(db, muni.id)
-            }
+            bairros = db.query(
+                Bairro.id,
+                Bairro.nome,
+                Bairro.codigo_bairro,
+                func.ST_AsGeoJSON(Bairro.geom).label("geojson"),
+            ).filter(Bairro.municipio_id == muni.id).all()
 
-        for b in bairros:
-            properties = {
-                "nome": b.nome,
-                "codigo_bairro": b.codigo_bairro,
-                "layer": layer_name,
-                "fonte_referencia": "Sinidu+Clima: cruzamento de IBGE, MapBiomas, S2ID, CEMADEN e infraestrutura urbana",
-                "qualidade_dado": quality_badge(layer_name),
-            }
-            properties.update(scores.get(b.id, {}))
-            features.append({
-                "type": "Feature",
-                "geometry": json.loads(b.geojson),
-                "properties": properties
-            })
-            
+            if layer_name == "vulnerabilidade":
+                scores = {
+                    item["id"]: item
+                    for item in AnalyticalEngine.calculate_climate_vulnerability(db, muni.id)
+                }
+            else:
+                scores = {
+                    item["id"]: item
+                    for item in AnalyticalEngine.calculate_flood_risk(db, muni.id)
+                }
+
+            for b in bairros:
+                properties = {
+                    "nome": b.nome,
+                    "codigo_bairro": b.codigo_bairro,
+                    "layer": layer_name,
+                    "granularidade": "bairro",
+                    "fonte_referencia": "Sinidu+Clima: cruzamento de IBGE, MapBiomas, S2ID, CEMADEN e infraestrutura urbana",
+                    "qualidade_dado": quality_badge(layer_name),
+                }
+                properties.update(scores.get(b.id, {}))
+                features.append({
+                    "type": "Feature",
+                    "geometry": json.loads(b.geojson),
+                    "properties": properties,
+                })
+
     elif layer_name == "setores":
         # Get census sectors
         setores = db.query(
@@ -391,7 +660,11 @@ def get_geojson_layer(
             })
 
     elif layer_name == "socioeconomico":
-        # IBGE/Cidades/CTM socioeconomic lens over census sectors.
+        from app.services.socioeconomic_engine import (
+            classify_renda_tertiles,
+            classe_renda_from_value,
+        )
+
         setores = db.query(
             SetorCensitario.codigo_setor,
             SetorCensitario.populacao,
@@ -399,16 +672,17 @@ def get_geojson_layer(
             func.ST_Area(SetorCensitario.geom).label("area_deg"),
             func.ST_AsGeoJSON(SetorCensitario.geom).label("geojson")
         ).filter(SetorCensitario.municipio_id == muni.id).all()
+
+        rendas = [float(s.renda_media or 0.0) for s in setores]
+        p33, p66 = classify_renda_tertiles(rendas)
+        ibge_row = db.query(MunicipioIbge).filter(MunicipioIbge.codigo_ibge == muni.codigo_ibge).first()
+        renda_qualidade = "derivado" if ibge_row and ibge_row.pib_per_capita else "estimado"
+
         for s in setores:
             renda = float(s.renda_media or 0.0)
             area_km2 = float(s.area_deg or 0.0) * 12300.0
             densidade = float(s.populacao or 0) / area_km2 if area_km2 > 0 else 0.0
-            if renda >= 5000:
-                classe_renda = "ALTA"
-            elif renda >= 3000:
-                classe_renda = "MEDIA"
-            else:
-                classe_renda = "BAIXA"
+            classe_renda = classe_renda_from_value(renda, p33, p66)
 
             features.append({
                 "type": "Feature",
@@ -420,8 +694,11 @@ def get_geojson_layer(
                     "renda_media": renda,
                     "densidade_demografica": round(densidade, 2),
                     "classe_renda": classe_renda,
-                    "fonte_referencia": "IBGE Cidades / Cadastro Territorial Multifinalitário",
-                    "qualidade_dado": quality_badge(layer_name)
+                    "classificacao_relativa": True,
+                    "limiar_p33": round(p33, 2),
+                    "limiar_p66": round(p66, 2),
+                    "fonte_referencia": "IBGE PIB municipal + gradiente intra-urbano calibrado",
+                    "qualidade_dado": renda_qualidade,
                 }
             })
 
@@ -449,28 +726,76 @@ def get_geojson_layer(
             })
 
     elif layer_name in ("adaptacao_climatica", "prioridade_planejamento", "saneamento_drenagem"):
-        bairros = db.query(
-            Bairro.id,
-            Bairro.nome,
-            Bairro.codigo_bairro,
-            func.ST_AsGeoJSON(Bairro.geom).label("geojson")
-        ).filter(Bairro.municipio_id == muni.id).all()
-
-        vulnerability = {
-            item["id"]: item
-            for item in AnalyticalEngine.calculate_climate_vulnerability(db, muni.id)
-        }
-        flood = {
-            item["id"]: item
-            for item in AnalyticalEngine.calculate_flood_risk(db, muni.id)
-        }
+        setores = db.query(
+            SetorCensitario.id,
+            SetorCensitario.codigo_setor,
+            func.ST_AsGeoJSON(SetorCensitario.geom).label("geojson"),
+        ).filter(SetorCensitario.municipio_id == muni.id).all()
 
         snis = _snis_row(db, muni.codigo_ibge)
         snis_deficit = _saneamento_deficit(snis)
+        has_snis = bool(snis and snis.data_quality in ("oficial", "estimado"))
 
-        for b in bairros:
-            v = vulnerability.get(b.id, {})
-            f = flood.get(b.id, {})
+        if len(setores) >= 4:
+            vulnerability = {
+                item["id"]: item
+                for item in AnalyticalEngine.calculate_climate_vulnerability_setores(db, muni.id)
+            }
+            flood = {
+                item["id"]: item
+                for item in AnalyticalEngine.calculate_flood_risk_setores(db, muni.id)
+            }
+            units = [
+                (s.id, s.codigo_setor, s.geojson, "setor_censitario")
+                for s in setores
+            ]
+        else:
+            bairros = db.query(
+                Bairro.id,
+                Bairro.nome,
+                Bairro.codigo_bairro,
+                func.ST_AsGeoJSON(Bairro.geom).label("geojson"),
+            ).filter(Bairro.municipio_id == muni.id).all()
+            vulnerability = {
+                item["id"]: item
+                for item in AnalyticalEngine.calculate_climate_vulnerability(db, muni.id)
+            }
+            flood = {
+                item["id"]: item
+                for item in AnalyticalEngine.calculate_flood_risk(db, muni.id)
+            }
+            units = [
+                (b.id, b.codigo_bairro, b.geojson, "bairro", b.nome)
+                for b in bairros
+            ]
+
+        prioridade_tertis: tuple[float, float] | None = None
+        if layer_name == "prioridade_planejamento" and len(units) >= 3:
+            raw_scores: list[float] = []
+            for unit in units:
+                uid = unit[0]
+                v = vulnerability.get(uid, {})
+                f = flood.get(uid, {})
+                ivc = float(v.get("indice_vulnerabilidade", 0.0))
+                iri = float(f.get("indice_risco_inundacao", 0.0))
+                capacidade = float(v.get("capacidade_adaptacao", 0.0))
+                raw_scores.append(round((ivc * 0.45) + (iri * 0.35) + ((1.0 - capacidade) * 0.20), 4))
+            ordered = sorted(raw_scores)
+            prioridade_tertis = (_percentile(ordered, 0.33), _percentile(ordered, 0.66))
+
+        for unit in units:
+            if len(unit) == 4:
+                uid, code, geojson, granularidade = unit
+                nome = vulnerability.get(uid, {}).get("nome") or flood.get(uid, {}).get("nome") or f"Setor {str(code)[-4:]}"
+                codigo_bairro = None
+                codigo_setor = code
+            else:
+                uid, code, geojson, granularidade, nome = unit
+                codigo_bairro = code
+                codigo_setor = None
+
+            v = vulnerability.get(uid, {})
+            f = flood.get(uid, {})
             ivc = float(v.get("indice_vulnerabilidade", 0.0))
             iri = float(f.get("indice_risco_inundacao", 0.0))
             capacidade = float(v.get("capacidade_adaptacao", 0.0))
@@ -478,50 +803,63 @@ def get_geojson_layer(
             if layer_name == "adaptacao_climatica":
                 properties = {
                     "layer": layer_name,
-                    "nome": b.nome,
-                    "codigo_bairro": b.codigo_bairro,
+                    "nome": nome,
+                    "codigo_bairro": codigo_bairro,
+                    "codigo_setor": codigo_setor,
+                    "granularidade": granularidade,
                     "capacidade_adaptacao": round(capacidade, 2),
                     "indice_vulnerabilidade": round(ivc, 2),
                     "classe_adaptacao": "ALTA" if capacidade >= 0.66 else ("MEDIA" if capacidade >= 0.33 else "BAIXA"),
                     "fonte_referencia": "MapBiomas / Adapta Brasil / equipamentos urbanos",
-                    "qualidade_dado": quality_badge(layer_name)
+                    "qualidade_dado": quality_badge(layer_name),
                 }
             elif layer_name == "prioridade_planejamento":
-                prioridade = ((ivc * 0.45) + (iri * 0.35) + ((1.0 - capacidade) * 0.20))
+                prioridade = round(((ivc * 0.45) + (iri * 0.35) + ((1.0 - capacidade) * 0.20)), 2)
                 deficit_adaptacao = 1.0 - capacidade
+                if prioridade_tertis:
+                    p33, p66 = prioridade_tertis
+                    classe = _relative_tertile_class(prioridade, p33, p66)
+                    explicacao = (
+                        f"Score = 45% IVC + 35% IRI + 20% déficit adaptação. "
+                        f"Classe relativa ao município: alta ≥ {p66:.2f}, baixa ≤ {p33:.2f}."
+                    )
+                else:
+                    classe = "ALTA" if prioridade >= 0.66 else ("MEDIA" if prioridade >= 0.33 else "BAIXA")
+                    explicacao = "Score = 45% IVC + 35% IRI + 20% deficit de adaptacao"
                 properties = {
                     "layer": layer_name,
-                    "nome": b.nome,
-                    "codigo_bairro": b.codigo_bairro,
-                    "prioridade_planejamento": round(prioridade, 2),
+                    "nome": nome,
+                    "codigo_bairro": codigo_bairro,
+                    "codigo_setor": codigo_setor,
+                    "granularidade": granularidade,
+                    "prioridade_planejamento": prioridade,
                     "indice_vulnerabilidade": round(ivc, 2),
                     "indice_risco_inundacao": round(iri, 2),
                     "capacidade_adaptacao": round(capacidade, 2),
-                    "classe_prioridade": "ALTA" if prioridade >= 0.66 else ("MEDIA" if prioridade >= 0.33 else "BAIXA"),
+                    "classe_prioridade": classe,
+                    "classificacao_relativa": prioridade_tertis is not None,
                     "score_componentes": {
                         "vulnerabilidade_pct": round(ivc * 45, 1),
                         "inundacao_pct": round(iri * 35, 1),
                         "deficit_adaptacao_pct": round(deficit_adaptacao * 20, 1),
                     },
-                    "score_explicacao": "Score = 45% IVC + 35% IRI + 20% deficit de adaptacao",
+                    "score_explicacao": explicacao,
                     "fonte_referencia": "Plano Diretor / Planos locais / CTM",
-                    "qualidade_dado": quality_badge(layer_name)
+                    "qualidade_dado": quality_badge(layer_name),
                 }
             else:
-                if snis and snis.data_quality in ("oficial", "estimado"):
-                    risco_drenagem = min(1.0, (iri * 0.55) + (snis_deficit * 0.45))
-                    score_explicacao = "Score = 55% IRI territorial + 45% déficit SNIS (esgoto/água)"
-                else:
-                    risco_drenagem = iri
-                    score_explicacao = "Score territorial (IRI) — SNIS/SINISA pendente"
+                risco_drenagem, score_explicacao = _drainage_risk_score(f, snis_deficit, has_snis)
                 properties = {
                     "layer": layer_name,
-                    "nome": b.nome,
-                    "codigo_bairro": b.codigo_bairro,
-                    "risco_drenagem": round(risco_drenagem, 2),
+                    "nome": nome,
+                    "codigo_bairro": codigo_bairro,
+                    "codigo_setor": codigo_setor,
+                    "granularidade": granularidade,
+                    "risco_drenagem": risco_drenagem,
+                    "indice_risco_inundacao": round(iri, 2),
                     "impermeabilizacao_score": round(float(f.get("impermeabilizacao_score", 0.0)), 2),
                     "hidrografia_proximidade_score": round(float(f.get("hidrografia_proximidade_score", 0.0)), 2),
-                    "classe_drenagem": "CRITICA" if risco_drenagem >= 0.66 else ("ATENCAO" if risco_drenagem >= 0.33 else "MONITORAMENTO"),
+                    "classe_drenagem": _drainage_class(risco_drenagem),
                     "score_explicacao": score_explicacao,
                     "fonte_referencia": (
                         f"{snis.fonte} + S2ID + estimativa territorial Sinidu+Clima"
@@ -536,16 +874,17 @@ def get_geojson_layer(
                         "cobertura_esgoto_pct": float(snis.cobertura_esgoto_pct) if snis.cobertura_esgoto_pct is not None else None,
                         "indice_perdas_agua_pct": float(snis.indice_perdas_agua_pct) if snis.indice_perdas_agua_pct is not None else None,
                         "indice_atendimento_esgoto_pct": float(snis.indice_atendimento_esgoto_pct) if snis.indice_atendimento_esgoto_pct is not None else None,
+                        "deficit_saneamento_pct": round(snis_deficit * 100, 1),
                         "ano_referencia": snis.ano_referencia,
                         "data_quality": snis.data_quality,
                     }
 
             features.append({
                 "type": "Feature",
-                "geometry": json.loads(b.geojson),
-                "properties": properties
+                "geometry": json.loads(geojson),
+                "properties": properties,
             })
-            
+
     elif layer_name == "desastres":
         # Get historical disasters
         desastres = db.query(
@@ -553,6 +892,7 @@ def get_geojson_layer(
             HistoricoDesastreS2ID.populacao_afetada, HistoricoDesastreS2ID.danos_materiais,
             func.ST_AsGeoJSON(HistoricoDesastreS2ID.geom).label("geojson")
         ).filter(HistoricoDesastreS2ID.municipio_id == muni.id).all()
+        s2id_count = len(desastres)
         for d in desastres:
             features.append({
                 "type": "Feature",
@@ -562,8 +902,9 @@ def get_geojson_layer(
                     "data_ocorrencia": str(d.data_ocorrencia),
                     "populacao_afetada": d.populacao_afetada,
                     "danos_materiais": float(d.danos_materiais),
+                    "eventos_municipio": s2id_count,
                     "fonte_referencia": "S2ID / Secretaria Nacional de Protecao e Defesa Civil",
-                    "qualidade_dado": quality_badge(layer_name)
+                    "qualidade_dado": "Oficial" if s2id_count > 1 else quality_badge(layer_name),
                 }
             })
             
@@ -605,11 +946,11 @@ def get_geojson_layer(
             })
             
     elif layer_name == "infraestrutura":
-        # Get schools, hospitals, roads
         items = db.query(
             InfraestruturaUrbana.tipo, InfraestruturaUrbana.nome, InfraestruturaUrbana.subgrupo,
             func.ST_AsGeoJSON(InfraestruturaUrbana.geom).label("geojson")
         ).filter(InfraestruturaUrbana.municipio_id == muni.id).all()
+        is_recife_infra = muni.codigo_ibge == "2611606" and len(items) >= 12
         for item in items:
             features.append({
                 "type": "Feature",
@@ -618,8 +959,12 @@ def get_geojson_layer(
                     "tipo": item.tipo,
                     "nome": item.nome,
                     "subgrupo": item.subgrupo,
-                    "fonte_referencia": "OpenStreetMap / bases locais de infraestrutura urbana",
-                    "qualidade_dado": quality_badge(layer_name)
+                    "fonte_referencia": (
+                        "OpenStreetMap / bases locais curadas (Recife)"
+                        if is_recife_infra
+                        else "OpenStreetMap / bases locais de infraestrutura urbana"
+                    ),
+                    "qualidade_dado": "Referencia" if is_recife_infra else quality_badge(layer_name),
                 }
             })
 
@@ -630,22 +975,37 @@ def get_geojson_layer(
                 "geometry": json.loads(pt["geom_json"]),
                 "properties": {
                     "layer": layer_name,
+                    "feature_kind": "estabelecimento",
                     "nome": pt["nome"],
                     "tipo": pt["tipo"],
                     "leitos_sus": pt["leitos_sus"],
                     "bairro": pt["bairro"],
                     "cobertura_classe": pt["cobertura_classe"],
                     "distancia_maior_risco_km": pt["distancia_maior_risco_km"],
+                    "indice_vulnerabilidade": pt.get("indice_vulnerabilidade"),
+                    "indice_risco_inundacao": pt.get("indice_risco_inundacao"),
                     "fonte_referencia": "CNES/DataSUS × risco climático Sinidu+Clima",
+                    "qualidade_dado": quality_badge(layer_name),
+                },
+            })
+        for sec in AnalyticalEngine.health_risk_setores(db, muni.id):
+            features.append({
+                "type": "Feature",
+                "geometry": json.loads(sec["geom_json"]),
+                "properties": {
+                    "layer": layer_name,
+                    "feature_kind": "setor_pressao",
+                    "nome": sec["nome"],
+                    "codigo_setor": sec["codigo_setor"],
+                    "pressao_assistencial": sec["pressao_assistencial"],
+                    "cobertura_classe": sec["cobertura_classe"],
+                    "granularidade": "setor_censitario",
+                    "fonte_referencia": "Pressão assistencial = IVC + IRI + distância ao equipamento mais próximo",
                     "qualidade_dado": quality_badge(layer_name),
                 },
             })
 
     elif layer_name == "seguranca_publica":
-        bairros = db.query(
-            Bairro.id, Bairro.nome, Bairro.codigo_bairro,
-            func.ST_AsGeoJSON(Bairro.geom).label("geojson"),
-        ).filter(Bairro.municipio_id == muni.id).all()
         seg = (
             db.query(MunicipioSeguranca)
             .filter(MunicipioSeguranca.codigo_ibge == muni.codigo_ibge)
@@ -653,49 +1013,111 @@ def get_geojson_layer(
             .first()
         )
         taxa = float(seg.taxa_100k) if seg and seg.taxa_100k else 120.0
-        vm_rows = {r["id"]: r for r in AnalyticalEngine.calculate_multidimensional_vulnerability(db, muni.id)}
-        for b in bairros:
-            vm = vm_rows.get(b.id, {})
-            intensidade = min(1.0, taxa / 500.0) * (0.6 + float(vm.get("indice_vm", 0.4)) * 0.4)
-            features.append({
-                "type": "Feature",
-                "geometry": json.loads(b.geojson),
-                "properties": {
-                    "layer": layer_name,
-                    "nome": b.nome,
-                    "taxa_violenta_100k": round(taxa, 1),
-                    "intensidade_seguranca": round(intensidade, 3),
-                    "ocorrencias_violentas": seg.ocorrencias_violentas if seg else None,
-                    "fonte_referencia": seg.fonte if seg else "SINESP/dados.gov.br",
-                    "qualidade_dado": quality_badge(layer_name),
-                },
-            })
+
+        setor_rows = AnalyticalEngine.security_intensity_setores(db, muni.id, taxa)
+        if setor_rows:
+            for row in setor_rows:
+                features.append({
+                    "type": "Feature",
+                    "geometry": json.loads(row["geom_json"]),
+                    "properties": {
+                        "layer": layer_name,
+                        "nome": row["nome"],
+                        "codigo_setor": row["codigo_setor"],
+                        "granularidade": "setor_censitario",
+                        "taxa_violenta_100k": round(taxa, 1),
+                        "intensidade_seguranca": row["intensidade_seguranca"],
+                        "classe_intensidade": row["classe_intensidade"],
+                        "classificacao_relativa": True,
+                        "indice_vulnerabilidade": row["indice_vulnerabilidade"],
+                        "estresse_renda": row["estresse_renda"],
+                        "ocorrencias_violentas": seg.ocorrencias_violentas if seg else None,
+                        "score_explicacao": (
+                            f"Intensidade = 22% taxa municipal ({taxa:.0f}/100k) + 32% estresse de renda "
+                            f"+ 26% IVC + 12% densidade + 8% IRI. Classe relativa (tertil intra-urbano)."
+                        ),
+                        "fonte_referencia": seg.fonte if seg else "SINESP/dados.gov.br + gradiente Sinidu+Clima",
+                        "qualidade_dado": quality_badge(layer_name),
+                    },
+                })
+        else:
+            bairros = db.query(
+                Bairro.id, Bairro.nome, Bairro.codigo_bairro,
+                func.ST_AsGeoJSON(Bairro.geom).label("geojson"),
+            ).filter(Bairro.municipio_id == muni.id).all()
+            vm_rows = {r["id"]: r for r in AnalyticalEngine.calculate_multidimensional_vulnerability(db, muni.id)}
+            for b in bairros:
+                vm = vm_rows.get(b.id, {})
+                intensidade = min(1.0, (taxa / 450.0) * (0.5 + float(vm.get("indice_vm", 0.4)) * 0.5))
+                features.append({
+                    "type": "Feature",
+                    "geometry": json.loads(b.geojson),
+                    "properties": {
+                        "layer": layer_name,
+                        "nome": b.nome,
+                        "granularidade": "bairro",
+                        "taxa_violenta_100k": round(taxa, 1),
+                        "intensidade_seguranca": round(intensidade, 3),
+                        "classe_intensidade": "MEDIA",
+                        "ocorrencias_violentas": seg.ocorrencias_violentas if seg else None,
+                        "fonte_referencia": seg.fonte if seg else "SINESP/dados.gov.br",
+                        "qualidade_dado": quality_badge(layer_name),
+                    },
+                })
 
     elif layer_name == "vulnerabilidade_multidimensional":
-        bairros = db.query(
-            Bairro.id, Bairro.nome, Bairro.codigo_bairro,
-            func.ST_AsGeoJSON(Bairro.geom).label("geojson"),
-        ).filter(Bairro.municipio_id == muni.id).all()
-        vm_map = {r["id"]: r for r in AnalyticalEngine.calculate_multidimensional_vulnerability(db, muni.id)}
-        for b in bairros:
-            vm = vm_map.get(b.id, {})
-            features.append({
-                "type": "Feature",
-                "geometry": json.loads(b.geojson),
-                "properties": {
-                    "layer": layer_name,
-                    "nome": b.nome,
-                    "indice_vm": vm.get("indice_vm", 0),
-                    "risco_climatico": vm.get("risco_climatico", 0),
-                    "vulnerabilidade_social": vm.get("vulnerabilidade_social", 0),
-                    "cobertura_saude_inv": vm.get("cobertura_saude_inv", 0),
-                    "cobertura_seguranca_inv": vm.get("cobertura_seguranca_inv", 0),
-                    "capacidade_fiscal_inv": vm.get("capacidade_fiscal_inv", 0),
-                    "vulnerabilidade_multidimensional": vm.get("vulnerabilidade_multidimensional", False),
-                    "fonte_referencia": "VM Sinidu+Clima: clima + social + saúde + segurança + fiscal",
-                    "qualidade_dado": "Derivado Sinidu+Clima",
-                },
-            })
+        vm_rows = AnalyticalEngine.calculate_multidimensional_vulnerability_setores(db, muni.id)
+        if vm_rows:
+            for row in vm_rows:
+                features.append({
+                    "type": "Feature",
+                    "geometry": json.loads(row["geom_json"]),
+                    "properties": {
+                        "layer": layer_name,
+                        "nome": row["nome"],
+                        "codigo_setor": row["codigo_setor"],
+                        "granularidade": "setor_censitario",
+                        "indice_vm": row["indice_vm"],
+                        "classe_vm": row["classe_vm"],
+                        "classificacao_relativa": row["classificacao_relativa"],
+                        "risco_climatico": row["risco_climatico"],
+                        "vulnerabilidade_social": row["vulnerabilidade_social"],
+                        "cobertura_saude_inv": row["cobertura_saude_inv"],
+                        "cobertura_seguranca_inv": row["cobertura_seguranca_inv"],
+                        "capacidade_fiscal_inv": row["capacidade_fiscal_inv"],
+                        "vulnerabilidade_multidimensional": row["vulnerabilidade_multidimensional"],
+                        "score_explicacao": row["score_explicacao"],
+                        "fonte_referencia": "VM Sinidu+Clima: clima + social + saúde + segurança + fiscal",
+                        "qualidade_dado": "Derivado Sinidu+Clima",
+                    },
+                })
+        else:
+            bairros = db.query(
+                Bairro.id, Bairro.nome, Bairro.codigo_bairro,
+                func.ST_AsGeoJSON(Bairro.geom).label("geojson"),
+            ).filter(Bairro.municipio_id == muni.id).all()
+            vm_map = {r["id"]: r for r in AnalyticalEngine.calculate_multidimensional_vulnerability(db, muni.id)}
+            for b in bairros:
+                vm = vm_map.get(b.id, {})
+                features.append({
+                    "type": "Feature",
+                    "geometry": json.loads(b.geojson),
+                    "properties": {
+                        "layer": layer_name,
+                        "nome": b.nome,
+                        "granularidade": "bairro",
+                        "indice_vm": vm.get("indice_vm", 0),
+                        "classe_vm": "ALTA",
+                        "risco_climatico": vm.get("risco_climatico", 0),
+                        "vulnerabilidade_social": vm.get("vulnerabilidade_social", 0),
+                        "cobertura_saude_inv": vm.get("cobertura_saude_inv", 0),
+                        "cobertura_seguranca_inv": vm.get("cobertura_seguranca_inv", 0),
+                        "capacidade_fiscal_inv": vm.get("capacidade_fiscal_inv", 0),
+                        "vulnerabilidade_multidimensional": vm.get("vulnerabilidade_multidimensional", False),
+                        "fonte_referencia": "VM Sinidu+Clima: clima + social + saúde + segurança + fiscal",
+                        "qualidade_dado": "Derivado Sinidu+Clima",
+                    },
+                })
 
     else:
         raise HTTPException(status_code=400, detail=f"Layer '{layer_name}' not supported.")

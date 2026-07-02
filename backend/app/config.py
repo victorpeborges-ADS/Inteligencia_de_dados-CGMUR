@@ -26,7 +26,7 @@ class Settings:
         "2507507", "4106902", "2611606", "2211001", "3304557", "2408102", "4314902",
         "1100205", "1400100", "4205407", "2800308", "3550308", "1721000",
         "3303906", "3303401", "3305802", "3550704", "3300100", "4202404", "1504208",
-        "3143906", "2914802", "2913606", "4316907", "3109006", "2602902", "4318908",
+        "3143906", "2914802", "2913606", "4316907", "3109006", "2602902", "4318903",
         "3201506", "1702109", "1400233", "2604106", "2407104", "2924009", "2806701",
         "5201108", "5208905", "5218805", "4302105", "4304606", "4104907", "4305108",
         "3200607", "3509502", "3138203", "3548708", "3549904", "3305505",
@@ -36,6 +36,9 @@ class Settings:
     MODELS_DIR: str = os.getenv("MODELS_DIR", "/data/models")
     ML_DATA_DIR: str = os.getenv("ML_DATA_DIR", "/data/ml")
     DEM_DIR: str = os.getenv("DEM_DIR", "/data/dem")
+    LOCAL_DEM_DIR: str = os.getenv("LOCAL_DEM_DIR", "/data/dem/local")
+    IBGE_MESH_CACHE_DIR: str = os.getenv("IBGE_MESH_CACHE_DIR", "/data/ibge/censo_2022")
+    REFINE_PILOT_DEM: bool = _env_bool("REFINE_PILOT_DEM", True)
     GOOGLE_MAPS_API_KEY: str = os.getenv("GOOGLE_MAPS_API_KEY", "")
 
     # Autenticação (desligada por padrão em dev)
@@ -85,6 +88,7 @@ class Settings:
     SCHEDULED_PIPELINE_ENABLED: bool = _env_bool("SCHEDULED_PIPELINE_ENABLED", False)
     SCHEDULED_PIPELINE_LIMIT: int = int(os.getenv("SCHEDULED_PIPELINE_LIMIT", "61"))
     JOB_GOTIFY_NOTIFY: bool = _env_bool("JOB_GOTIFY_NOTIFY", True)
+    JOB_STORE_REDIS: bool = _env_bool("JOB_STORE_REDIS", True)
 
 
 settings = Settings()

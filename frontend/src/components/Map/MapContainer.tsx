@@ -21,6 +21,7 @@ interface MapProps {
   simGeoJSON: any;
   simContours?: any;
   simFlowPaths?: any;
+  simOverlays?: { showFlood: boolean; showContours: boolean; showFlow: boolean };
   selectedMunicipio: string;
 }
 
@@ -51,11 +52,15 @@ const layerTitles: Record<string, string> = {
 const legendByLayer: Record<string, LegendItem[]> = {
   municipio: [{ color: '#38bdf8', label: 'Limite municipal' }],
   bairros: [{ color: '#6366f1', label: 'Malha de bairros' }],
-  infraestrutura: [{ color: '#a78bfa', label: 'Equipamentos e redes' }],
+  infraestrutura: [
+    { color: '#ef4444', label: 'Hospitais / UPAs' },
+    { color: '#3b82f6', label: 'Escolas' },
+    { color: '#c4b5fd', label: 'Vias arteriais' },
+  ],
   socioeconomico: [
-    { color: '#22c55e', label: 'Renda alta' },
-    { color: '#eab308', label: 'Renda média' },
-    { color: '#f97316', label: 'Renda baixa' }
+    { color: '#22c55e', label: 'Renda alta (terço superior)' },
+    { color: '#eab308', label: 'Renda média (terço médio)' },
+    { color: '#f97316', label: 'Renda baixa (terço inferior)' }
   ],
   cobertura: [
     { color: '#10b981', label: 'Vegetação / parque' },
@@ -81,7 +86,7 @@ const legendByLayer: Record<string, LegendItem[]> = {
   saneamento_drenagem: [
     { color: '#0e7490', label: 'Drenagem crítica' },
     { color: '#06b6d4', label: 'Atenção' },
-    { color: '#a5f3fc', label: 'Monitoramento' }
+    { color: '#e0f2fe', label: 'Monitoramento' }
   ],
   adaptacao_climatica: [
     { color: '#16a34a', label: 'Capacidade alta' },
@@ -131,6 +136,7 @@ export default function MapContainer({
   simGeoJSON,
   simContours,
   simFlowPaths,
+  simOverlays = { showFlood: true, showContours: true, showFlow: true },
   selectedMunicipio,
 }: MapProps) {
   const [layerData, setLayerData] = useState<Record<string, any>>({});
@@ -165,7 +171,51 @@ export default function MapContainer({
   }, [activeLayers, selectedMunicipio]);
 
   // Color functions for thematic vector layers
-  const getLayerStyleForFeature = (layerName: string, feature: any) => getLayerStyle(layerName, feature);
+  const getLayerStyleForFeature = (layerName: string, feature: any) => {
+    const style = getLayerStyle(layerName, feature);
+    const thematicOnTop = activeLayers.some((l) =>
+      ['cobertura', 'inundacao', 'vulnerabilidade', 'saneamento_drenagem', 'prioridade_planejamento', 'adaptacao_climatica', 'saude_risco', 'seguranca_publica', 'vulnerabilidade_multidimensional'].includes(l)
+    );
+    const simActive = Boolean(simGeoJSON) || (simContours?.features?.length ?? 0) > 0;
+    if (layerName === 'bairros' && simActive) {
+      return {
+        ...style,
+        fillOpacity: 0,
+        fillColor: 'transparent',
+        weight: 0.55,
+        color: '#475569',
+        opacity: 0.4,
+      };
+    }
+    if (layerName === 'bairros' && thematicOnTop) {
+      const coberturaActive = activeLayers.includes('cobertura');
+      if (coberturaActive) {
+        return {
+          ...style,
+          fillOpacity: 0,
+          fillColor: 'transparent',
+          weight: 1.4,
+          color: '#e2e8f0',
+        };
+      }
+      return { ...style, fillOpacity: Math.min(style.fillOpacity, 0.12), weight: 0.8 };
+    }
+    if (layerName === 'cobertura' && activeLayers.includes('bairros')) {
+      return { ...style, fillOpacity: Math.min(style.fillOpacity, 0.38) };
+    }
+    return style;
+  };
+
+  const layerRenderOrder = [...activeLayers].sort((a, b) => {
+    const rank = (name: string) => {
+      if (name === 'municipio') return 0;
+      if (name === 'bairros') return 10;
+      if (name === 'cobertura') return 90;
+      if (name === 'inundacao' || name === 'vulnerabilidade' || name === 'saneamento_drenagem' || name === 'prioridade_planejamento' || name === 'adaptacao_climatica' || name === 'saude_risco' || name === 'seguranca_publica' || name === 'vulnerabilidade_multidimensional') return 88;
+      return 50;
+    };
+    return rank(a) - rank(b);
+  });
 
   // Popup contents depending on layer properties
   const onEachFeature = (layerName: string) => (feature: any, layer: any) => {
@@ -193,6 +243,10 @@ export default function MapContainer({
     if (props.renda_media) {
       popupContent += `<p class="mb-1"><span class="text-zinc-400">Renda Média:</span> R$ ${props.renda_media.toLocaleString(undefined, { minimumFractionDigits: 2 })}</p>`;
     }
+    if (props.classe_renda) {
+      const cls = props.classe_renda === 'ALTA' ? 'alta' : props.classe_renda === 'MEDIA' ? 'média' : 'baixa';
+      popupContent += `<p class="mb-1"><span class="text-zinc-400">Classe (no município):</span> <span class="font-semibold">${cls}</span></p>`;
+    }
 
     if (props.densidade_demografica) {
       popupContent += `<p class="mb-1"><span class="text-zinc-400">Densidade:</span> ${props.densidade_demografica.toLocaleString()} hab/km²</p>`;
@@ -213,6 +267,9 @@ export default function MapContainer({
 
     if (props.indice_risco_inundacao !== undefined) {
       popupContent += `<p class="mb-1"><span class="text-zinc-400">IRI:</span> <span class="font-bold text-sky-300">${props.indice_risco_inundacao}</span></p>`;
+      if (props.hidrografia_proximidade_score !== undefined) {
+        popupContent += `<p class="mb-1 text-[10px] text-zinc-500">Prox. hidrografia: ${props.hidrografia_proximidade_score} · Impermeab.: ${props.impermeabilizacao_score ?? '—'}</p>`;
+      }
     }
 
     if (props.capacidade_adaptacao !== undefined) {
@@ -220,11 +277,31 @@ export default function MapContainer({
     }
 
     if (props.prioridade_planejamento !== undefined) {
-      popupContent += `<p class="mb-1"><span class="text-zinc-400">Prioridade:</span> <span class="font-bold text-fuchsia-300">${props.prioridade_planejamento}</span></p>`;
+      popupContent += `<p class="mb-1"><span class="text-zinc-400">Prioridade:</span> <span class="font-bold text-fuchsia-300">${props.prioridade_planejamento}</span>`;
+      if (props.classe_prioridade) {
+        popupContent += ` <span class="text-[10px] text-fuchsia-200/80">(${props.classe_prioridade})</span>`;
+      }
+      popupContent += `</p>`;
+      if (props.classificacao_relativa) {
+        popupContent += `<p class="mb-1 text-[9px] text-zinc-500">Classe relativa ao município (tertil intra-urbano)</p>`;
+      }
     }
 
     if (props.risco_drenagem !== undefined) {
-      popupContent += `<p class="mb-1"><span class="text-zinc-400">Risco drenagem:</span> <span class="font-bold text-cyan-300">${props.risco_drenagem}</span></p>`;
+      popupContent += `<p class="mb-1"><span class="text-zinc-400">Risco drenagem:</span> <span class="font-bold text-cyan-300">${props.risco_drenagem}</span>`;
+      if (props.classe_drenagem) {
+        popupContent += ` <span class="text-[10px] text-cyan-200/80">(${props.classe_drenagem})</span>`;
+      }
+      popupContent += `</p>`;
+      if (props.impermeabilizacao_score !== undefined) {
+        popupContent += `<p class="mb-1 text-[10px] text-zinc-500">IRI ${props.indice_risco_inundacao ?? '—'} · Impermeab. ${props.impermeabilizacao_score} · Hidrografia ${props.hidrografia_proximidade_score ?? '—'}</p>`;
+      }
+      if (props.snis?.deficit_saneamento_pct !== undefined) {
+        popupContent += `<p class="mb-1 text-[10px] text-zinc-500">Déficit SNIS esgoto/água: ${props.snis.deficit_saneamento_pct}% (${props.snis.ano_referencia ?? '—'})</p>`;
+      }
+      if (props.score_explicacao) {
+        popupContent += `<p class="mb-1 text-[9px] text-zinc-600">${props.score_explicacao}</p>`;
+      }
     }
 
     if (props.maturidade_dados !== undefined) {
@@ -234,9 +311,16 @@ export default function MapContainer({
       }
     }
 
-    if (props.leitos_sus !== undefined) {
-      popupContent += `<p class="mb-1"><span class="text-zinc-400">Leitos SUS:</span> ${props.leitos_sus}</p>`;
+    if (props.tipo && props.feature_kind === 'estabelecimento') {
+      popupContent += `<p class="mb-1"><span class="text-zinc-400">Tipo:</span> ${props.tipo}${props.leitos_sus ? ` · ${props.leitos_sus} leitos SUS` : ''}</p>`;
     }
+    if (props.pressao_assistencial !== undefined) {
+      popupContent += `<p class="mb-1"><span class="text-zinc-400">Pressão assistencial:</span> <span class="font-bold">${props.pressao_assistencial}</span></p>`;
+    }
+    if (props.cobertura_classe) {
+      popupContent += `<p class="mb-1"><span class="text-zinc-400">Classe:</span> <span class="font-bold">${props.cobertura_classe}</span></p>`;
+    }
+
     if (props.bairro) {
       popupContent += `<p class="mb-1"><span class="text-zinc-400">Bairro:</span> ${props.bairro}</p>`;
     }
@@ -247,16 +331,50 @@ export default function MapContainer({
       popupContent += `<p class="mb-1"><span class="text-zinc-400">Dist. maior risco:</span> ${props.distancia_maior_risco_km} km</p>`;
     }
     if (props.taxa_violenta_100k !== undefined) {
-      popupContent += `<p class="mb-1"><span class="text-zinc-400">Ocorrências violentas / 100k:</span> ${props.taxa_violenta_100k}</p>`;
+      popupContent += `<p class="mb-1"><span class="text-zinc-400">Taxa violenta / 100k:</span> ${props.taxa_violenta_100k}</p>`;
     }
+    if (props.intensidade_seguranca !== undefined) {
+      popupContent += `<p class="mb-1"><span class="text-zinc-400">Intensidade local:</span> <span class="font-bold text-orange-300">${props.intensidade_seguranca}</span>`;
+      if (props.classe_intensidade) {
+        popupContent += ` <span class="text-[10px] text-orange-200/80">(${props.classe_intensidade})</span>`;
+      }
+      popupContent += `</p>`;
+      if (props.classificacao_relativa) {
+        popupContent += `<p class="mb-1 text-[9px] text-zinc-500">Classe relativa ao município (tertil intra-urbano)</p>`;
+      }
+      if (props.score_explicacao) {
+        popupContent += `<p class="mb-1 text-[9px] text-zinc-600">${props.score_explicacao}</p>`;
+      }
+    }
+
     if (props.indice_vm !== undefined) {
-      popupContent += `<p class="mb-1"><span class="text-zinc-400">Índice VM:</span> <span class="font-bold text-purple-300">${props.indice_vm}</span></p>`;
+      popupContent += `<p class="mb-1"><span class="text-zinc-400">Índice VM:</span> <span class="font-bold text-purple-300">${props.indice_vm}</span>`;
+      if (props.classe_vm) {
+        popupContent += ` <span class="text-[10px] text-purple-200/80">(${props.classe_vm})</span>`;
+      }
+      popupContent += `</p>`;
+      if (props.classificacao_relativa) {
+        popupContent += `<p class="mb-1 text-[9px] text-zinc-500">Classe relativa ao município (tertil intra-urbano)</p>`;
+      }
+      if (props.score_explicacao) {
+        popupContent += `<p class="mb-1 text-[9px] text-zinc-600">${props.score_explicacao}</p>`;
+      }
     }
     if (props.vulnerabilidade_multidimensional) {
       popupContent += `<p class="mb-1 font-bold text-fuchsia-300">⚠ Vulnerabilidade multidimensional</p>`;
     }
 
-    if (props.score_componentes) {
+    if (props.score_componentes && props.layer === 'prioridade_planejamento') {
+      popupContent += `
+        <div class="mt-2 rounded-md border border-fuchsia-500/30 bg-fuchsia-950/30 p-2">
+          <p class="mb-1 text-[10px] font-bold uppercase text-fuchsia-200">Composição do score</p>
+          <p class="text-[10px] text-zinc-300">Vulnerabilidade: +${props.score_componentes.vulnerabilidade_pct} pts</p>
+          <p class="text-[10px] text-zinc-300">Inundação: +${props.score_componentes.inundacao_pct} pts</p>
+          <p class="text-[10px] text-zinc-300">Déficit de adaptação: +${props.score_componentes.deficit_adaptacao_pct} pts</p>
+          ${props.score_explicacao ? `<p class="mt-1 text-[9px] text-zinc-500">${props.score_explicacao}</p>` : ''}
+        </div>
+      `;
+    } else if (props.score_componentes) {
       popupContent += `
         <div class="mt-2 rounded-md border border-fuchsia-500/30 bg-fuchsia-950/30 p-2">
           <p class="mb-1 text-[10px] font-bold uppercase text-fuchsia-200">Por que este score?</p>
@@ -269,7 +387,15 @@ export default function MapContainer({
     }
 
     if (props.qualidade_dado) {
-      const qualityColor = props.qualidade_dado === 'Oficial' ? 'text-emerald-300 border-emerald-500/40 bg-emerald-950/30' : props.qualidade_dado === 'Estimado' ? 'text-amber-300 border-amber-500/40 bg-amber-950/30' : 'text-sky-300 border-sky-500/40 bg-sky-950/30';
+      const q = props.qualidade_dado;
+      const qualityColor =
+        q === 'Oficial'
+          ? 'text-emerald-300 border-emerald-500/40 bg-emerald-950/30'
+          : q === 'Referencia'
+            ? 'text-sky-300 border-sky-500/40 bg-sky-950/30'
+            : q === 'Estimado'
+              ? 'text-amber-300 border-amber-500/40 bg-amber-950/30'
+              : 'text-zinc-300 border-zinc-500/40 bg-zinc-950/30';
       popupContent += `<p class="mt-2"><span class="rounded border px-1.5 py-0.5 text-[9px] font-bold uppercase ${qualityColor}">${props.qualidade_dado}</span></p>`;
     }
 
@@ -283,9 +409,24 @@ export default function MapContainer({
 
   const pointToLayer = (layerName: string) => (feature: any, latlng: L.LatLngExpression) => {
     if (layerName === 'saude_risco') {
+      if (feature?.properties?.feature_kind !== 'estabelecimento') {
+        return L.circleMarker(latlng, { radius: 0, fillOpacity: 0, opacity: 0 });
+      }
       const cls = feature?.properties?.cobertura_classe;
       const color = cls === 'ADEQUADA' ? '#16a34a' : cls === 'ATENCAO' ? '#eab308' : '#ef4444';
-      return L.circleMarker(latlng, { radius: 8, fillColor: color, color: '#fff', weight: 2, fillOpacity: 0.9 });
+      const tipo = feature?.properties?.tipo;
+      const radius = tipo === 'HOSPITAL' ? 10 : tipo === 'SAMU' ? 9 : 7;
+      return L.circleMarker(latlng, { radius, fillColor: color, color: '#fff', weight: 2, fillOpacity: 0.95 });
+    }
+    if (layerName === 'infraestrutura') {
+      const tipo = feature?.properties?.tipo;
+      if (tipo === 'hospital') {
+        return L.circleMarker(latlng, { radius: 8, fillColor: '#ef4444', color: '#fff', weight: 2, fillOpacity: 0.9 });
+      }
+      if (tipo === 'escola') {
+        return L.circleMarker(latlng, { radius: 6, fillColor: '#3b82f6', color: '#fff', weight: 2, fillOpacity: 0.9 });
+      }
+      return L.circleMarker(latlng, { radius: 5, fillColor: '#a78bfa', color: '#fff', weight: 1.5, fillOpacity: 0.85 });
     }
     const color = layerName === 'desastres' ? '#ef4444' : '#a78bfa';
     return L.circleMarker(latlng, {
@@ -325,7 +466,7 @@ export default function MapContainer({
         />
 
         {/* Dynamic PostGIS geospatial layers, rendered in selection order for overlays */}
-        {activeLayers.map((layerName) => (
+        {layerRenderOrder.map((layerName) => (
           layerData[layerName] && (
             <GeoJSON
               key={`${layerName}-${layerData[layerName].features?.length || 0}`}
@@ -338,7 +479,7 @@ export default function MapContainer({
         ))}
 
         {/* Manchas de simulação por profundidade */}
-        {simGeoJSON && (
+        {simGeoJSON && simOverlays.showFlood && (
           <GeoJSON
             key={`sim-${JSON.stringify(simGeoJSON).slice(0, 80)}`}
             data={simGeoJSON}
@@ -370,27 +511,34 @@ export default function MapContainer({
         )}
 
         {/* Curvas de nível (DEM SRTM) */}
-        {simContours?.features?.length > 0 && (
+        {simOverlays.showContours && simContours?.features?.length > 0 && (
           <GeoJSON
             key={`contours-${simContours.features.length}`}
             data={simContours}
-            style={() => ({
-              fillOpacity: 0,
-              color: '#a3e635',
-              weight: 1.2,
-              opacity: 0.85,
-            })}
+            style={(feature) => {
+              const indexed = feature?.properties?.index_contour;
+              return {
+                fillOpacity: 0,
+                color: indexed ? '#ecfccb' : '#84cc16',
+                weight: indexed ? 2 : 0.9,
+                opacity: indexed ? 0.95 : 0.6,
+              };
+            }}
             onEachFeature={(feature, layer) => {
               const elev = feature.properties?.elevation_m;
+              const res = feature.properties?.dem_resolution_m;
+              const indexed = feature.properties?.index_contour;
               if (elev != null) {
-                layer.bindTooltip(`Cota ${elev} m`, { sticky: true, className: 'text-[10px]' });
+                const tip = res != null
+                  ? `${indexed ? 'Cota indexada ' : 'Cota '}${elev} m · DEM ~${res} m`
+                  : `Cota ${elev} m`;
+                layer.bindTooltip(tip, { sticky: true, className: 'text-[10px]' });
               }
             }}
           />
         )}
 
-        {/* Linhas de escoamento */}
-        {simFlowPaths?.features?.length > 0 && (
+        {simOverlays.showFlow && simFlowPaths?.features?.length > 0 && (
           <GeoJSON
             key={`flow-${simFlowPaths.features.length}`}
             data={simFlowPaths}
@@ -442,8 +590,11 @@ export default function MapContainer({
               <div className="flex items-center gap-2"><span className="h-3 w-3 rounded-sm border border-sky-800 bg-sky-600/60" />Alagamento moderado</div>
               <div className="flex items-center gap-2"><span className="h-3 w-3 rounded-sm border border-indigo-950 bg-indigo-900/70" />Alagamento crítico</div>
               <div className="flex items-center gap-2"><span className="h-3 w-3 rounded-sm border border-red-900 bg-red-600/55" />Deslizamento / ilha de calor</div>
-              {simContours?.features?.length > 0 && (
-                <div className="flex items-center gap-2"><span className="h-0.5 w-4 bg-lime-400" />Curvas de nível (DEM)</div>
+              {simContours?.features?.length > 0 && simOverlays.showContours && (
+                <div className="flex items-center gap-2"><span className="h-0.5 w-4 bg-lime-300" />Curvas indexadas (DEM)</div>
+              )}
+              {simContours?.features?.length > 0 && simOverlays.showContours && (
+                <div className="flex items-center gap-2"><span className="h-0.5 w-4 bg-lime-500" />Curvas intermediárias</div>
               )}
               {simFlowPaths?.features?.length > 0 && (
                 <div className="flex items-center gap-2"><span className="h-0.5 w-4 border-t-2 border-dashed border-cyan-400" />Escoamento superficial</div>

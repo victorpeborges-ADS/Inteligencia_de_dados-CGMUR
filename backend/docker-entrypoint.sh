@@ -11,8 +11,9 @@ if ! ldconfig -p 2>/dev/null | grep -q 'libpango-1.0'; then
 fi
 
 # Dependências ausentes na imagem antiga — instala só o necessário (evita sentence-transformers a cada boot).
-if ! python -c "import tenacity, pgvector, jwt, bcrypt" 2>/dev/null; then
+if ! python -c "import tenacity, pgvector, jwt, bcrypt, multipart" 2>/dev/null; then
   pip install -q \
+  python-multipart \
   tenacity redis APScheduler openpyxl \
   weasyprint==62.3 pydyf==0.10.0 jinja2 pillow folium openmeteo-requests requests-cache matplotlib pytest \
   scikit-learn pyarrow rasterio \

@@ -11,7 +11,7 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 from sqlalchemy.orm import Session
 
 from rag.config import CHUNK_OVERLAP_CHARS, CHUNK_SIZE_CHARS
-from rag.ollama_client import ollama_client
+from rag.embeddings import embed_text
 from rag.store import delete_source, ensure_vector_extension, insert_chunks
 
 logger = logging.getLogger(__name__)
@@ -80,7 +80,7 @@ def ingest_all(db: Session, force: bool = False) -> dict[str, int]:
         for idx, chunk in enumerate(chunks):
             if not chunk.strip():
                 continue
-            embedding = ollama_client.embed(chunk)
+            embedding = embed_text(chunk)
             vec = "[" + ",".join(str(float(x)) for x in embedding) + "]"
             records.append({
                 "source": source_key,

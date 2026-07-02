@@ -6,6 +6,7 @@ from app.models import Municipio, SetorCensitario, CoberturaVegetalMapBiomas, Hi
 from app.schemas import ClimateIndicesResponse
 from app.services.analytical_engine import AnalyticalEngine
 from app.services.official_climate import OfficialClimateService
+from app.data_connectors.mapbiomas_collector import vegetation_coverage_percent
 from app.security.municipio_access import get_accessible_municipio
 from etl.etl_sentinel import query_sentinel_stac
 from typing import List, Dict, Any
@@ -21,12 +22,7 @@ def executive_snapshot(db: Session, muni: Municipio):
         HistoricoDesastreS2ID.municipio_id == muni.id
     ).scalar()
     avg_income = db.query(func.avg(SetorCensitario.renda_media)).filter(SetorCensitario.municipio_id == muni.id).scalar()
-    total_area_deg = db.scalar(func.ST_Area(muni.geom))
-    forest_area_deg = db.query(func.sum(func.ST_Area(CoberturaVegetalMapBiomas.geom))).filter(
-        CoberturaVegetalMapBiomas.municipio_id == muni.id,
-        CoberturaVegetalMapBiomas.classe_uso == "Vegetação / Floresta"
-    ).scalar()
-    veg_percent = (float(forest_area_deg) / float(total_area_deg)) * 100.0 if forest_area_deg and total_area_deg else 0.0
+    veg_percent, _ = vegetation_coverage_percent(db, muni)
     vulnerabilities = AnalyticalEngine.calculate_climate_vulnerability(db, muni.id)
     floods = AnalyticalEngine.calculate_flood_risk(db, muni.id)
     avg_ivc = sum(item["indice_vulnerabilidade"] for item in vulnerabilities) / len(vulnerabilities) if vulnerabilities else 0.0
@@ -253,6 +249,22 @@ def compare_municipalities(codigos: str = Query(...), request: Request = ..., db
             for code in codes
         ]
     }
+
+
+@router.get("/socioeconomic-ranking")
+def get_socioeconomic_ranking(
+    request: Request,
+    codigo_ibge: str | None = Query(default=None),
+    limit: int = Query(default=5, ge=1, le=15),
+    db: Session = Depends(get_db),
+):
+    """Ranking intra-municipal: bairros mais ricos e mais pobres (tertis relativos)."""
+    from app.services.socioeconomic_engine import enrich_municipal_socioeconomics, ranking_bairros_por_renda
+
+    muni = get_accessible_municipio(db, codigo_ibge, request=request)
+    enrich_municipal_socioeconomics(db, muni)
+    return ranking_bairros_por_renda(db, muni, limit=limit)
+
 
 @router.get("/sentinel-stac")
 def get_sentinel_stac_images():

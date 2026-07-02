@@ -20,6 +20,7 @@ logger = logging.getLogger(__name__)
 
 OPENTOPOGRAPHY_URL = "https://portal.opentopography.org/API/globaldem"
 DEM_BASE_DIR = Path(os.getenv("DEM_DIR", "/data/dem"))
+LOCAL_DEM_DIR = Path(os.getenv("LOCAL_DEM_DIR", "/data/dem/local"))
 SLOPE_CRITICAL_DEG = 30.0
 FLOOD_ELEVATION_M = 2.0
 TERRARIUM_DECODER = {
@@ -123,6 +124,211 @@ def _compute_slope_degrees(elevation: np.ndarray, lat: float, res_x: float, res_
     return np.degrees(slope_rad)
 
 
+def dem_resolution_m(res_x: float, res_y: float, lat_c: float) -> float:
+    lon_m, lat_m = _meters_per_degree(lat_c)
+    return float((abs(res_x) * lon_m + abs(res_y) * lat_m) / 2.0)
+
+
+def local_dem_source_paths(codigo_ibge: str) -> list[Path]:
+    code = str(codigo_ibge).zfill(7)[:7]
+    return [
+        dem_dir(code) / "local_dem.tif",
+        dem_dir(code) / "lidar.tif",
+        LOCAL_DEM_DIR / f"{code}.tif",
+        LOCAL_DEM_DIR / f"{code}_lidar.tif",
+        LOCAL_DEM_DIR / f"{code}_dsm.tif",
+    ]
+
+
+def find_local_dem(codigo_ibge: str) -> Path | None:
+    LOCAL_DEM_DIR.mkdir(parents=True, exist_ok=True)
+    for path in local_dem_source_paths(codigo_ibge):
+        if path.exists() and path.stat().st_size > 2048:
+            return path
+    return None
+
+
+def import_local_dem_bytes(codigo_ibge: str, content: bytes) -> Path:
+    """Persiste GeoTIFF LiDAR/DSM municipal para reprocessamento."""
+    out_dir = dem_dir(codigo_ibge)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    dest = out_dir / "local_dem.tif"
+    dest.write_bytes(content)
+    return dest
+
+
+def _load_local_dem_geotiff(
+    path: Path,
+    west: float,
+    south: float,
+    east: float,
+    north: float,
+) -> tuple[np.ndarray, float, float, float, float] | None:
+    try:
+        import rasterio
+        from rasterio.mask import mask
+        from shapely.geometry import box, mapping
+
+        clip_geom = box(west, south, east, north)
+        with rasterio.open(path) as src:
+            out_image, out_transform = mask(
+                src,
+                [mapping(clip_geom)],
+                crop=True,
+                filled=True,
+                nodata=np.nan,
+            )
+            elev = out_image[0].astype(np.float64)
+            if src.nodata is not None:
+                elev[elev == float(src.nodata)] = np.nan
+            finite = np.isfinite(elev)
+            if not finite.any():
+                return None
+            fill = float(np.nanmean(elev[finite]))
+            elev = np.where(finite, elev, fill)
+            res_x = float(out_transform.a)
+            res_y = abs(float(out_transform.e))
+            out_west = float(out_transform.c)
+            out_north = float(out_transform.f)
+            out_south = out_north + elev.shape[0] * float(out_transform.e)
+            return elev, res_x, res_y, out_west, out_south
+    except Exception as exc:
+        logger.warning("Falha ao ler DEM local %s: %s", path, exc)
+        return None
+
+
+def _upsample_dem_superres(elev: np.ndarray, factor: int = 3) -> np.ndarray:
+    if factor <= 1:
+        return elev
+    return np.repeat(np.repeat(elev, factor, axis=0), factor, axis=1)
+
+
+def _store_refined_pilot_dem(
+    codigo_ibge: str,
+    elev: np.ndarray,
+    west: float,
+    south: float,
+    east: float,
+    north: float,
+    *,
+    factor: int = 3,
+) -> Path | None:
+    """Gera DSM refinado (~10 m) a partir do SRTM para o município-piloto (interim até LiDAR real)."""
+    from app.config import settings
+
+    if codigo_ibge != settings.PILOT_IBGE_CODE or not settings.REFINE_PILOT_DEM:
+        return None
+    if find_local_dem(codigo_ibge):
+        return None
+    try:
+        import rasterio
+        from rasterio.transform import from_bounds
+
+        refined = _upsample_dem_superres(elev, factor)
+        rows, cols = refined.shape
+        out_dir = dem_dir(codigo_ibge)
+        out_dir.mkdir(parents=True, exist_ok=True)
+        dest = out_dir / "local_dem.tif"
+        transform = from_bounds(west, south, east, north, cols, rows)
+        with rasterio.open(
+            dest,
+            "w",
+            driver="GTiff",
+            height=rows,
+            width=cols,
+            count=1,
+            dtype=refined.dtype,
+            transform=transform,
+            crs="EPSG:4326",
+        ) as dst:
+            dst.write(refined, 1)
+        logger.info("DSM refinado piloto salvo em %s (%dx upsample)", dest, factor)
+        return dest
+    except Exception as exc:
+        logger.warning("Refino piloto DEM falhou: %s", exc)
+        return None
+
+
+def sync_dem_batch(db: Session, *, limit: int = 61, force: bool = False) -> dict[str, Any]:
+    """Processa DEM (LiDAR local ou SRTM) para municípios prioritários."""
+    from app.data_connectors.constants import TARGET_IBGE_CODES
+
+    targets = TARGET_IBGE_CODES[: min(max(limit, 1), 61)]
+    processed = 0
+    skipped = 0
+    local_count = 0
+    errors: list[dict[str, str]] = []
+
+    for code in targets:
+        muni = db.query(Municipio).filter(Municipio.codigo_ibge == code).first()
+        if not muni:
+            skipped += 1
+            errors.append({"codigo_ibge": code, "error": "município não carregado"})
+            continue
+        try:
+            had_local = find_local_dem(code) is not None
+            meta = process_municipality_dem(db, code, force=force)
+            processed += 1
+            if had_local or "local" in str(meta.get("dem_source", "")).lower() or "lidar" in str(meta.get("dem_source", "")).lower():
+                local_count += 1
+        except Exception as exc:
+            logger.exception("DEM batch falhou %s", code)
+            errors.append({"codigo_ibge": code, "error": str(exc)})
+
+    return {
+        "requested": len(targets),
+        "processed": processed,
+        "skipped": skipped,
+        "local_or_refined": local_count,
+        "errors": errors,
+    }
+
+
+def dem_status(*, limit: int = 61) -> dict[str, Any]:
+    """Panorama DEM dos municípios prioritários (processados, LiDAR local, piloto)."""
+    from app.config import settings
+    from app.data_connectors.constants import TARGET_IBGE_CODES
+
+    targets = TARGET_IBGE_CODES[: min(max(limit, 1), 61)]
+    local_count = 0
+    refined_count = 0
+    processed = 0
+    resolutions: list[float] = []
+
+    for code in targets:
+        if not is_processed(code):
+            continue
+        processed += 1
+        meta = load_meta(code) or {}
+        src = str(meta.get("dem_source", "")).lower()
+        if "local" in src or "lidar" in src or "dsm" in src:
+            local_count += 1
+        if "refinado" in src:
+            refined_count += 1
+        res_m = meta.get("dem_resolution_m")
+        if isinstance(res_m, (int, float)):
+            resolutions.append(float(res_m))
+
+    pilot_meta = load_meta(settings.PILOT_IBGE_CODE) if is_processed(settings.PILOT_IBGE_CODE) else None
+
+    return {
+        "prioritarios": len(targets),
+        "processados": processed,
+        "local_ou_lidar": local_count,
+        "refinado_piloto": refined_count,
+        "resolucao_media_m": round(sum(resolutions) / len(resolutions), 1) if resolutions else None,
+        "local_dem_dir": str(LOCAL_DEM_DIR),
+        "refine_pilot_enabled": settings.REFINE_PILOT_DEM,
+        "piloto": {
+            "codigo_ibge": settings.PILOT_IBGE_CODE,
+            "nome": settings.PILOT_NAME,
+            "dem_source": (pilot_meta or {}).get("dem_source"),
+            "dem_resolution_m": (pilot_meta or {}).get("dem_resolution_m"),
+            "vertical_accuracy_m": (pilot_meta or {}).get("vertical_accuracy_m"),
+        } if pilot_meta else None,
+    }
+
+
 def _pixel_area_ha(res_x: float, res_y: float, lat: float) -> float:
     lon_m, lat_m = _meters_per_degree(lat)
     return (res_x * lon_m * res_y * lat_m) / 10_000.0
@@ -196,43 +402,64 @@ def _flow_paths_geojson(
     res_x: float,
     res_y: float,
     max_paths: int = 12,
+    muni_mask: np.ndarray | None = None,
 ) -> dict[str, Any]:
-    """Deriva caminhos de escoamento (D8 simplificado) a partir da declividade."""
+    """Deriva caminhos de escoamento (D8) a partir de cristas em direção às baixadas."""
     rows, cols = elevation.shape
     filled = np.nan_to_num(elevation, nan=np.nanmean(elevation))
-    features: list[dict[str, Any]] = []
+    if muni_mask is not None:
+        filled = np.where(muni_mask, filled, np.nan)
 
-    flat = filled.ravel()
-    top_idx = np.argpartition(flat, -max_paths)[-max_paths:]
-    starts = [(i // cols, i % cols) for i in top_idx]
+    valid = np.isfinite(filled)
+    if not valid.any():
+        return {"type": "FeatureCollection", "features": []}
+
+    ridge_threshold = float(np.percentile(filled[valid], 82))
+    ridge_cells = np.argwhere(valid & (filled >= ridge_threshold))
+    if len(ridge_cells) == 0:
+        ridge_cells = np.argwhere(valid)
+
+    rng = np.random.default_rng(42)
+    if len(ridge_cells) > max_paths:
+        picks = rng.choice(len(ridge_cells), max_paths, replace=False)
+        starts = [tuple(ridge_cells[i]) for i in picks]
+    else:
+        starts = [tuple(rc) for rc in ridge_cells]
+
+    features: list[dict[str, Any]] = []
     neighbors = [(-1, 0), (1, 0), (0, -1), (0, 1), (-1, -1), (-1, 1), (1, -1), (1, 1)]
 
     for idx, (sr, sc) in enumerate(starts):
         path: list[list[float]] = []
         r, c = int(sr), int(sc)
         visited = set()
-        for _ in range(100):
+        for _ in range(120):
             if (r, c) in visited or r <= 0 or c <= 0 or r >= rows - 1 or c >= cols - 1:
+                break
+            if muni_mask is not None and not muni_mask[r, c]:
                 break
             visited.add((r, c))
             lon = west + c * res_x
             lat = south + r * res_y
-            path.append([lon, lat])
+            path.append([round(lon, 6), round(lat, 6)])
             current = filled[r, c]
             best = (r, c)
             best_e = current
             for dr, dc in neighbors:
                 nr, nc = r + dr, c + dc
-                if 0 < nr < rows - 1 and 0 < nc < cols - 1 and filled[nr, nc] < best_e:
-                    best_e = filled[nr, nc]
-                    best = (nr, nc)
+                if 0 < nr < rows - 1 and 0 < nc < cols - 1 and np.isfinite(filled[nr, nc]):
+                    if muni_mask is not None and not muni_mask[nr, nc]:
+                        continue
+                    if filled[nr, nc] < best_e:
+                        best_e = filled[nr, nc]
+                        best = (nr, nc)
             if best == (r, c):
                 break
             r, c = best
-        if len(path) >= 4:
+        if len(path) >= 5:
             features.append({
                 "type": "Feature",
-                "properties": {"path_id": idx + 1, "tipo": "escoamento"},
+                "properties": {"path_id": idx + 1, "tipo": "escoamento", "layer_type": "flow_path"},
                 "geometry": {"type": "LineString", "coordinates": path},
             })
 
@@ -287,7 +514,7 @@ def process_municipality_dem(
     force: bool = False,
     api_key: str | None = None,
 ) -> dict[str, Any]:
-    """Baixa SRTM, gera PNG Terrarium, estatísticas e rotas de escoamento."""
+    """Processa DEM municipal — prioriza LiDAR local, SRTM refinado (piloto) ou SRTM 30 m."""
     if is_processed(codigo_ibge) and not force:
         return load_meta(codigo_ibge) or {}
 
@@ -305,13 +532,56 @@ def process_municipality_dem(
 
     api_key = api_key or os.getenv("OPENTOPOGRAPHY_API_KEY")
     dem_source = "SRTM 30m"
-    result = _download_srtm(south, north, west, east, api_key)
+    local_path = find_local_dem(codigo_ibge)
+    result: tuple[np.ndarray, float, float, float, float] | None = None
+
+    if local_path:
+        result = _load_local_dem_geotiff(local_path, west, south, east, north)
+        if result is not None:
+            name = local_path.name.lower()
+            if "lidar" in name or local_path.parent.name == str(codigo_ibge).zfill(7)[:7]:
+                dem_source = "LiDAR/DSM local"
+            else:
+                dem_source = "DEM local"
+
     if result is None:
-        dem_source = "synthetic (OpenTopography indisponível)"
-        elev, res_x, res_y, west, south = _synthetic_dem(south, north, west, east)
-        rows, cols = elev.shape
-        east = west + res_x * cols
-        north = south + res_y * rows
+        result = _download_srtm(south, north, west, east, api_key)
+        if result is None:
+            dem_source = "synthetic (OpenTopography indisponível)"
+            elev, res_x, res_y, west, south = _synthetic_dem(south, north, west, east)
+            rows, cols = elev.shape
+            east = west + res_x * cols
+            north = south + res_y * rows
+            from app.config import settings as app_settings
+
+            if codigo_ibge == app_settings.PILOT_IBGE_CODE and app_settings.REFINE_PILOT_DEM:
+                refined_path = _store_refined_pilot_dem(
+                    codigo_ibge, elev, west, south, east, north,
+                )
+                if refined_path is not None:
+                    reloaded = _load_local_dem_geotiff(refined_path, west, south, east, north)
+                    if reloaded is not None:
+                        elev, res_x, res_y, west, south = reloaded
+                        rows, cols = elev.shape
+                        east = west + res_x * cols
+                        north = south + res_y * rows
+                        dem_source = "DEM refinado piloto (~10m, sintético)"
+        else:
+            elev, res_x, res_y, west, south = result
+            rows, cols = elev.shape
+            east = west + res_x * cols
+            north = south + res_y * rows
+            refined_path = _store_refined_pilot_dem(
+                codigo_ibge, elev, west, south, east, north,
+            )
+            if refined_path is not None:
+                reloaded = _load_local_dem_geotiff(refined_path, west, south, east, north)
+                if reloaded is not None:
+                    elev, res_x, res_y, west, south = reloaded
+                    rows, cols = elev.shape
+                    east = west + res_x * cols
+                    north = south + res_y * rows
+                    dem_source = "SRTM refinado piloto (~10m)"
     else:
         elev, res_x, res_y, west, south = result
         rows, cols = elev.shape
@@ -319,6 +589,7 @@ def process_municipality_dem(
         north = south + res_y * rows
 
     lat_c = (south + north) / 2.0
+    res_m = dem_resolution_m(res_x, res_y, lat_c)
     slope_deg = _compute_slope_degrees(elev, lat_c, res_x, res_y)
     stats = _compute_raster_stats(elev, slope_deg, lat_c, res_x, res_y)
     flow = _flow_paths_geojson(elev, west, south, res_x, res_y)
@@ -360,6 +631,7 @@ def process_municipality_dem(
     mesh_info = _export_mesh_json(elev, slope_deg, west, south, east, north, out_dir / "mesh.json")
 
     bounds = [round(west, 6), round(south, 6), round(east, 6), round(north, 6)]
+    vertical_acc = round(min(5.0, max(1.0, res_m * 0.5)), 1) if res_m < 10 else 16.0
     meta = {
         "codigo_ibge": codigo_ibge,
         "nome": muni.nome,
@@ -372,11 +644,15 @@ def process_municipality_dem(
         **mesh_info,
         "stats": stats,
         "dem_source": dem_source,
+        "dem_resolution_m": round(res_m, 2),
+        "vertical_accuracy_m": vertical_acc,
         "data_reference": "2024",
         "default_exaggeration": 2.5,
     }
+    if local_path:
+        meta["local_dem_path"] = str(local_path)
     meta_path(codigo_ibge).write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
-    logger.info("DEM processado %s — %s", codigo_ibge, dem_source)
+    logger.info("DEM processado %s — %s (%.1f m)", codigo_ibge, dem_source, res_m)
     return meta
 
 

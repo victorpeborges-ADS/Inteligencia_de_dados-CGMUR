@@ -341,7 +341,7 @@ def run_batch_onboarding(
     query = db.query(MunicipioSeed).order_by(MunicipioSeed.prioridade.asc(), MunicipioSeed.nome.asc())
     if status_filter and status_filter != "todos":
         query = query.filter(MunicipioSeed.onboarding_status == status_filter)
-    seeds = query.limit(max(1, min(limit, 20))).all()
+    seeds = query.limit(max(1, min(limit, 61))).all()
 
     processed: list[dict[str, Any]] = []
     errors: list[dict[str, str]] = []
@@ -349,6 +349,8 @@ def run_batch_onboarding(
         try:
             processed.append(run_onboarding(db, seed.codigo_ibge, force=force))
         except Exception as exc:
+            db.rollback()
+            logger.exception("Onboarding batch falhou %s", seed.codigo_ibge)
             errors.append({"codigo_ibge": seed.codigo_ibge, "error": str(exc)})
 
     return {

@@ -3,9 +3,9 @@
 import { useCallback, useEffect, useState } from 'react';
 import dynamic from 'next/dynamic';
 import { usePathname, useRouter } from 'next/navigation';
-import { api, getApiBaseUrl, type MunicipalityComparison, type WorkshopDiagnostic } from '@/utils/api';
+import { api, getApiBaseUrl, type MunicipalityComparison, type SocioeconomicRanking, type WorkshopDiagnostic } from '@/utils/api';
 import ExecutiveDashboard from '@/components/Dashboard/ExecutiveDashboard';
-import SimulationPanel from '@/components/Simulation/SimulationPanel';
+import SimulationPanel, { DEFAULT_SIM_OVERLAYS, type SimOverlayOptions } from '@/components/Simulation/SimulationPanel';
 import AssistantPanel from '@/components/Assistant/AssistantPanel';
 import CaseStudiesPanel from '@/components/CaseStudies/CaseStudiesPanel';
 import ContingencyWizard from '@/components/Contingency/ContingencyWizard';
@@ -31,6 +31,8 @@ import {
   type LayerQuality,
 } from '@/config/platformTabs';
 import { useAppStore } from '@/stores/useAppStore';
+import AgenteSinidu from '@/components/AgenteSinidu';
+import { useAgenteProativo } from '@/hooks/useAgenteContexto';
 
 const MapContainer = dynamic(
   () => import('@/components/Map/MapContainer'),
@@ -78,17 +80,23 @@ export default function PlatformApp({ initialTab }: PlatformAppProps) {
   const layerOptions = useAppStore((s) => s.layerOptions);
   const setLayerOptions = useAppStore((s) => s.setLayerOptions);
 
+  useAgenteProativo();
+
   const [simGeoJSON, setSimGeoJSON] = useState<any>(null);
   const [simContours, setSimContours] = useState<any>(null);
   const [simFlowPaths, setSimFlowPaths] = useState<any>(null);
+  const [simOverlays, setSimOverlays] = useState<SimOverlayOptions>(DEFAULT_SIM_OVERLAYS);
   const [diagnostic, setDiagnostic] = useState<WorkshopDiagnostic | null>(null);
   const [diagnosticLoading, setDiagnosticLoading] = useState(false);
   const [storyStep, setStoryStep] = useState<string | null>(null);
   const [comparison, setComparison] = useState<MunicipalityComparison | null>(null);
   const [comparisonLoading, setComparisonLoading] = useState(false);
+  const [socioRanking, setSocioRanking] = useState<SocioeconomicRanking | null>(null);
   const [mapMode, setMapMode] = useState<'2d' | '3d'>('2d');
   const [alertToast, setAlertToast] = useState<{ title: string; message: string } | null>(null);
   const [contingencyNivel, setContingencyNivel] = useState<string>('AMARELO');
+  const [malhaIndisponivel, setMalhaIndisponivel] = useState(false);
+  const [scoreConfiabilidade, setScoreConfiabilidade] = useState<string | null>(null);
 
   useEffect(() => {
     if (initialTab) {
@@ -120,6 +128,9 @@ export default function PlatformApp({ initialTab }: PlatformAppProps) {
   }, []);
 
   useEffect(() => {
+    let cancelled = false;
+    let retryTimer: ReturnType<typeof setTimeout> | null = null;
+
     const load = async () => {
       let rootOk = false;
       let seeds = null as Awaited<ReturnType<typeof api.getSeedMunicipalities>> | null;
@@ -131,6 +142,8 @@ export default function PlatformApp({ initialTab }: PlatformAppProps) {
       } catch {
         rootOk = false;
       }
+
+      if (cancelled) return;
 
       try {
         seeds = await api.getSeedMunicipalities();
@@ -144,16 +157,34 @@ export default function PlatformApp({ initialTab }: PlatformAppProps) {
         loaded = null;
       }
 
+      if (cancelled) return;
+
       setApiOnline(rootOk);
       const seedRows = seeds?.length ? seeds : SEED_MUNICIPALITIES;
       setMunicipalities(mergeMunicipalities(seedRows, loaded));
+
+      if (!rootOk && !cancelled) {
+        retryTimer = setTimeout(() => {
+          load().catch(() => {});
+        }, 4000);
+      }
     };
 
     load().catch((err) => {
       console.error('Erro ao carregar municipios:', err);
-      setApiOnline(false);
-      setMunicipalities(SEED_MUNICIPALITIES);
+      if (!cancelled) {
+        setApiOnline(false);
+        setMunicipalities(SEED_MUNICIPALITIES);
+        retryTimer = setTimeout(() => {
+          load().catch(() => {});
+        }, 4000);
+      }
     });
+
+    return () => {
+      cancelled = true;
+      if (retryTimer) clearTimeout(retryTimer);
+    };
   }, [setApiOnline, setMunicipalities]);
 
   const selectedMunicipioInfo = municipalities.find((item) => item.codigo_ibge === selectedMunicipio);
@@ -243,35 +274,40 @@ export default function PlatformApp({ initialTab }: PlatformAppProps) {
   const loadDiagnostic = async () => {
     setDiagnosticLoading(true);
     try {
-      const data = await api.getWorkshopDiagnostic(selectedMunicipio);
-      setDiagnostic(data);
-      setActiveLayers(data.recommended_layers);
-      if (data.critical_areas[0]) {
-        setMapFocus(data.critical_areas[0].coordinates);
+      const [exec, workshop] = await Promise.all([
+        api.generateExecutiveDiagnostic(selectedMunicipio),
+        api.getWorkshopDiagnostic(selectedMunicipio),
+      ]);
+      setDiagnostic({ ...workshop, headline: exec.headline || workshop.headline });
+      setActiveLayers(workshop.recommended_layers);
+      if (workshop.critical_areas[0]) {
+        setMapFocus(workshop.critical_areas[0].coordinates);
         setZoom(13);
       }
-      return data;
+      return exec;
     } finally {
       setDiagnosticLoading(false);
     }
   };
 
-  const startGuidedStory = async () => {
-    const data = diagnostic || await loadDiagnostic();
-    setSimGeoJSON(null);
-    for (const step of data.narrative_steps) {
-      setStoryStep(`${step.title}: ${step.description}`);
-      setActiveLayers(step.layers);
-      setMapFocus(step.focus);
-      setZoom(step.zoom);
-      await new Promise((resolve) => setTimeout(resolve, 3200));
-    }
-    setStoryStep('Narrativa concluída: áreas prioritárias e carteira de ação integradas no Sinidu+Clima.');
-    setTimeout(() => setStoryStep(null), 5000);
+  const openPresentation = () => {
+    if (!selectedMunicipio) return;
+    router.push(`/apresentacao/${selectedMunicipio}`);
   };
 
   const exportDiagnosticReport = async () => {
-    const data = diagnostic || await loadDiagnostic();
+    try {
+      const exec = await api.getExecutiveDiagnostic(selectedMunicipio).catch(() =>
+        api.generateExecutiveDiagnostic(selectedMunicipio),
+      );
+      if (exec.download_url) {
+        await api.downloadReport(exec.download_url, exec.nome_arquivo || `diagnostico_${selectedMunicipio}.pdf`);
+        return;
+      }
+    } catch {
+      /* fallback HTML abaixo */
+    }
+    const data = diagnostic || (await api.getWorkshopDiagnostic(selectedMunicipio));
     const rows = data.ranking.slice(0, 8).map((item, idx) => `
       <tr>
         <td>${idx + 1}</td>
@@ -335,19 +371,39 @@ export default function PlatformApp({ initialTab }: PlatformAppProps) {
     return `R$ ${value.toFixed(0)}`;
   };
 
+  const METRO_PEER_CODES: Record<string, string[]> = {
+    '2611606': ['2611606', '2609600', '2607901'],
+    '2609600': ['2609600', '2611606', '2607901'],
+    '2607901': ['2607901', '2611606', '2609600'],
+  };
+
   const runComparison = async () => {
     setComparisonLoading(true);
     try {
-      const comparisonCodes = Array.from(new Set([
-        selectedMunicipio,
-        ...municipalities.map((item) => item.codigo_ibge).filter((code) => code !== selectedMunicipio).slice(0, 2)
-      ]));
-      const data = await api.compareMunicipalities(comparisonCodes);
+      const peerPreset = METRO_PEER_CODES[selectedMunicipio];
+      const available = new Set(municipalities.map((item) => item.codigo_ibge));
+      const comparisonCodes = peerPreset
+        ? peerPreset.filter((code) => available.has(code))
+        : Array.from(new Set([
+            selectedMunicipio,
+            ...municipalities.map((item) => item.codigo_ibge).filter((code) => code !== selectedMunicipio).slice(0, 2),
+          ]));
+      if (comparisonCodes.length < 2) {
+        comparisonCodes.push(selectedMunicipio);
+      }
+      const data = await api.compareMunicipalities(comparisonCodes.slice(0, 3));
       setComparison(data);
     } finally {
       setComparisonLoading(false);
     }
   };
+
+  useEffect(() => {
+    if (activeTab !== 'simulation' || !selectedMunicipio) return;
+    api.getTerrainConfig(selectedMunicipio).catch(() => {
+      api.processTerrainDem(selectedMunicipio).catch(() => {});
+    });
+  }, [activeTab, selectedMunicipio]);
 
   useEffect(() => {
     api.getMonitoringDashboard(selectedMunicipio)
@@ -358,22 +414,50 @@ export default function PlatformApp({ initialTab }: PlatformAppProps) {
   useEffect(() => {
     api.getLayersMeta(selectedMunicipio)
       .then((meta) => {
-        const saneamento = meta.layers?.saneamento_drenagem;
-        if (!saneamento) return;
+        const layersMeta = meta.layers || {};
+        const blocked = new Set(meta.camadas_bloqueadas || []);
+        setMalhaIndisponivel(meta.malha_disponivel === false && selectedMunicipio !== '2611606');
+        setScoreConfiabilidade(meta.score_confiabilidade ?? null);
         setLayerOptions((prev) =>
-          prev.map((layer) =>
-            layer.id === 'saneamento_drenagem'
-              ? {
-                  ...layer,
-                  source: saneamento.source,
-                  quality: saneamento.quality as LayerQuality,
-                }
-              : layer,
-          ),
+          prev.map((layer) => {
+            const patch = layersMeta[layer.id as keyof typeof layersMeta];
+            if (!patch || typeof patch !== 'object') {
+              return {
+                ...layer,
+                disponivel: !blocked.has(layer.id),
+              };
+            }
+            const patchObj = patch as {
+              source?: string;
+              quality?: string;
+              disponivel?: boolean;
+              tooltip_estimado?: string;
+            };
+            return {
+              ...layer,
+              source: patchObj.source ?? layer.source,
+              quality: (patchObj.quality as LayerQuality) ?? layer.quality,
+              disponivel: patchObj.disponivel ?? !blocked.has(layer.id),
+              tooltipEstimado: patchObj.tooltip_estimado,
+            };
+          }),
         );
+        if (blocked.size > 0) {
+          setActiveLayers((prev) => prev.filter((id) => !blocked.has(id)));
+        }
       })
       .catch(() => {});
-  }, [selectedMunicipio]);
+  }, [selectedMunicipio, setLayerOptions, setActiveLayers]);
+
+  useEffect(() => {
+    if (!activeLayers.includes('socioeconomico')) {
+      setSocioRanking(null);
+      return;
+    }
+    api.getSocioeconomicRanking(selectedMunicipio, 5)
+      .then(setSocioRanking)
+      .catch(() => setSocioRanking(null));
+  }, [selectedMunicipio, activeLayers]);
 
   useAlertWebSocket(selectedMunicipio, (event) => {
     const d = event.data as { titulo?: string; mensagem?: string; nivel?: string };
@@ -509,7 +593,7 @@ export default function PlatformApp({ initialTab }: PlatformAppProps) {
           </div>
 
           {/* Active Tab Panel Content */}
-          <div className="flex-1 p-5 overflow-hidden">
+          <div className="flex-1 min-h-0 overflow-y-auto p-5">
             {activeTab === 'dashboard' && (
               <ExecutiveDashboard
                 key={`${selectedMunicipio}-${selectedMunicipioInfo?.loaded}`}
@@ -558,6 +642,8 @@ export default function PlatformApp({ initialTab }: PlatformAppProps) {
                 codigoIbge={selectedMunicipio}
                 municipioNome={selectedMunicipioInfo?.nome}
                 municipioLoaded={selectedMunicipioInfo?.loaded === true}
+                overlayOptions={simOverlays}
+                onOverlayChange={setSimOverlays}
               />
             )}
             {activeTab === 'assistant' && (
@@ -622,7 +708,7 @@ export default function PlatformApp({ initialTab }: PlatformAppProps) {
                   {diagnosticLoading ? 'Gerando...' : 'Diagnóstico'}
                 </button>
                 <button
-                  onClick={startGuidedStory}
+                  onClick={openPresentation}
                   className="flex items-center gap-1 rounded-lg border border-emerald-500/40 bg-emerald-500/15 px-3 py-2 text-[10px] font-bold uppercase text-emerald-200 hover:bg-emerald-500/25"
                 >
                   <PlayCircle size={12} /> Apresentar
@@ -664,7 +750,14 @@ export default function PlatformApp({ initialTab }: PlatformAppProps) {
                     <span className="text-[9px] font-bold uppercase text-zinc-500">Prioridade {idx + 1}</span>
                     <div className="mt-1 flex items-center justify-between">
                       <strong className="text-xs text-zinc-100">{item.bairro}</strong>
-                      <span className="rounded-full bg-rose-500/20 px-2 py-0.5 text-[10px] font-extrabold text-rose-200">{item.score_sinidu}</span>
+                      <span className="flex items-center gap-1">
+                        <span className="rounded-full bg-rose-500/20 px-2 py-0.5 text-[10px] font-extrabold text-rose-200">{item.score_sinidu}</span>
+                        {scoreConfiabilidade && (
+                          <span className="text-[8px] text-amber-300" title={`Confiança: ${scoreConfiabilidade}`}>
+                            {scoreConfiabilidade === 'ALTA' ? '⬤ Alta' : scoreConfiabilidade === 'ESTIMADO' ? '⚠ Estimado' : '⚠ Parcial'}
+                          </span>
+                        )}
+                      </span>
                     </div>
                     {item.score_componentes && (
                       <div className="mt-1 grid grid-cols-3 gap-1 text-[8px] text-zinc-400">
@@ -683,7 +776,9 @@ export default function PlatformApp({ initialTab }: PlatformAppProps) {
               <div className="mt-3 rounded-lg border border-sky-500/20 bg-sky-950/20 p-2">
                 <div className="mb-2 flex items-center justify-between">
                   <span className="text-[10px] font-extrabold uppercase tracking-wider text-sky-200">Comparação municipal</span>
-                  <span className="text-[9px] text-zinc-500">Oficial + Estimado + Derivado</span>
+                  <span className="text-[9px] text-zinc-500">
+                    {selectedMunicipio === '2611606' ? 'RM Recife' : 'Oficial + Estimado + Derivado'}
+                  </span>
                 </div>
                 <div className="grid grid-cols-3 gap-2">
                   {comparison.municipios.map((row) => (
@@ -731,18 +826,29 @@ export default function PlatformApp({ initialTab }: PlatformAppProps) {
             </div>
             
             <div className="flex max-h-[62vh] flex-col gap-3 overflow-y-auto pr-1">
+              {malhaIndisponivel && (
+                <div className="rounded-lg border border-amber-500/40 bg-amber-950/30 px-2.5 py-2 text-[10px] leading-relaxed text-amber-100">
+                  Malha de bairros não disponível para este município.
+                  Camadas dependentes (socioeconômico, vulnerabilidade por bairro) estão desativadas.
+                </div>
+              )}
               {layerGroups.map((group) => (
                 <div key={group} className="flex flex-col gap-1">
                   <span className="px-1 text-[9px] font-extrabold uppercase tracking-wider text-zinc-500">{group}</span>
                   {layerOptions.filter((opt) => opt.group === group).map((opt) => {
                     const isActive = activeLayers.includes(opt.id);
+                    const isDisabled = opt.disponivel === false;
                     return (
                       <button
                         key={opt.id}
-                        onClick={() => toggleLayer(opt.id)}
+                        onClick={() => !isDisabled && toggleLayer(opt.id)}
+                        disabled={isDisabled}
+                        title={opt.tooltipEstimado || (isDisabled ? 'Camada indisponível — malha territorial ausente' : undefined)}
                         className={`w-full text-left py-1.5 px-2.5 rounded-lg text-xs transition-all flex items-center justify-between border ${
-                          isActive
-                            ? 'bg-zinc-900 border-indigo-500/40 text-indigo-300 font-bold' 
+                          isDisabled
+                            ? 'cursor-not-allowed border-zinc-800 bg-zinc-950/40 text-zinc-600 opacity-60'
+                            : isActive
+                            ? 'bg-zinc-900 border-indigo-500/40 text-indigo-300 font-bold'
                             : 'border-transparent text-zinc-400 hover:text-zinc-200 hover:bg-zinc-900/40'
                         }`}
                       >
@@ -758,11 +864,17 @@ export default function PlatformApp({ initialTab }: PlatformAppProps) {
                           <span className={`w-fit rounded-md border px-1.5 py-0.5 text-[8px] font-bold uppercase tracking-wide ${
                             opt.quality === 'Oficial'
                               ? 'border-emerald-400/40 bg-emerald-500/10 text-emerald-300'
+                              : opt.quality === 'Referencia'
+                                ? 'border-cyan-400/40 bg-cyan-500/10 text-cyan-300'
                               : opt.quality === 'Estimado'
                                 ? 'border-amber-400/40 bg-amber-500/10 text-amber-300'
+                                : opt.quality === 'Indisponível'
+                                  ? 'border-rose-400/40 bg-rose-500/10 text-rose-300'
                                 : 'border-sky-400/40 bg-sky-500/10 text-sky-300'
                           }`}>
-                            {opt.quality}
+                            {opt.quality === 'Oficial' && opt.id === 'bairros'
+                              ? 'OFICIAL — IBGE Censo 2022'
+                              : opt.quality}
                           </span>
                         </span>
                         <span className={`h-4 w-4 rounded border flex items-center justify-center ${
@@ -777,6 +889,41 @@ export default function PlatformApp({ initialTab }: PlatformAppProps) {
               ))}
             </div>
           </div>
+
+          {socioRanking && activeLayers.includes('socioeconomico') && (
+            <div className="absolute bottom-4 right-4 z-[998] w-72 rounded-xl border border-amber-500/30 bg-zinc-950/92 p-3 shadow-2xl backdrop-blur-md">
+              <p className="text-[10px] font-extrabold uppercase tracking-wider text-amber-200">
+                Desigualdade intra-municipal
+              </p>
+              <p className="mt-1 text-[9px] text-zinc-400">
+                Classificação relativa (tertis) · PIB IBGE {socioRanking.pib_per_capita_ibge ? `R$ ${socioRanking.pib_per_capita_ibge.toLocaleString('pt-BR')}` : '—'} per capita
+              </p>
+              <div className="mt-2 grid grid-cols-2 gap-2">
+                <div>
+                  <span className="text-[9px] font-bold uppercase text-emerald-300">Mais ricos</span>
+                  <ul className="mt-1 space-y-1">
+                    {socioRanking.mais_ricos.slice(0, 3).map((row) => (
+                      <li key={row.bairro} className="text-[10px] text-zinc-200">
+                        {row.bairro}
+                        <span className="block text-[9px] text-zinc-500">R$ {row.renda_media.toLocaleString('pt-BR')}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+                <div>
+                  <span className="text-[9px] font-bold uppercase text-orange-300">Mais pobres</span>
+                  <ul className="mt-1 space-y-1">
+                    {socioRanking.mais_pobres.slice(0, 3).map((row) => (
+                      <li key={row.bairro} className="text-[10px] text-zinc-200">
+                        {row.bairro}
+                        <span className="block text-[9px] text-zinc-500">R$ {row.renda_media.toLocaleString('pt-BR')}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* Toggle 2D / 3D */}
           <div className="absolute right-4 top-4 z-[1200] flex gap-2 rounded-xl border border-zinc-800 bg-zinc-950/95 p-1 shadow-lg backdrop-blur-md">
@@ -813,6 +960,7 @@ export default function PlatformApp({ initialTab }: PlatformAppProps) {
             simGeoJSON={simGeoJSON}
             simContours={simContours}
             simFlowPaths={simFlowPaths}
+            simOverlays={simOverlays}
             selectedMunicipio={selectedMunicipio}
           />
           ) : (
@@ -827,6 +975,7 @@ export default function PlatformApp({ initialTab }: PlatformAppProps) {
           )}
         </section>
       </div>
+      <AgenteSinidu />
     </main>
   );
 }

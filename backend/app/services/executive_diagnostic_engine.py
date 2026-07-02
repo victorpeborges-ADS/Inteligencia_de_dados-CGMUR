@@ -20,6 +20,8 @@ from app.models import (
     MunicipioSeed,
 )
 from app.services.maturity_engine import compute_maturity
+from app.services.action_plan_engine import _severity_from_score, build_action_plan_payload
+from app.services.diagnostic_narrative_service import build_narrative_context, generate_executive_narrative
 from app.services.report_generator import (
     _capag_interpretation,
     _ensure_capag_fresh,
@@ -29,6 +31,34 @@ from app.services.report_generator import (
 logger = logging.getLogger(__name__)
 
 SCORE_FORMULA = "Score = 45% × IVC + 35% × IRI + 20% × (1 − adaptação)"
+
+
+def _lacuna_label(item: Any) -> str | None:
+    """Normaliza lacuna (string ou dict do catálogo) para texto exibível."""
+    if not item:
+        return None
+    if isinstance(item, str):
+        text = item.strip()
+        return text or None
+    if isinstance(item, dict):
+        text = (item.get("nome") or item.get("id") or item.get("label") or "").strip()
+        return text or None
+    text = str(item).strip()
+    return text or None
+
+
+def _merge_lacunas(*sources: Any) -> list[str]:
+    labels: list[str] = []
+    seen: set[str] = set()
+    for source in sources:
+        if not source:
+            continue
+        for item in source:
+            label = _lacuna_label(item)
+            if label and label not in seen:
+                seen.add(label)
+                labels.append(label)
+    return sorted(labels)
 
 
 def _fmt_num(value: float | int | None, suffix: str = "") -> str:
@@ -185,18 +215,17 @@ def _build_sections(
         "fontes": ["IVC e IRI — AnalyticalEngine", "Malha de bairros"],
     }
 
-    lacunas_list = list(gaps or [])
-    if seed and seed.lacunas:
-        lacunas_list = sorted(set(lacunas_list + list(seed.lacunas)))
-    if maturity and maturity.get("fontes_faltantes"):
-        for fonte in maturity["fontes_faltantes"]:
-            lacunas_list.append(fonte.get("nome") or fonte.get("id"))
+    lacunas_list = _merge_lacunas(
+        gaps,
+        seed.lacunas if seed else None,
+        (fonte.get("nome") or fonte.get("id") for fonte in (maturity or {}).get("fontes_faltantes") or []),
+    )
 
     lacunas_section = {
         "titulo": "Lacunas e Maturidade de Dados",
         "maturidade_score": maturity["score"] if maturity else coverage_pct,
         "maturidade_classificacao": maturity["classificacao"] if maturity else coverage_class,
-        "lacunas": sorted(set(str(x) for x in lacunas_list if x))[:12],
+        "lacunas": lacunas_list[:12],
         "recomendacao": (
             "Completar integrações pendentes antes de decisões de investimento de alto impacto."
             if lacunas_list
@@ -375,6 +404,19 @@ def generate_executive_diagnostic(
     headline = _build_headline(muni, snapshot, ranking[:3], nota_capag)
     narrativa = _build_narrative(muni, sections, headline)
 
+    score = int(snapshot.get("score_sinidu") or 0)
+    severidade = _severity_from_score(score)
+    action_preview = build_action_plan_payload(db, muni, diagnostic_id=None)
+    narrative_ctx = build_narrative_context(
+        muni.nome,
+        muni.uf,
+        snapshot=snapshot,
+        sections=sections,
+        action_plan=action_preview,
+        severidade=severidade,
+    )
+    narrative_result = generate_executive_narrative(narrative_ctx)
+
     last = (
         db.query(DiagnosticoExecutivo)
         .filter(DiagnosticoExecutivo.codigo_ibge == codigo_ibge)
@@ -394,13 +436,28 @@ def generate_executive_diagnostic(
             "headline": headline,
             "score_sinidu": snapshot.get("score_sinidu"),
             "maturity": maturity,
+            "narrativa_ia_paragrafos": narrative_result.get("paragrafos") or [],
         },
         narrativa_md=narrativa,
+        narrativa_ia=narrative_result.get("narrativa_ia"),
+        narrativa_ia_meta={
+            "ai_provider": narrative_result.get("ai_provider"),
+            "ai_model": narrative_result.get("ai_model"),
+            "disclaimer": narrative_result.get("disclaimer"),
+            "paragrafos": narrative_result.get("paragrafos") or [],
+        },
         origem=origem,
     )
     db.add(record)
     db.commit()
     db.refresh(record)
+
+    try:
+        from app.services.diagnostic_report import generate_diagnostic_pdf
+
+        generate_diagnostic_pdf(record, muni)
+    except Exception as exc:
+        logger.warning("PDF do diagnóstico falhou para %s: %s", codigo_ibge, exc)
 
     try:
         from app.services.action_plan_engine import generate_action_plan
@@ -414,6 +471,9 @@ def generate_executive_diagnostic(
 
 
 def diagnostic_to_dict(record: DiagnosticoExecutivo) -> dict[str, Any]:
+    from app.services.diagnostic_report import diagnostic_download_meta
+
+    pdf_meta = diagnostic_download_meta(record)
     return {
         "id": record.id,
         "municipio_id": record.municipio_id,
@@ -423,6 +483,9 @@ def diagnostic_to_dict(record: DiagnosticoExecutivo) -> dict[str, Any]:
         "headline": record.headline,
         "conteudo": record.conteudo,
         "narrativa_md": record.narrativa_md,
+        "narrativa_ia": record.narrativa_ia,
+        "narrativa_ia_meta": record.narrativa_ia_meta or {},
         "origem": record.origem,
         "gerado_em": record.gerado_em.isoformat() if record.gerado_em else None,
+        **pdf_meta,
     }

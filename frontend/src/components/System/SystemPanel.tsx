@@ -38,6 +38,9 @@ export default function SystemPanel() {
   const [pipelineRunning, setPipelineRunning] = useState(false);
   const [exportsRunning, setExportsRunning] = useState(false);
   const [fontesRunning, setFontesRunning] = useState(false);
+  const [homologationRunning, setHomologationRunning] = useState(false);
+  const [demBatchRunning, setDemBatchRunning] = useState(false);
+  const [demUploading, setDemUploading] = useState(false);
   const [activeJob, setActiveJob] = useState<BackgroundJob | null>(null);
   const [recentJobs, setRecentJobs] = useState<BackgroundJob[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -158,6 +161,73 @@ export default function SystemPanel() {
     }
   };
 
+  const runDemBatch = async () => {
+    setDemBatchRunning(true);
+    setSyncMessage(null);
+    try {
+      const { job_id } = await api.startDemBatchJob(61, false);
+      setSyncMessage(`Batch DEM em execução (job ${job_id})…`);
+      const job = await pollJob(job_id);
+      if (job?.status === 'completed') {
+        const result = job.result as { processed?: number; local_or_refined?: number };
+        setSyncMessage(
+          `DEM — ${result?.processed ?? '?'}/61 processados` +
+            (result?.local_or_refined != null ? ` (${result.local_or_refined} local/refinado)` : ''),
+        );
+      } else if (job?.status === 'failed') {
+        setSyncMessage(job.error || 'Batch DEM falhou');
+      }
+    } catch (e) {
+      setSyncMessage(e instanceof Error ? e.message : 'Falha no batch DEM');
+    } finally {
+      setDemBatchRunning(false);
+    }
+  };
+
+  const runHomologationFull = async () => {
+    setHomologationRunning(true);
+    setSyncMessage(null);
+    try {
+      const { job_id } = await api.startHomologationFullJob(61, false);
+      setSyncMessage(`Pipeline MCID completo em execução (job ${job_id})…`);
+      const job = await pollJob(job_id);
+      if (job?.status === 'completed') {
+        const result = job.result as {
+          onboarding?: { processed?: number };
+          dem?: { processed?: number };
+          diagnostics?: { processed?: number };
+        };
+        setSyncMessage(
+          `Homologação concluída — onboarding ${result?.onboarding?.processed ?? '?'}, ` +
+            `DEM ${result?.dem?.processed ?? '?'}, diagnósticos ${result?.diagnostics?.processed ?? '?'}`,
+        );
+      } else if (job?.status === 'failed') {
+        setSyncMessage(job.error || 'Pipeline MCID falhou');
+      }
+    } catch (e) {
+      setSyncMessage(e instanceof Error ? e.message : 'Falha no pipeline MCID completo');
+    } finally {
+      setHomologationRunning(false);
+    }
+  };
+
+  const runDemUpload = async (file: File) => {
+    if (!overview?.municipalities.piloto_ibge) return;
+    setDemUploading(true);
+    setSyncMessage(null);
+    try {
+      const result = await api.importLocalDem(overview.municipalities.piloto_ibge, file, true);
+      const cfg = result.config as { dem_source?: string; dem_resolution_m?: number } | undefined;
+      setSyncMessage(
+        `LiDAR importado — ${cfg?.dem_source ?? 'DEM local'}${cfg?.dem_resolution_m != null ? ` (${cfg.dem_resolution_m} m)` : ''}`,
+      );
+    } catch (e) {
+      setSyncMessage(e instanceof Error ? e.message : 'Falha no upload LiDAR');
+    } finally {
+      setDemUploading(false);
+    }
+  };
+
   const runFontesExternas = async () => {
     setFontesRunning(true);
     setSyncMessage(null);
@@ -245,6 +315,41 @@ export default function SystemPanel() {
             {batchRunning ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Building2 className="h-3.5 w-3.5" />}
             Onboarding (61)
           </button>
+          <button
+            type="button"
+            onClick={runDemBatch}
+            disabled={demBatchRunning}
+            className="inline-flex items-center gap-1 rounded-lg border border-slate-700 bg-slate-950/40 px-2 py-1 text-xs text-slate-200 hover:bg-slate-900/40 disabled:opacity-50"
+          >
+            {demBatchRunning ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Database className="h-3.5 w-3.5" />}
+            DEM (61)
+          </button>
+          <button
+            type="button"
+            onClick={runHomologationFull}
+            disabled={homologationRunning}
+            className="inline-flex items-center gap-1 rounded-lg border border-amber-800 bg-amber-950/40 px-2 py-1 text-xs text-amber-200 hover:bg-amber-900/40 disabled:opacity-50"
+          >
+            {homologationRunning ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />}
+            Pipeline MCID (61)
+          </button>
+          <label
+            className={`inline-flex cursor-pointer items-center gap-1 rounded-lg border border-sky-800 bg-sky-950/40 px-2 py-1 text-xs text-sky-200 hover:bg-sky-900/40 ${demUploading ? 'opacity-50' : ''}`}
+          >
+            {demUploading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Database className="h-3.5 w-3.5" />}
+            LiDAR piloto
+            <input
+              type="file"
+              accept=".tif,.tiff,.geotiff"
+              className="hidden"
+              disabled={demUploading}
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (file) void runDemUpload(file);
+                e.target.value = '';
+              }}
+            />
+          </label>
           <button
             type="button"
             onClick={runPipeline}
@@ -514,6 +619,31 @@ export default function SystemPanel() {
           <li>CSV oficial: {overview.mapbiomas?.csv_configured ? 'configurado' : 'não (usa calibrado)'}</li>
         </ul>
       </div>
+
+      {overview.dem && (
+        <div className="rounded-xl border border-zinc-800 bg-zinc-950/60 p-3">
+          <div className="mb-2 text-[10px] font-bold uppercase text-zinc-500">DEM / LiDAR</div>
+          <ul className="space-y-1 text-xs text-zinc-300">
+            <li>
+              Processados: {overview.dem.processados}/{overview.dem.prioritarios}
+            </li>
+            <li>LiDAR/local: {overview.dem.local_ou_lidar}</li>
+            <li>Refinado piloto: {overview.dem.refinado_piloto}</li>
+            {overview.dem.resolucao_media_m != null && (
+              <li>Resolução média: {overview.dem.resolucao_media_m} m</li>
+            )}
+            {overview.dem.piloto && (
+              <li className="text-zinc-400">
+                Piloto {overview.dem.piloto.nome}: {overview.dem.piloto.dem_source ?? 'pendente'}
+                {overview.dem.piloto.dem_resolution_m != null
+                  ? ` (${overview.dem.piloto.dem_resolution_m} m)`
+                  : ''}
+              </li>
+            )}
+            <li className="truncate text-zinc-500">Dir: {overview.dem.local_dem_dir}</li>
+          </ul>
+        </div>
+      )}
 
       {overview.tls && overview.tls.status !== 'unavailable' && (
         <div className="rounded-xl border border-zinc-800 bg-zinc-950/60 p-3">

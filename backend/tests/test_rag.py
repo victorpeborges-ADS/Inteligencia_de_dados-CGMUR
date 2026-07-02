@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, patch
 
 from rag.config import CHUNK_SIZE_CHARS, EMBEDDING_DIM
 from rag.ingest import _split_text
-from rag.providers.registry import get_chat_provider, list_chat_providers
+from rag.providers.registry import default_chat_provider_id, get_chat_provider, list_chat_providers
 
 
 def test_chunk_splitter_defaults():
@@ -15,9 +15,9 @@ def test_chunk_splitter_defaults():
     assert all(len(c) <= CHUNK_SIZE_CHARS + 50 for c in chunks)
 
 
-def test_ollama_embed_dimensions():
+def test_mistral_embed_dimensions():
     fake_vec = [0.1] * EMBEDDING_DIM
-    with patch("rag.store.ollama_client.embed", return_value=fake_vec):
+    with patch("rag.embeddings.mistral_client.embed", return_value=fake_vec):
         from rag.store import embed_query
 
         result = embed_query("teste de embedding")
@@ -46,21 +46,24 @@ def test_fiscal_route_bypasses_llm():
         assert out["source_url"] == "https://example.com"
 
 
-def test_list_providers_includes_ollama():
+def test_list_providers_mistral_only():
     providers = list_chat_providers()
     ids = [p.id for p in providers]
-    assert "ollama" in ids
-    assert "openai" in ids
-    assert "anthropic" in ids
-    assert "mistral" in ids
+    assert ids == ["mistral"]
 
 
-def test_get_chat_provider_with_api_key_override():
-    provider = get_chat_provider("openai", api_key="sk-test-key")
+def test_default_provider_is_mistral():
+    assert default_chat_provider_id() == "mistral"
+
+
+def test_get_chat_provider_rejects_non_allowed():
+    try:
+        get_chat_provider("openai", api_key="sk-test-key")
+        assert False, "deveria rejeitar openai"
+    except ValueError as exc:
+        assert "não permitido" in str(exc).lower()
+
+
+def test_get_chat_provider_mistral_with_api_key_override():
+    provider = get_chat_provider("mistral", api_key="test-key")
     assert provider.is_available()
-
-
-def test_list_providers_with_user_keys():
-    providers = list_chat_providers({"openai": "sk-user-key"})
-    openai = next(p for p in providers if p.id == "openai")
-    assert openai.available is True

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Ingestão RAG: PDFs/Markdown → chunks → embeddings Ollama → pgvector.
+"""Ingestão RAG: PDFs/Markdown → chunks → embeddings Mistral → pgvector.
 
 Uso:
   python etl/etl_rag_ingest.py

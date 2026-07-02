@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Numeric, Date, DateTime, ForeignKey, Text, Index, JSON
+from sqlalchemy import Column, Integer, String, Numeric, Date, DateTime, ForeignKey, Text, Index, JSON, Boolean
 from sqlalchemy.orm import relationship
 from geoalchemy2 import Geometry
 from app.db import Base
@@ -30,6 +30,10 @@ class Bairro(Base):
     nome = Column(String(100), nullable=False)
     codigo_bairro = Column(String(15), nullable=True)
     geom = Column(Geometry(geometry_type="MULTIPOLYGON", srid=4326, spatial_index=True))
+    fonte_malha = Column(String(40), nullable=True)
+    fonte_socioeconomico = Column(String(40), nullable=True)
+    pop_censo2022 = Column(Integer, nullable=True)
+    renda_media_censo2022 = Column(Numeric(12, 2), nullable=True)
     
     # Temporal columns
     valid_from = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)
@@ -45,6 +49,7 @@ class SetorCensitario(Base):
     codigo_setor = Column(String(15), unique=True, index=True, nullable=False)
     populacao = Column(Integer, default=0)
     renda_media = Column(Numeric(12, 2), default=0.0)
+    fonte_renda = Column(String(40), nullable=True)
     geom = Column(Geometry(geometry_type="MULTIPOLYGON", srid=4326, spatial_index=True))
     
     # Temporal columns
@@ -273,6 +278,8 @@ class DiagnosticoExecutivo(Base):
     headline = Column(Text, nullable=False)
     conteudo = Column(JSON, default=dict)
     narrativa_md = Column(Text, nullable=False)
+    narrativa_ia = Column(Text, nullable=True)
+    narrativa_ia_meta = Column(JSON, default=dict)
     origem = Column(String(24), default="manual")
     gerado_em = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)
 
@@ -322,6 +329,10 @@ class MunicipioSeed(Base):
     criterio = Column(String(40), nullable=False)
     decretos_emergencia = Column(Integer, default=0)
     score_sinidu = Column(Numeric(6, 3), nullable=True)
+    score_confiabilidade = Column(String(16), nullable=True)
+    malha_fonte = Column(String(40), nullable=True)
+    auditoria_flags = Column(JSON, default=dict)
+    auditoria_at = Column(DateTime, nullable=True)
     status_carga = Column(String(24), default="pendente")
     onboarding_status = Column(String(24), default="pendente")
     maturity_score = Column(Numeric(6, 2), nullable=True)
@@ -345,7 +356,7 @@ class EstabelecimentoSaude(Base):
     nome = Column(String(255), nullable=False)
     tipo = Column(String(40), nullable=False)
     leitos_sus = Column(Integer, default=0)
-    esf = Column(Integer, default=0)
+    esf = Column(Boolean, default=False)
     geom = Column(Geometry(geometry_type="POINT", srid=4326, spatial_index=True))
     fonte = Column(String(80), default="CNES/DataSUS")
     created_at = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)

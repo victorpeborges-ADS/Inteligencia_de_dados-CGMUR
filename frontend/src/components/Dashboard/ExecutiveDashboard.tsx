@@ -1,10 +1,11 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { api, DataCoverage, ExecutiveDiagnostic, ExecutiveIndicators, IndicesResponse, IntegrationStatusResponse, MunicipalActionPlan, MunicipalMaturity, MunicipalReportRecord, OfficialUrbanClimateResponse } from '@/utils/api';
+import { api, DataCoverage, ExecutiveDiagnostic, ExecutiveDiagnosticHistoryItem, ExecutiveIndicators, IndicesResponse, IntegrationStatusResponse, MunicipalActionPlan, MunicipalMaturity, MunicipalReportRecord, OfficialUrbanClimateResponse } from '@/utils/api';
+import { useAppStore } from '@/stores/useAppStore';
 import ActionPlanPanel from '@/components/Dashboard/ActionPlanPanel';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, LineChart, Line, CartesianGrid, Legend } from 'recharts';
-import { Users, Trees, ShieldAlert, DollarSign, Waves, FileDown, Loader2, Award, FileText, Copy, ListChecks } from 'lucide-react';
+import { Users, Trees, ShieldAlert, DollarSign, Waves, FileDown, Loader2, Award, ListChecks } from 'lucide-react';
 
 const TIER_STYLE: Record<string, { bg: string; text: string; border: string }> = {
   Platina: { bg: 'bg-slate-400/15', text: 'text-slate-200', border: 'border-slate-400/40' },
@@ -49,6 +50,7 @@ export default function ExecutiveDashboard({
   const [reportError, setReportError] = useState<string | null>(null);
   const [pdfForceOverride, setPdfForceOverride] = useState(false);
   const [diagnostic, setDiagnostic] = useState<ExecutiveDiagnostic | null>(null);
+  const [diagnosticHistory, setDiagnosticHistory] = useState<ExecutiveDiagnosticHistoryItem[]>([]);
   const [diagnosticLoading, setDiagnosticLoading] = useState(false);
   const [diagnosticError, setDiagnosticError] = useState<string | null>(null);
   const [actionPlan, setActionPlan] = useState<MunicipalActionPlan | null>(null);
@@ -161,8 +163,15 @@ export default function ExecutiveDashboard({
       .then(setReportHistory)
       .catch((err) => console.error('Erro ao carregar histórico de relatórios:', err));
     api.getExecutiveDiagnostic(codigoIbge)
-      .then(setDiagnostic)
-      .catch(() => setDiagnostic(null));
+      .then((record) => {
+        setDiagnostic(record);
+        return api.getExecutiveDiagnosticHistory(codigoIbge);
+      })
+      .then((history) => setDiagnosticHistory(history.items))
+      .catch(() => {
+        setDiagnostic(null);
+        setDiagnosticHistory([]);
+      });
     api.getActionPlan(codigoIbge)
       .then(setActionPlan)
       .catch(() => setActionPlan(null));
@@ -200,6 +209,20 @@ export default function ExecutiveDashboard({
     try {
       const record = await api.generateExecutiveDiagnostic(codigoIbge);
       setDiagnostic(record);
+      if (record.download_url && record.nome_arquivo) {
+        await api.downloadReport(record.download_url, record.nome_arquivo);
+      }
+      const conteudo = record.conteudo as Record<string, unknown> | undefined;
+      const ranking = (conteudo?.ranking_bairros as Array<{ bairro?: string }>) || [];
+      useAppStore.getState().notifyDiagnosticGenerated({
+        versao: `v${record.versao}`,
+        score: typeof conteudo?.score_sinidu === 'number' ? conteudo.score_sinidu : indicators?.score_sinidu,
+        prioridade: String(conteudo?.prioridade || 'Alta'),
+        riscos: ranking.map((r) => r.bairro || '').filter(Boolean),
+      });
+      api.getExecutiveDiagnosticHistory(codigoIbge)
+        .then((history) => setDiagnosticHistory(history.items))
+        .catch(() => setDiagnosticHistory([]));
       api.getActionPlan(codigoIbge).then(setActionPlan).catch(() => setActionPlan(null));
     } catch (err) {
       setDiagnosticError(err instanceof Error ? err.message : 'Erro ao gerar diagnóstico');
@@ -208,9 +231,16 @@ export default function ExecutiveDashboard({
     }
   };
 
-  const handleCopyDiagnostic = async () => {
-    if (!diagnostic?.narrativa_md) return;
-    await navigator.clipboard.writeText(diagnostic.narrativa_md);
+  const handleDownloadDiagnostic = async (downloadUrl?: string | null, filename?: string | null) => {
+    if (!downloadUrl) {
+      setDiagnosticError('PDF do diagnóstico indisponível.');
+      return;
+    }
+    try {
+      await api.downloadReport(downloadUrl, filename || 'diagnostico-executivo.pdf');
+    } catch (err) {
+      setDiagnosticError(err instanceof Error ? err.message : 'Erro ao baixar PDF');
+    }
   };
 
   const handleGenerateActionPlan = async () => {
@@ -328,7 +358,7 @@ export default function ExecutiveDashboard({
       value: indicators?.cobertura_vegetal_percent != null
         ? `${indicators.cobertura_vegetal_percent}%`
         : '—',
-      desc: 'Área verde urbana preservada',
+      desc: 'Vegetação e floresta (MapBiomas, área municipal)',
       quality: kpiQuality(indicators?.cobertura_qualidade),
       icon: Trees,
       color: 'text-accent-emerald',
@@ -362,7 +392,7 @@ export default function ExecutiveDashboard({
           ? formatCompactCurrency(indicators.danos_materiais_total ?? 0)
           : '—',
       desc: indicators?.historico_desastres_count != null
-        ? `${indicators.historico_desastres_count} evento(s) histórico(s)`
+        ? `${indicators.historico_desastres_count} evento(s) registrado(s) (S2ID)`
         : 'Sem registro S2ID',
       quality: kpiQuality(indicators?.desastres_qualidade),
       icon: Waves,
@@ -394,11 +424,11 @@ export default function ExecutiveDashboard({
   ];
 
   const officialClimateData = officialClimate?.historical_timeline
-    .filter((item) => item.temperatura_media !== null)
+    ?.filter((item) => item.temperatura_media != null || item.area_urbanizada_km2 != null)
     .map((item) => ({
       ano: item.ano,
-      temp: item.temperatura_media,
-      area: item.area_urbanizada_km2,
+      temp: item.temperatura_media ?? null,
+      area: item.area_urbanizada_km2 ?? null,
     })) || [];
   const estimatedClimateData = officialClimate?.estimated_timeline
     .map((item) => ({
@@ -407,7 +437,25 @@ export default function ExecutiveDashboard({
       area: item.area_urbanizada_km2,
     })) || [];
   const climateChartData = officialClimateData.length > 0 ? officialClimateData : estimatedClimateData;
-  const isEstimatedClimateChart = officialClimateData.length === 0;
+  const hasMapBiomasSeries = officialClimateData.some((item) => item.area != null);
+  const hasTemperatureSeries = climateChartData.some((item) => item.temp != null);
+  const isEstimatedClimateChart = !hasMapBiomasSeries && estimatedClimateData.length > 0;
+  const tempLegendLabel = officialClimate?.temperatura_oficial
+    ? 'Temp. média INMET (°C)'
+    : officialClimate?.temperatura_integrada
+      ? 'Temp. referência INMET (°C)'
+      : isEstimatedClimateChart
+        ? 'Temp. estimada (°C)'
+        : 'Temp. média INMET (°C)';
+  const climateYears = climateChartData.map((item) => item.ano);
+  const tempValues = climateChartData.map((item) => item.temp).filter((v): v is number => v != null);
+  const areaValues = climateChartData.map((item) => item.area).filter((v): v is number => v != null);
+  const tempDomain: [number, number] | ['auto', 'auto'] = tempValues.length
+    ? [Math.floor(Math.min(...tempValues) * 10) / 10 - 0.3, Math.ceil(Math.max(...tempValues) * 10) / 10 + 0.3]
+    : [25, 30];
+  const areaDomain: [number, number] | ['auto', 'auto'] = areaValues.length
+    ? [Math.floor(Math.min(...areaValues) / 10) * 10, Math.ceil(Math.max(...areaValues) / 10) * 10 + 10]
+    : [50, 250];
 
   return (
     <div className="flex flex-col gap-5 overflow-y-auto max-h-[85vh] pr-2">
@@ -504,7 +552,7 @@ export default function ExecutiveDashboard({
           <div>
             <h4 className="text-xs font-extrabold uppercase tracking-wide text-emerald-200">Diagnóstico Executivo</h4>
             <p className="mt-1 text-[10px] leading-snug text-zinc-400">
-              Narrativa institucional automática: perfil, fiscal, clima, desastres, riscos e lacunas — pronta para apresentação.
+              PDF institucional com perfil, fiscal, clima, desastres, riscos e lacunas — pronto para apresentação.
             </p>
           </div>
           <button
@@ -513,29 +561,66 @@ export default function ExecutiveDashboard({
             disabled={diagnosticLoading || !codigoIbge}
             className="inline-flex shrink-0 items-center gap-2 rounded-lg border border-emerald-400/40 bg-emerald-500/15 px-3 py-2 text-[11px] font-bold text-emerald-100 transition hover:bg-emerald-500/25 disabled:cursor-not-allowed disabled:opacity-50"
           >
-            {diagnosticLoading ? <Loader2 size={14} className="animate-spin" /> : <FileText size={14} />}
-            {diagnosticLoading ? 'Gerando...' : 'Gerar Diagnóstico'}
+            {diagnosticLoading ? <Loader2 size={14} className="animate-spin" /> : <FileDown size={14} />}
+            {diagnosticLoading ? 'Gerando PDF...' : 'Gerar Diagnóstico PDF'}
           </button>
         </div>
         {diagnosticError && <p className="mb-2 text-[10px] text-rose-300">{diagnosticError}</p>}
         {diagnostic ? (
-          <div className="space-y-2">
+          <div className="space-y-3">
             <div className="flex items-start justify-between gap-2">
-              <p className="text-[11px] font-semibold leading-snug text-zinc-200">{diagnostic.headline}</p>
-              <button
-                type="button"
-                onClick={handleCopyDiagnostic}
-                className="inline-flex shrink-0 items-center gap-1 rounded border border-zinc-700 px-2 py-1 text-[9px] text-zinc-400 hover:text-zinc-200"
-              >
-                <Copy size={10} /> Copiar
-              </button>
+              <div>
+                <p className="text-[11px] font-semibold leading-snug text-zinc-200">{diagnostic.headline}</p>
+                <p className="mt-1 text-[9px] text-zinc-500">
+                  v{diagnostic.versao} · {diagnostic.origem} · {formatReportDate(diagnostic.gerado_em || '')}
+                  {diagnostic.nome_arquivo ? ` · ${diagnostic.nome_arquivo}` : ''}
+                  {diagnostic.tamanho_bytes ? ` · ${Math.round(diagnostic.tamanho_bytes / 1024)} KB` : ''}
+                </p>
+              </div>
+              {diagnostic.download_url && (
+                <button
+                  type="button"
+                  onClick={() => handleDownloadDiagnostic(diagnostic.download_url, diagnostic.nome_arquivo)}
+                  className="inline-flex shrink-0 items-center gap-1 rounded border border-emerald-500/40 bg-emerald-500/10 px-2 py-1 text-[9px] font-bold text-emerald-200 hover:bg-emerald-500/20"
+                >
+                  <FileDown size={10} /> Baixar PDF
+                </button>
+              )}
             </div>
-            <p className="text-[9px] text-zinc-500">
-              v{diagnostic.versao} · {diagnostic.origem} · {formatReportDate(diagnostic.gerado_em || '')}
-            </p>
-            <pre className="max-h-48 overflow-y-auto whitespace-pre-wrap rounded-lg border border-zinc-800 bg-zinc-950/80 p-3 text-[10px] leading-relaxed text-zinc-300">
-              {diagnostic.narrativa_md}
-            </pre>
+            {diagnosticHistory.length > 0 && (
+              <div className="overflow-hidden rounded-lg border border-zinc-800">
+                <table className="w-full text-left text-[10px] text-zinc-300">
+                  <thead className="bg-zinc-950/80 text-[9px] uppercase tracking-wide text-zinc-500">
+                    <tr>
+                      <th className="px-2 py-1.5">Versão</th>
+                      <th className="px-2 py-1.5">Gerado em</th>
+                      <th className="px-2 py-1.5">Arquivo</th>
+                      <th className="px-2 py-1.5"></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {diagnosticHistory.slice(0, 5).map((item) => (
+                      <tr key={item.id} className="border-t border-zinc-800/80">
+                        <td className="px-2 py-1.5">v{item.versao}</td>
+                        <td className="px-2 py-1.5">{item.gerado_em ? formatReportDate(item.gerado_em) : '—'}</td>
+                        <td className="px-2 py-1.5 font-mono text-[9px]">{item.nome_arquivo || '—'}</td>
+                        <td className="px-2 py-1.5">
+                          {item.download_url ? (
+                            <button
+                              type="button"
+                              onClick={() => handleDownloadDiagnostic(item.download_url, item.nome_arquivo)}
+                              className="text-emerald-300 hover:text-emerald-100"
+                            >
+                              Baixar
+                            </button>
+                          ) : '—'}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
         ) : (
           <p className="text-[10px] text-zinc-500">
@@ -853,12 +938,13 @@ export default function ExecutiveDashboard({
         <div className="bg-card/40 backdrop-blur-md border border-border p-4.5 rounded-xl flex flex-col">
           <div className="mb-3">
             <h4 className="font-extrabold text-zinc-200 text-xs uppercase tracking-wide">
-              Uso de Solo vs Clima Urbano - {isEstimatedClimateChart ? 'Série Estimada' : 'Fonte Oficial'}
+              Uso de Solo vs Clima Urbano - {isEstimatedClimateChart ? 'Série Estimada' : hasMapBiomasSeries ? 'Fonte Oficial' : 'Parcial'}
             </h4>
             <p className="text-[10px] text-zinc-400 mt-0.5">
-              {!isEstimatedClimateChart && officialClimate?.station
+              {officialClimate?.station
                 ? `Temperatura do ar: INMET ${officialClimate.station.nome} (${officialClimate.station.codigo}), ${officialClimate.station.distancia_km} km`
                 : 'Série estimada exibida porque as fontes oficiais ainda não retornaram dados completos'}
+              {climateYears.length > 0 ? ` · ${climateYears.length} anos (${climateYears[0]}–${climateYears[climateYears.length - 1]})` : ''}
             </p>
           </div>
           {climateChartData.length > 0 ? (
@@ -867,12 +953,14 @@ export default function ExecutiveDashboard({
                 <LineChart data={climateChartData} margin={{ left: -20, right: 10, bottom: 5 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#27272a" />
                   <XAxis dataKey="ano" stroke="#71717a" />
-                  <YAxis yAxisId="left" stroke="#10b981" domain={isEstimatedClimateChart ? [25, 30] : ['auto', 'auto']} />
-                  <YAxis yAxisId="right" orientation="right" stroke="#6366f1" domain={isEstimatedClimateChart ? [50, 250] : ['auto', 'auto']} />
+                  <YAxis yAxisId="left" stroke="#10b981" domain={tempDomain} />
+                  <YAxis yAxisId="right" orientation="right" stroke="#6366f1" domain={areaDomain} />
                   <Tooltip contentStyle={{ backgroundColor: '#18181b', border: '1px solid #27272a', borderRadius: '8px' }} />
                   <Legend iconSize={8} />
-                  <Line yAxisId="left" type="monotone" dataKey="temp" stroke="#10b981" strokeWidth={2} name={isEstimatedClimateChart ? 'Temp. estimada (°C)' : 'Temp. média INMET (°C)'} dot={{ r: 3 }} />
-                  <Line yAxisId="right" type="monotone" dataKey="area" stroke="#6366f1" strokeWidth={2} name={isEstimatedClimateChart ? 'Área urbanizada estimada (km²)' : 'Área urbanizada MapBiomas (km²)'} dot={{ r: 3 }} connectNulls={false} />
+                  {hasTemperatureSeries && (
+                    <Line yAxisId="left" type="monotone" dataKey="temp" stroke="#10b981" strokeWidth={2} name={tempLegendLabel} dot={{ r: 3 }} connectNulls />
+                  )}
+                  <Line yAxisId="right" type="monotone" dataKey="area" stroke="#6366f1" strokeWidth={2} name={isEstimatedClimateChart ? 'Área urbanizada estimada (km²)' : 'Área urbanizada MapBiomas (km²)'} dot={{ r: 3 }} connectNulls />
                 </LineChart>
               </ResponsiveContainer>
             </div>

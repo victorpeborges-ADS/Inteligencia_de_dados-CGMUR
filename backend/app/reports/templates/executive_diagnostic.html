@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <title>Diagnóstico Executivo — {{ muni.nome }}/{{ muni.uf }}</title>
+  <style>
+    @page { size: A4; margin: 1.5cm 1.3cm 2cm 1.3cm; }
+    body { font-family: "DejaVu Sans", sans-serif; font-size: 9.5pt; color: #1e293b; line-height: 1.45; margin: 0; }
+    h1 { font-size: 18pt; color: #0f172a; margin: 0 0 6px; }
+    h2 { font-size: 12pt; color: #134e4a; margin: 18px 0 8px; border-bottom: 2px solid #10b981; padding-bottom: 3px; page-break-after: avoid; }
+    p { margin: 0 0 8px; }
+    .cover {
+      min-height: 24cm;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      text-align: center;
+      background: linear-gradient(160deg, #052e16 0%, #064e3b 55%, #0f766e 100%);
+      color: #ecfdf5;
+      padding: 2cm;
+      border-radius: 8px;
+      page-break-after: always;
+    }
+    .cover h1 { color: #ecfdf5; font-size: 22pt; margin-bottom: 12px; }
+    .cover .sub { font-size: 10pt; letter-spacing: 0.12em; text-transform: uppercase; color: #a7f3d0; }
+    .cover .headline { font-size: 11pt; margin: 1.2cm auto 0; max-width: 14cm; color: #d1fae5; }
+    .meta { color: #64748b; font-size: 8.5pt; margin-bottom: 14px; }
+    table { width: 100%; border-collapse: collapse; margin: 8px 0 12px; font-size: 9pt; }
+    th, td { border: 1px solid #cbd5e1; padding: 5px 7px; text-align: left; vertical-align: top; }
+    th { background: #ecfdf5; color: #065f46; }
+    ul { margin: 4px 0 10px; padding-left: 18px; }
+    li { margin-bottom: 4px; }
+    .badge { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 8pt; font-weight: 700; background: #d1fae5; color: #065f46; }
+    .footer-note { margin-top: 24px; padding-top: 10px; border-top: 1px solid #cbd5e1; font-size: 8pt; color: #64748b; }
+    .kpi-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin: 10px 0 14px; }
+    .kpi { border: 1px solid #cbd5e1; border-radius: 6px; padding: 8px; background: #f8fafc; }
+    .kpi-label { font-size: 7.5pt; text-transform: uppercase; color: #64748b; letter-spacing: 0.06em; }
+    .kpi-value { font-size: 13pt; font-weight: 700; color: #0f172a; margin-top: 2px; }
+  </style>
+</head>
+<body>
+  <section class="cover">
+    <p class="sub">Sinidu+Clima · Diagnóstico Executivo</p>
+    <h1>{{ muni.nome }} / {{ muni.uf }}</h1>
+    <p class="headline">{{ headline }}</p>
+    <p class="meta" style="margin-top:1.4cm;color:#a7f3d0;">
+      IBGE {{ muni.codigo_ibge }} · Versão {{ record.versao }} · {{ gerado_em }} UTC<br/>
+      Origem: {{ record.origem }}
+    </p>
+  </section>
+
+  <p class="meta">Documento gerado automaticamente pelo Sinidu+Clima (MCID). Validar CAPAG/SICONFI e S2ID antes de uso conclusivo.</p>
+
+  <h2>1. Perfil Municipal</h2>
+  <div class="kpi-grid">
+    <div class="kpi"><div class="kpi-label">População</div><div class="kpi-value">{{ fmt_num(perfil.populacao) }}</div></div>
+    <div class="kpi"><div class="kpi-label">Área (km²)</div><div class="kpi-value">{{ fmt_num(perfil.area_km2) }}</div></div>
+    <div class="kpi"><div class="kpi-label">Densidade (hab/km²)</div><div class="kpi-value">{{ fmt_num(perfil.densidade_hab_km2) }}</div></div>
+  </div>
+  <p>
+    {% if perfil.idh %}IDH municipal: <strong>{{ "%.3f"|format(perfil.idh) }}</strong>.{% endif %}
+    {% if perfil.pib_per_capita %} PIB per capita: <strong>{{ fmt_currency(perfil.pib_per_capita) }}</strong>.{% endif %}
+  </p>
+
+  <h2>2. Situação Fiscal</h2>
+  <p>
+    Nota CAPAG: <span class="badge">{{ fiscal.nota_capag_raw or fiscal.nota_capag or '—' }}</span>.
+    {{ fiscal.capag_interpretacao }}
+  </p>
+  {% if fiscal.capag_indicadores %}
+  <table>
+    <tr><th>Indicador</th><th>Valor</th><th>Nota</th></tr>
+    {% for ind in fiscal.capag_indicadores %}
+    <tr>
+      <td>{{ ind.numero }}. {{ ind.nome }}</td>
+      <td>{{ ind.valor_fmt or '—' }}</td>
+      <td>{{ ind.nota or '—' }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% endif %}
+  {% if fiscal.receita_corrente_liquida %}
+  <p>Receita Corrente Líquida: {{ fmt_currency(fiscal.receita_corrente_liquida) }}.
+  {% if fiscal.despesa_pessoal_pct_rcl is not none %} Despesa com pessoal: {{ "%.1f"|format(fiscal.despesa_pessoal_pct_rcl) }}% da RCL.{% endif %}
+  </p>
+  {% endif %}
+
+  <h2>3. Situação Climática</h2>
+  <div class="kpi-grid">
+    <div class="kpi"><div class="kpi-label">Score Sinidu+Clima</div><div class="kpi-value">{{ climatica.score_sinidu or '—' }}</div></div>
+    <div class="kpi"><div class="kpi-label">IVC médio</div><div class="kpi-value">{{ climatica.media_ivc or '—' }}</div></div>
+    <div class="kpi"><div class="kpi-label">IRI médio</div><div class="kpi-value">{{ climatica.media_iri or '—' }}</div></div>
+  </div>
+  <p>Classificação: <strong>{{ climatica.classificacao_risco or '—' }}</strong>. Alertas CEMADEN: <strong>{{ climatica.alertas_ativos or 0 }}</strong>.</p>
+
+  {% if narrativa_ia %}
+  <h2>Análise Narrativa</h2>
+  <p class="meta" style="font-style:italic;color:#64748b;">
+    Análise gerada por Sinidu+Clima IA ({{ narrativa_ia_meta.ai_provider or 'Mistral' }}) · {{ gerado_em }} · Use com critério
+  </p>
+  {% if narrativa_paragrafos %}
+    {% for p in narrativa_paragrafos %}
+    <p style="text-align:justify;margin-bottom:10px;">{{ p }}</p>
+    {% endfor %}
+  {% else %}
+    {% for p in narrativa_ia.split('\n\n') %}
+    {% if p.strip() %}<p style="text-align:justify;margin-bottom:10px;">{{ p.strip() }}</p>{% endif %}
+    {% endfor %}
+  {% endif %}
+  <p class="footer-note">{{ narrativa_ia_meta.disclaimer or 'Esta análise não substitui estudos técnicos oficiais.' }}</p>
+  {% endif %}
+
+  <h2>4. Histórico de Desastres (10 anos)</h2>
+  {% if historico.eventos %}
+  <table>
+    <tr><th>Data</th><th>Tipo</th><th>Afetados</th><th>Danos materiais</th></tr>
+    {% for ev in historico.eventos[:8] %}
+    <tr>
+      <td>{{ ev.data }}</td>
+      <td>{{ ev.tipo }}</td>
+      <td>{{ fmt_num(ev.populacao_afetada) }}</td>
+      <td>{{ fmt_currency(ev.danos_materiais) }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% if historico.danos_materiais_total %}
+  <p>Total estimado de danos materiais: <strong>{{ fmt_currency(historico.danos_materiais_total) }}</strong>.</p>
+  {% endif %}
+  {% else %}
+  <p>Nenhum evento S2ID registrado na janela analisada.</p>
+  {% endif %}
+
+  <h2>5. Cobertura Vegetal</h2>
+  <p>Cobertura vegetal municipal: <strong>{{ vegetal.cobertura_vegetal_percent or '—' }}%</strong>. {{ vegetal.interpretacao }}</p>
+
+  <h2>6. Principais Riscos Territoriais</h2>
+  {% if riscos.areas_criticas %}
+  <table>
+    <tr><th>Bairro / Área</th><th>Score</th><th>IVC</th><th>IRI</th><th>Classificação</th></tr>
+    {% for area in riscos.areas_criticas %}
+    <tr>
+      <td>{{ area.bairro }}</td>
+      <td>{{ area.score_sinidu }}</td>
+      <td>{{ area.ivc }}</td>
+      <td>{{ area.iri }}</td>
+      <td>{{ area.classificacao }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% else %}
+  <p>Ranking territorial indisponível.</p>
+  {% endif %}
+
+  <h2>7. Lacunas e Maturidade de Dados</h2>
+  <p>Maturidade municipal: <strong>{{ "%.0f"|format(lacunas.maturidade_score or 0) }}/100</strong> ({{ lacunas.maturidade_classificacao or '—' }}).</p>
+  <p>{{ lacunas.recomendacao }}</p>
+  {% if lacunas.lacunas %}
+  <ul>
+    {% for gap in lacunas.lacunas[:10] %}
+    <li>{{ gap }}</li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+
+  <p class="footer-note">
+    Sinidu+Clima · CGMUR/DDUM/SNDUM/MCID · Diagnóstico Executivo v{{ record.versao }} · {{ gerado_em }} UTC
+  </p>
+</body>
+</html>

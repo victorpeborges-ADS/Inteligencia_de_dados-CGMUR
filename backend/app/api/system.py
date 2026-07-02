@@ -40,6 +40,7 @@ class SystemOverview(BaseModel):
     onboarding: dict
     integrations: dict
     mapbiomas: dict
+    dem: dict
     tls: dict
     scheduler: dict
     audit: dict
@@ -83,6 +84,8 @@ def system_overview(
     integrated = sum(1 for s in sources if s.get("status") == "OK")
     failed = sum(1 for s in sources if s.get("status") == "FALHA")
 
+    from app.services.dem_processor import dem_status
+
     return SystemOverview(
         timestamp=datetime.now(timezone.utc).isoformat(),
         platform=settings.PROJECT_NAME,
@@ -124,6 +127,7 @@ def system_overview(
             "sources": sources,
         },
         mapbiomas=mapbiomas_status(db),
+        dem=dem_status(limit=61),
         tls=_inspect_tls_cert(os.getenv("TLS_FULLCHAIN", "/etc/nginx/certs/fullchain.pem")),
         scheduler=scheduler_status(),
         audit={
@@ -232,4 +236,43 @@ def start_external_sources_batch_job(
     from app.services.background_jobs import get_job, run_external_sources_batch_job
 
     job_id = run_external_sources_batch_job(limit=min(limit, 61))
+    return {"job_id": job_id, "job": get_job(job_id)}
+
+
+@router.post("/jobs/bairros-batch")
+def start_bairros_batch_job(
+    limit: int = 61,
+    force: bool = False,
+    _admin: User = Depends(require_role(Role.ADMIN)),
+):
+    from app.services.background_jobs import get_job, run_bairros_batch_job
+
+    job_id = run_bairros_batch_job(limit=min(limit, 61), force=force)
+    return {"job_id": job_id, "job": get_job(job_id)}
+
+
+@router.post("/jobs/dem-batch")
+def start_dem_batch_job(
+    limit: int = 61,
+    force: bool = False,
+    _admin: User = Depends(require_role(Role.ADMIN)),
+):
+    from app.services.background_jobs import get_job, run_dem_batch_job
+
+    job_id = run_dem_batch_job(limit=min(limit, 61), force=force)
+    return {"job_id": job_id, "job": get_job(job_id)}
+
+
+@router.post("/jobs/homologation-full")
+def start_homologation_full_job(
+    onboarding_limit: int = 61,
+    force_dem: bool = False,
+    _admin: User = Depends(require_role(Role.ADMIN)),
+):
+    from app.services.background_jobs import get_job, run_full_homologation_job
+
+    job_id = run_full_homologation_job(
+        onboarding_limit=min(onboarding_limit, 61),
+        force_dem=force_dem,
+    )
     return {"job_id": job_id, "job": get_job(job_id)}

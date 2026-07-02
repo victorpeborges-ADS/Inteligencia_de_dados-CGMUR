@@ -2,14 +2,12 @@
 
 from __future__ import annotations
 
-import datetime
 from typing import Any
 
-from geoalchemy2.shape import from_shape
-from shapely.geometry import Point, shape
 from sqlalchemy.orm import Session
 
 from app.data_connectors.mapbiomas_collector import collect_mapbiomas_municipality, upsert_municipal_stats
+from app.data_connectors.s2id_collector import collect_s2id_municipality, needs_s2id_refresh
 from app.models import CoberturaVegetalMapBiomas, HistoricoDesastreS2ID, Municipio
 
 
@@ -28,24 +26,10 @@ def ensure_s2id_mapbiomas_layers(db: Session, muni: Municipio, risk: str = "inun
         .count()
     )
 
-    created_s2id = 0
-
-    if s2id_before == 0 and muni.geom is not None:
-        poly = shape(db.scalar(muni.geom.ST_AsGeoJSON()))
-        disaster_type = "Deslizamento" if risk == "encosta" else "Inundação"
-        centroid = poly.centroid
-        db.add(
-            HistoricoDesastreS2ID(
-                municipio_id=muni.id,
-                tipo_desastre=disaster_type,
-                data_ocorrencia=datetime.date(2022, 3, 15),
-                populacao_afetada=max(500, muni.populacao // 200),
-                danos_materiais=250_000.0,
-                geom=from_shape(Point(centroid.x, centroid.y), srid=4326),
-            )
-        )
-        created_s2id = 1
-        db.commit()
+    s2id_result = collect_s2id_municipality(
+        db, muni.codigo_ibge, force=needs_s2id_refresh(db, muni), risk=risk
+    )
+    created_s2id = 0 if s2id_result.get("skipped") else s2id_result.get("records", 0)
 
     mb_result = upsert_municipal_stats(db, muni, force=mb_before == 0)
     if mb_result.get("skipped") and mb_before == 0:
@@ -56,7 +40,11 @@ def ensure_s2id_mapbiomas_layers(db: Session, muni: Municipio, risk: str = "inun
         .filter(CoberturaVegetalMapBiomas.municipio_id == muni.id)
         .count()
     )
-    s2id_after = s2id_before + created_s2id
+    s2id_after = (
+        db.query(HistoricoDesastreS2ID)
+        .filter(HistoricoDesastreS2ID.municipio_id == muni.id)
+        .count()
+    )
     created_mb = mb_result.get("polygons", 0) if not mb_result.get("skipped") else max(0, mb_after - mb_before)
 
     return {

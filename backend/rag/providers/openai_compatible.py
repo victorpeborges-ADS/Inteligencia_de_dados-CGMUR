@@ -56,6 +56,18 @@ class OpenAICompatibleProvider:
         model: str | None = None,
         temperature: float = 0.2,
     ) -> str:
+        data = self.chat_completion(messages, model=model, temperature=temperature)
+        choice = (data.get("choices") or [{}])[0]
+        message = choice.get("message") or {}
+        return (message.get("content") or "").strip()
+
+    def chat_completion(
+        self,
+        messages: List[dict],
+        model: str | None = None,
+        temperature: float = 0.2,
+        tools: List[dict] | None = None,
+    ) -> dict:
         if not self._api_key:
             raise RuntimeError(f"API key não configurada para {self.label}.")
 
@@ -64,11 +76,15 @@ class OpenAICompatibleProvider:
             "Content-Type": "application/json",
             **self._extra_headers,
         }
-        payload = {
+        payload: dict = {
             "model": model or self._default_model,
             "messages": messages,
             "temperature": temperature,
         }
+        if tools:
+            payload["tools"] = tools
+            payload["tool_choice"] = "auto"
+
         with httpx.Client(timeout=120.0) as client:
             response = client.post(
                 f"{self._base_url}/chat/completions",
@@ -76,8 +92,7 @@ class OpenAICompatibleProvider:
                 json=payload,
             )
             response.raise_for_status()
-            data = response.json()
-            return data["choices"][0]["message"]["content"].strip()
+            return response.json()
 
     def with_api_key(self, api_key: str) -> OpenAICompatibleProvider:
         return OpenAICompatibleProvider(

@@ -46,7 +46,7 @@ municipios:
   - { codigo_ibge: "4316907", nome: "Santa Maria", uf: "RS", criterio: "s2id_emergencia", decretos: 19, prioridade: 2 }
   - { codigo_ibge: "3109006", nome: "Brumadinho", uf: "MG", criterio: "s2id_emergencia", decretos: 18, prioridade: 2 }
   - { codigo_ibge: "2602902", nome: "Cabo de Santo Agostinho", uf: "PE", criterio: "s2id_emergencia", decretos: 18, prioridade: 2 }
-  - { codigo_ibge: "4318908", nome: "São Luiz Gonzaga", uf: "RS", criterio: "s2id_emergencia", decretos: 17, prioridade: 2 }
+  - { codigo_ibge: "4318903", nome: "São Luiz Gonzaga", uf: "RS", criterio: "s2id_emergencia", decretos: 17, prioridade: 2 }
   - { codigo_ibge: "3201506", nome: "Colatina", uf: "ES", criterio: "s2id_emergencia", decretos: 16, prioridade: 2 }
 
   # --- 19 Cidades +Inteligentes (Edital SNDUM 1/2026 — 22 selecionados; 3 já como capitais) ---

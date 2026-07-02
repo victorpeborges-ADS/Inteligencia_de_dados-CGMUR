@@ -92,7 +92,9 @@ from app.api.diagnostic import router as diagnostic_router
 from app.api.action_plan import router as action_plan_router
 from app.api.audit import router as audit_router
 from app.api.system import router as system_router
+from app.api.municipios import router as municipios_router
 from app.api.routing import router as routing_router
+from app.api.map import router as map_router
 from app.services.alert_broadcaster import alert_manager
 
 app.include_router(health_router, tags=["health"])
@@ -114,7 +116,9 @@ app.include_router(diagnostic_router, prefix=f"{settings.API_V1_STR}/diagnostic"
 app.include_router(action_plan_router, prefix=f"{settings.API_V1_STR}/action-plan", tags=["action-plan"])
 app.include_router(audit_router, prefix=f"{settings.API_V1_STR}/audit", tags=["audit"])
 app.include_router(system_router, prefix=f"{settings.API_V1_STR}/system", tags=["system"])
+app.include_router(municipios_router, prefix=f"{settings.API_V1_STR}/municipios", tags=["municipios"])
 app.include_router(routing_router, prefix=f"{settings.API_V1_STR}/routing", tags=["routing"])
+app.include_router(map_router, prefix=f"{settings.API_V1_STR}/map", tags=["map"])
 
 
 @app.websocket("/ws/alerts/{codigo_ibge}")

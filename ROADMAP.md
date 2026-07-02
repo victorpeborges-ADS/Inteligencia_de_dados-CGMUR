@@ -150,6 +150,42 @@
 
 ---
 
+## Fase 10 — Escala operacional 61 municípios (P1)
+
+| # | Item | Status | Notas |
+|---|------|--------|-------|
+| 10.1 | **Correção diagnóstico Belém** — lacunas dict no catálogo | ✅ | `_merge_lacunas()` em `executive_diagnostic_engine.py` |
+| 10.2 | **Onboarding batch até 61** (antes cap 20) | ✅ | `run_batch_onboarding` limit 61 |
+| 10.3 | **Pipeline** — onboarding antes do ETL | ✅ | Geometria PostGIS liberada mais cedo |
+| 10.4 | **Pipeline completo 61** em execução | ✅ | `POST /system/jobs/homologation-full` — onboarding + ETL + MapBiomas + DEM + diagnósticos |
+| 10.5 | **Batch diagnósticos/PDFs** pós-onboarding | ✅ | `ensure_dem=true` + jobs `diagnostics-batch` / `reports-batch` |
+| 10.6 | **DEM LiDAR local + batch** | ✅ | `LOCAL_DEM_DIR`, upload `POST /terrain/{ibge}/import-local-dem`, job `dem-batch` |
+| 10.7 | **OSRM malha real** para demo | ➖ | Adiar — fallback Haversine ativo; subir com `setup-osrm.sh` quando necessário |
+
+**Comandos operacionais:**
+
+```bash
+# Pipeline territorial (onboarding + ETL + MapBiomas)
+curl -X POST "http://localhost:8000/api/v1/system/jobs/pipeline?onboarding_limit=61"
+
+# Pipeline MCID completo (+ DEM + diagnósticos executivos)
+curl -X POST "http://localhost:8000/api/v1/system/jobs/homologation-full?onboarding_limit=61"
+
+# Batch DEM (LiDAR local ou SRTM/refinado piloto)
+curl -X POST "http://localhost:8000/api/v1/system/jobs/dem-batch?limit=61"
+
+# Diagnósticos em lote (garante DEM se ausente)
+curl -X POST "http://localhost:8000/api/v1/system/jobs/diagnostics-batch?limit=61"
+
+# LiDAR Recife — upload GeoTIFF
+curl -X POST "http://localhost:8000/api/v1/terrain/2611606/import-local-dem" -F "file=@recife_lidar.tif"
+
+# OSRM — somente para demo com rotas reais
+OSRM_REGION=nordeste bash docker/osrm/setup-osrm.sh && docker compose up -d osrm
+```
+
+---
+
 ## Ecossistema MCID — Sinidu vs Pro-Cidades
 
 Dois produtos complementares, repositórios separados:
@@ -274,7 +310,7 @@ curl -X POST "https://localhost/api/v1/system/jobs/pipeline?onboarding_limit=61"
 curl "https://localhost/api/v1/system/jobs/{job_id}" -H "Authorization: Bearer $TOKEN"
 ```
 
-No painel **Sistema** (`/sistema`): botões Pipeline, Onboarding (61) e MapBiomas com polling automático.
+No painel **Sistema** (`/sistema`): botões Pipeline MCID (61), DEM (61), LiDAR piloto, Onboarding e MapBiomas com polling automático.
 
 ### Pipeline agendado + Gotify (Fase 8)
 

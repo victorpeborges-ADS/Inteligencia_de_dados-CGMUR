@@ -3,13 +3,9 @@ from __future__ import annotations
 import time
 from typing import Dict, List
 
-from rag.config import AI_CHAT_PROVIDER, GEMINI_API_KEY
-from rag.providers.anthropic import AnthropicProvider
-from rag.providers.base import ChatProvider, ProviderInfo
-from rag.providers.gemini import GeminiProvider
-from rag.providers.ollama import OllamaChatProvider
-from rag.providers.openai_compatible import OpenAICompatibleProvider
 from rag.config import (
+    AI_ALLOWED_PROVIDERS,
+    AI_CHAT_PROVIDER,
     GROQ_API_KEY,
     GROQ_BASE_URL,
     GROQ_CHAT_MODEL,
@@ -23,6 +19,11 @@ from rag.config import (
     OPENROUTER_BASE_URL,
     OPENROUTER_CHAT_MODEL,
 )
+from rag.providers.anthropic import AnthropicProvider
+from rag.providers.base import ChatProvider, ProviderInfo
+from rag.providers.gemini import GeminiProvider
+from rag.providers.ollama import OllamaChatProvider
+from rag.providers.openai_compatible import OpenAICompatibleProvider
 
 _PROVIDERS: Dict[str, ChatProvider] = {
     "ollama": OllamaChatProvider(),
@@ -85,65 +86,57 @@ def _apply_api_key(provider: ChatProvider, api_key: str | None) -> ChatProvider:
     return provider
 
 
+def _allowed_provider_ids() -> list[str]:
+    allowed = [p for p in AI_ALLOWED_PROVIDERS if p in _PROVIDERS]
+    return allowed or ["mistral"]
+
+
 def list_chat_providers(api_keys: Dict[str, str] | None = None) -> List[ProviderInfo]:
     keys = api_keys or {}
     result: List[ProviderInfo] = []
-    for provider_id, provider in _PROVIDERS.items():
+    for provider_id in _allowed_provider_ids():
+        provider = _PROVIDERS[provider_id]
         bound = _apply_api_key(provider, keys.get(provider_id))
         result.append(bound.info())
     return result
 
 
 def get_chat_provider(provider_id: str | None = None, api_key: str | None = None) -> ChatProvider:
-    chosen = (provider_id or AI_CHAT_PROVIDER or "ollama").strip().lower()
+    chosen = (provider_id or AI_CHAT_PROVIDER or "mistral").strip().lower()
+    allowed = _allowed_provider_ids()
+    if chosen not in allowed:
+        raise ValueError(f"Provedor de IA não permitido: {chosen}. Permitidos: {', '.join(allowed)}")
     if chosen not in _PROVIDERS:
         raise ValueError(f"Provedor de IA desconhecido: {chosen}")
     return _apply_api_key(_PROVIDERS[chosen], api_key)
 
 
-def default_chat_provider_id() -> str:
-    """Gemini quando configurada; senão env ou Ollama."""
-    if GEMINI_API_KEY.strip():
-        return "gemini"
-    if AI_CHAT_PROVIDER in _PROVIDERS:
-        return AI_CHAT_PROVIDER
-    return "ollama"
-
-
-def _ollama_reachable() -> bool:
-    import os
-
-    import httpx
-
-    base = os.getenv("OLLAMA_BASE_URL", "http://ollama:11434").rstrip("/")
-    try:
-        with httpx.Client(timeout=2.0) as client:
-            return client.get(f"{base}/api/tags").status_code == 200
-    except Exception:
+def _provider_configured(provider_id: str) -> bool:
+    if provider_id not in _PROVIDERS:
         return False
+    return _PROVIDERS[provider_id].is_available()
+
+
+def default_chat_provider_id() -> str:
+    """Somente Mistral (ou primeiro provedor permitido configurado)."""
+    for candidate in _allowed_provider_ids():
+        if _provider_configured(candidate):
+            return candidate
+    return _allowed_provider_ids()[0]
 
 
 def resolve_chat_provider_with_fallback(
     provider_id: str | None = None,
     api_key: str | None = None,
 ) -> ChatProvider:
-    """Tenta provedor preferido; se Ollama indisponível, usa Gemini ou OpenRouter."""
-    preferred = (provider_id or default_chat_provider_id() or "ollama").strip().lower()
-    order: list[str] = []
-    for candidate in (preferred, default_chat_provider_id(), "gemini", "openrouter", "ollama"):
-        if candidate in _PROVIDERS and candidate not in order:
-            order.append(candidate)
-
-    last_error: Exception | None = None
-    for candidate in order:
-        provider = get_chat_provider(candidate, api_key if candidate == preferred else None)
-        if candidate == "ollama" and not _ollama_reachable():
-            continue
-        if provider.is_available():
-            return provider
-    if last_error:
-        raise last_error
-    return get_chat_provider(preferred, api_key)
+    """Resolve provedor Mistral — sem fallback para Ollama/Gemini."""
+    preferred = (provider_id or default_chat_provider_id() or "mistral").strip().lower()
+    provider = get_chat_provider(preferred, api_key)
+    if not provider.is_available():
+        raise RuntimeError(
+            "Mistral AI não está configurado. Defina MISTRAL_API_KEY no ambiente."
+        )
+    return provider
 
 
 def test_chat_provider(

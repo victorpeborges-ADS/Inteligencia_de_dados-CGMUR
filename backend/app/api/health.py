@@ -15,7 +15,8 @@ from app.config import settings
 from app.db import engine
 from app.observability.metrics import render_prometheus
 from app.security.oidc import check_oidc_connectivity, oidc_configured
-from rag.config import GEMINI_API_KEY
+from rag.config import AI_CHAT_PROVIDER, MISTRAL_API_KEY
+from rag.providers.registry import default_chat_provider_id
 
 router = APIRouter()
 
@@ -64,12 +65,13 @@ def _check_ollama() -> tuple[bool, str, dict[str, Any]]:
 
 
 def _ai_fallback_status() -> dict[str, Any]:
-    ok, _, details = _check_ollama()
+    mistral_ok = bool(MISTRAL_API_KEY.strip())
     return {
-        "ollama_ok": ok,
-        "gemini_configured": bool(GEMINI_API_KEY.strip()),
-        "fallback_available": bool(GEMINI_API_KEY.strip()) or ok,
-        "ollama": details,
+        "mistral_configured": mistral_ok,
+        "chat_provider_env": AI_CHAT_PROVIDER,
+        "default_provider": default_chat_provider_id(),
+        "embed_provider": "mistral",
+        "ai_available": mistral_ok,
     }
 
 

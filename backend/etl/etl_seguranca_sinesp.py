@@ -16,6 +16,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from app.data_connectors.sinesp_collector import fetch_municipio_sinesp
 from app.db import SessionLocal
 from app.models import Municipio, MunicipioSeguranca, MunicipioSeed
 
@@ -49,7 +50,11 @@ def fetch_sinesp_row(codigo_ibge: str, populacao: int) -> dict:
             "fonte": "SINESP/dados.gov.br (CSV)",
         }
 
-    # Estimativa quando não há CSV — API pública MJ ainda instável
+    official = fetch_municipio_sinesp(codigo_ibge, populacao)
+    if official:
+        return official
+
+    # Estimativa quando não há CSV nem XLSX oficial
     base = max(populacao // 1000, 100)
     violentas = int(base * random.uniform(0.4, 1.2))
     return {

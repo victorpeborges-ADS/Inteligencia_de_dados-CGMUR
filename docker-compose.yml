@@ -21,6 +21,7 @@ services:
       retries: 5
 
   ollama:
+    profiles: ["ai"]
     image: ollama/ollama:latest
     container_name: sinidu_ollama
     volumes:
@@ -42,6 +43,9 @@ services:
       context: ./backend
       dockerfile: Dockerfile
     container_name: sinidu_backend
+    env_file:
+      - path: .env
+        required: false
     environment:
       - DATABASE_URL=postgresql://sinidu_user:sinidu_pass@db:5432/sinidu_db
       - REDIS_URL=redis://redis:6379/0
@@ -50,16 +54,23 @@ services:
       - MODELS_DIR=/data/models
       - ML_DATA_DIR=/data/ml
       - DEM_DIR=/data/dem
-      - OPENTOPOGRAPHY_API_KEY=
+      - LOCAL_DEM_DIR=/data/dem/local
+      - MAPBIOMAS_STATS_DIR=/data/mapbiomas
+      - REFINE_PILOT_DEM=true
+      - JOB_STORE_REDIS=true
+      - OPENTOPOGRAPHY_API_KEY=${OPENTOPOGRAPHY_API_KEY:-}
       - OSRM_URL=http://osrm:5000
       - OSRM_REGION=nordeste
       - OSRM_COVERED_UFS=PE,AL,SE,PB,RN,CE,PI,MA
       - GOTIFY_URL=http://gotify:80
       - GOTIFY_TOKEN=
-      - OLLAMA_BASE_URL=http://ollama:11434
-      - OLLAMA_CHAT_MODEL=llama3.1:8b-instruct-q4_K_M
-      - OLLAMA_EMBED_MODEL=nomic-embed-text
-      - AI_CHAT_PROVIDER=ollama
+      - AI_CHAT_PROVIDER=${AI_CHAT_PROVIDER:-mistral}
+      - AI_EMBED_PROVIDER=${AI_EMBED_PROVIDER:-mistral}
+      - AI_ALLOWED_PROVIDERS=${AI_ALLOWED_PROVIDERS:-mistral}
+      - MISTRAL_API_KEY=${MISTRAL_API_KEY:-}
+      - MISTRAL_CHAT_MODEL=${MISTRAL_CHAT_MODEL:-mistral-small-latest}
+      - MISTRAL_EMBED_MODEL=${MISTRAL_EMBED_MODEL:-mistral-embed}
+      - RAG_EMBEDDING_DIM=1024
       - AUTH_ENABLED=false
       - AUTH_JWT_SECRET=sinidu-dev-secret-trocar-em-producao
       - CORS_ORIGINS=http://localhost:3000
@@ -76,16 +87,13 @@ services:
       # - GEMINI_CHAT_MODEL=gemini-2.0-flash
       # - GROQ_API_KEY=
       # - OPENROUTER_API_KEY=
-      # - MISTRAL_API_KEY=
-      # - MISTRAL_CHAT_MODEL=mistral-small-latest
+      # Mistral: defina MISTRAL_API_KEY no .env (não versionar a chave)
     ports:
       - "8000:8000"
     depends_on:
       db:
         condition: service_healthy
       redis:
-        condition: service_started
-      ollama:
         condition: service_started
     volumes:
       - ./backend:/app
@@ -94,9 +102,11 @@ services:
       - models_data:/data/models
       - ml_data:/data/ml
       - dem_data:/data/dem
+      - ./mapbiomas:/data/mapbiomas
+      - ibge_mesh_cache:/data/ibge
       - backups_data:/data/backups
     healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:8000/health/live || exit 1"]
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/live', timeout=3)\""]
       interval: 15s
       timeout: 5s
       retries: 3
@@ -141,10 +151,15 @@ services:
     container_name: sinidu_frontend
     environment:
       - NEXT_PUBLIC_API_URL=http://localhost:8000
+      - NEXT_PUBLIC_HYDRO_MODEL_VERSION=2.3
     ports:
       - "3000:3000"
     depends_on:
       - backend
+    volumes:
+      - ./frontend:/app
+      - frontend_node_modules:/app/node_modules
+      - frontend_next:/app/.next
 
 volumes:
   pgdata:
@@ -154,3 +169,6 @@ volumes:
   dem_data:
   gotify_data:
   backups_data:
+  ibge_mesh_cache:
+  frontend_node_modules:
+  frontend_next:

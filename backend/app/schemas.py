@@ -71,6 +71,9 @@ class ExecutiveIndicators(BaseModel):
     desastres_qualidade: Optional[str] = None
     renda_qualidade: Optional[str] = None
     densidade_qualidade: Optional[str] = None
+    score_confiabilidade: Optional[str] = None
+    confiabilidade_geral: Optional[str] = None
+    malha_fonte: Optional[str] = None
 
 
 class IntegrationSourceStatus(BaseModel):
@@ -123,6 +126,11 @@ class ChuvaExtremaSimRequest(BaseModel):
     precipitacao_mm: float = Field(..., description="Precipitação estimada em milímetros (e.g. 50 a 200)")
     codigo_ibge: Optional[str] = Field(default=None, description="Código IBGE do município selecionado")
 
+class ChuvaExtremaCompareRequest(BaseModel):
+    baseline_mm: float = Field(default=80.0, description="Cenário de referência (mm)")
+    scenario_mm: float = Field(..., description="Cenário alternativo (mm)")
+    codigo_ibge: Optional[str] = Field(default=None, description="Código IBGE do município selecionado")
+
 class DrenagemSimRequest(BaseModel):
     deficit_drenagem_pct: float = Field(..., description="Déficit operacional de drenagem de 0 a 100%")
     codigo_ibge: Optional[str] = Field(default=None, description="Código IBGE do município selecionado")
@@ -142,6 +150,11 @@ class SimulationOutput(BaseModel):
     simulation_meta: Optional[Dict[str, Any]] = None
     risk_context: Optional[List[Dict[str, Any]]] = None
 
+class RainfallComparisonResponse(BaseModel):
+    baseline: SimulationOutput
+    scenario: SimulationOutput
+    delta: Dict[str, Any]
+
 class SimulationAnalyzeRequest(BaseModel):
     codigo_ibge: Optional[str] = Field(default=None)
     simulation: Dict[str, Any] = Field(..., description="Resultado de uma simulação (SimulationOutput)")
@@ -149,6 +162,20 @@ class SimulationAnalyzeRequest(BaseModel):
     ai_provider: Optional[str] = Field(default=None)
     ai_model: Optional[str] = Field(default=None)
     ai_api_key: Optional[str] = Field(default=None)
+
+
+class SimulationExportRequest(BaseModel):
+    codigo_ibge: Optional[str] = Field(default=None)
+    simulation: Dict[str, Any] = Field(..., description="Resultado da simulação")
+    comparison_delta: Optional[Dict[str, Any]] = Field(default=None, description="Delta de comparação pluvial")
+    analysis: Optional[Dict[str, Any]] = Field(default=None, description="Análise interpretativa opcional")
+
+
+class SimulationExportResponse(BaseModel):
+    nome_arquivo: str
+    tamanho_bytes: int
+    download_url: str
+    format: str
 
 class BairroPrioritario(BaseModel):
     nome: str
@@ -167,6 +194,44 @@ class SimulationAnalysisResponse(BaseModel):
     ai_model: Optional[str] = None
     disclaimer: str
     risk_context: Optional[List[Dict[str, Any]]] = None
+
+class SimulationInterpretRequest(BaseModel):
+    municipio_codigo: str
+    tipo_simulacao: str = Field(..., description="chuva | asfalto | vegetacao | drenagem")
+    parametro_atual: float
+    parametro_referencia: float = Field(default=80.0)
+    resultado_simulacao: Dict[str, Any]
+    resultado_referencia: Optional[Dict[str, Any]] = None
+    comparacao_delta: Optional[Dict[str, Any]] = None
+    use_ai: bool = True
+    ai_provider: Optional[str] = None
+    ai_model: Optional[str] = None
+    ai_api_key: Optional[str] = None
+
+class SimulationInterpretResponse(BaseModel):
+    resumo_executivo: str
+    areas_criticas: List[str]
+    equipamentos_em_risco: List[str]
+    comparacao_historica: str
+    recomendacoes_imediatas: List[str]
+    interpretacao_diferencial: Optional[str] = None
+    disclaimer: str
+    findings: List[str] = []
+    metricas: Dict[str, Any] = {}
+    ai_provider: str = "deterministic"
+    ai_model: Optional[str] = None
+    confidence: str = "media"
+
+class SlopeInterpretationResponse(BaseModel):
+    codigo_ibge: str
+    area_suscetivel_km2: float
+    populacao_exposta: int
+    bairros_encosta: List[str]
+    nivel_suscetibilidade: str
+    interpretacao_ia: str
+    referencia_cobrade: str
+    dem_source: Optional[str] = None
+    precipitacao_mm: Optional[float] = None
 
 class MitigationPlanRequest(BaseModel):
     codigo_ibge: Optional[str] = Field(default=None, description="Código IBGE do município selecionado")
@@ -230,6 +295,18 @@ class ChatRequest(BaseModel):
     ai_provider: Optional[str] = None
     ai_model: Optional[str] = None
     ai_api_key: Optional[str] = None
+
+class ContextualChatRequest(BaseModel):
+    message: str
+    municipio_codigo: str
+    pagina_atual: str
+    descricao_pagina: Optional[str] = ""
+    dados_pagina: Dict[str, Any] = {}
+    historico: List[ChatMessage] = []
+    ai_provider: Optional[str] = None
+    ai_model: Optional[str] = None
+    ai_api_key: Optional[str] = None
+    stream: bool = True
 
 class AIProviderTestRequest(BaseModel):
     ai_provider: str

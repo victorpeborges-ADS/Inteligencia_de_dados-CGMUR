@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <title>Simulação Territorial — {{ muni.nome }}/{{ muni.uf }}</title>
+  <style>
+    @page { size: A4; margin: 1.4cm 1.2cm 1.8cm 1.2cm; }
+    body { font-family: "DejaVu Sans", sans-serif; font-size: 9.5pt; color: #1e293b; line-height: 1.45; margin: 0; }
+    h1 { font-size: 17pt; color: #0c4a6e; margin: 0 0 6px; }
+    h2 { font-size: 11pt; color: #0369a1; margin: 16px 0 6px; border-bottom: 2px solid #38bdf8; padding-bottom: 3px; }
+    p { margin: 0 0 8px; }
+    .cover {
+      min-height: 22cm;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      text-align: center;
+      background: linear-gradient(160deg, #0c4a6e 0%, #075985 55%, #0284c7 100%);
+      color: #e0f2fe;
+      padding: 2cm;
+      border-radius: 8px;
+      page-break-after: always;
+    }
+    .cover h1 { color: #f0f9ff; font-size: 20pt; }
+    .cover .sub { font-size: 9pt; letter-spacing: 0.12em; text-transform: uppercase; color: #bae6fd; }
+    .meta { color: #64748b; font-size: 8.5pt; margin-bottom: 12px; }
+    table { width: 100%; border-collapse: collapse; margin: 8px 0 12px; font-size: 9pt; }
+    th, td { border: 1px solid #cbd5e1; padding: 5px 7px; text-align: left; vertical-align: top; }
+    th { background: #e0f2fe; color: #0c4a6e; }
+    ul { margin: 4px 0 10px; padding-left: 18px; }
+    li { margin-bottom: 4px; }
+    .kpi-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin: 10px 0 14px; }
+    .kpi { border: 1px solid #cbd5e1; border-radius: 6px; padding: 8px; background: #f8fafc; }
+    .kpi-label { font-size: 7.5pt; text-transform: uppercase; color: #64748b; }
+    .kpi-value { font-size: 12pt; font-weight: 700; color: #0f172a; margin-top: 2px; }
+    .footer-note { margin-top: 20px; padding-top: 8px; border-top: 1px solid #cbd5e1; font-size: 8pt; color: #64748b; }
+  </style>
+</head>
+<body>
+  <div class="cover">
+    <p class="sub">Sinidu+Clima — Inteligência Territorial</p>
+    <h1>Relatório de Simulação</h1>
+    <p style="font-size: 14pt; margin-top: 8px;">{{ muni.nome }} / {{ muni.uf }} · IBGE {{ muni.codigo_ibge }}</p>
+    <p style="margin-top: 1cm; font-size: 10pt;">Cenário: <strong>{{ simulation.scenario_type }}</strong> · Entrada: {{ simulation.input_value }}</p>
+    <p class="meta" style="margin-top: 1.2cm; color: #bae6fd;">Gerado em {{ gerado_em }}</p>
+  </div>
+
+  <h1>Resumo do cenário</h1>
+  <p class="meta">Modelo {{ meta.get('model_version', '—') }} · {{ meta.get('method', 'proxy territorial') }}</p>
+
+  <div class="kpi-grid">
+    <div class="kpi">
+      <div class="kpi-label">Área atingida</div>
+      <div class="kpi-value">{{ simulation.affected_area_km2 }} km²</div>
+    </div>
+    <div class="kpi">
+      <div class="kpi-label">População exposta</div>
+      <div class="kpi-value">{{ "{:,}".format(simulation.affected_population).replace(",", ".") }}</div>
+    </div>
+    <div class="kpi">
+      <div class="kpi-label">Bairros</div>
+      <div class="kpi-value">{{ simulation.affected_bairros|length }}</div>
+    </div>
+  </div>
+
+  {% if meta.get('dem_available') %}
+  <h2>Modelo espacial (DEM)</h2>
+  <table>
+    <tr><th>Fonte DEM</th><td>{{ meta.get('dem_source', '—') }}</td></tr>
+    <tr><th>Resolução</th><td>~{{ meta.get('dem_resolution_m', '—') }} m</td></tr>
+    <tr><th>Isolinhas</th><td>{{ meta.get('contour_interval_m', '—') }} m ({{ meta.get('contour_count', '—') }} curvas)</td></tr>
+    <tr><th>Profundidade máx.</th><td>{{ meta.get('max_depth_m', '—') }} m</td></tr>
+    <tr><th>Acúmulo D8 máx.</th><td>{{ meta.get('max_flow_accumulation', '—') }}</td></tr>
+    <tr><th>Impermeabilização média</th><td>{% if meta.get('mean_impermeability') is not none %}{{ (meta.mean_impermeability * 100)|round|int }}%{% else %}—{% endif %}</td></tr>
+  </table>
+  {% if meta.get('precision_note') %}
+  <p><em>{{ meta.precision_note }}</em></p>
+  {% endif %}
+  {% endif %}
+
+  {% if comparison %}
+  <h2>Comparação de cenários</h2>
+  <table>
+    <tr><th>Referência</th><td>{{ comparison.get('baseline_mm') }} mm</td></tr>
+    <tr><th>Cenário</th><td>{{ comparison.get('scenario_mm') }} mm</td></tr>
+    <tr><th>Δ área (km²)</th><td>{{ comparison.get('affected_area_km2') }}</td></tr>
+    <tr><th>Δ população</th><td>{{ comparison.get('affected_population') }}</td></tr>
+    <tr><th>Δ profundidade (m)</th><td>{{ comparison.get('max_depth_m') }}</td></tr>
+  </table>
+  {% endif %}
+
+  {% if simulation.affected_bairros %}
+  <h2>Bairros atingidos</h2>
+  <p>{{ simulation.affected_bairros|join(', ') }}</p>
+  {% endif %}
+
+  {% if simulation.risk_context %}
+  <h2>Contexto IVC × IRI (prioridade)</h2>
+  <table>
+    <tr><th>Bairro</th><th>IVC</th><th>IRI</th><th>Risco composto</th></tr>
+    {% for row in simulation.risk_context[:8] %}
+    <tr>
+      <td>{{ row.bairro }}</td>
+      <td>{{ row.ivc }}</td>
+      <td>{{ row.iri }}</td>
+      <td>{{ row.composite_risk }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% endif %}
+
+  {% if analysis.get('findings') %}
+  <h2>Análise interpretativa</h2>
+  <ul>
+    {% for item in analysis.findings %}
+    <li>{{ item }}</li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+
+  <div class="footer-note">
+    Proxy territorial para planejamento e oficina Sinidu+Clima — não substitui estudo hidrológico,
+    laudo geotécnico ou plano de contingência oficial. Exporte o GeoJSON para SIG (QGIS/ArcGIS).
+  </div>
+</body>
+</html>

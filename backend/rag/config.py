@@ -3,10 +3,17 @@ from __future__ import annotations
 import os
 
 # --- Provedor padrão de chat (geração) ---
-AI_CHAT_PROVIDER = os.getenv("AI_CHAT_PROVIDER", "ollama").strip().lower()
+AI_CHAT_PROVIDER = os.getenv("AI_CHAT_PROVIDER", "mistral").strip().lower()
 
-# --- Embeddings RAG (permanece local por padrão — dados não saem do ambiente) ---
-AI_EMBED_PROVIDER = os.getenv("AI_EMBED_PROVIDER", "ollama").strip().lower()
+# --- Embeddings RAG (Mistral) ---
+AI_EMBED_PROVIDER = os.getenv("AI_EMBED_PROVIDER", "mistral").strip().lower()
+
+# Provedores expostos na API (somente Mistral por padrão)
+AI_ALLOWED_PROVIDERS = [
+    p.strip().lower()
+    for p in os.getenv("AI_ALLOWED_PROVIDERS", "mistral").split(",")
+    if p.strip()
+]
 
 # Ollama
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://ollama:11434")
@@ -32,6 +39,7 @@ GROQ_CHAT_MODEL = os.getenv("GROQ_CHAT_MODEL", "llama-3.3-70b-versatile")
 MISTRAL_API_KEY = os.getenv("MISTRAL_API_KEY", "")
 MISTRAL_BASE_URL = os.getenv("MISTRAL_BASE_URL", "https://api.mistral.ai/v1")
 MISTRAL_CHAT_MODEL = os.getenv("MISTRAL_CHAT_MODEL", "mistral-small-latest")
+MISTRAL_EMBED_MODEL = os.getenv("MISTRAL_EMBED_MODEL", "mistral-embed")
 
 # Anthropic
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
@@ -45,7 +53,7 @@ GEMINI_CHAT_MODEL = os.getenv("GEMINI_CHAT_MODEL", "gemini-2.0-flash")
 CHUNK_SIZE_CHARS = int(os.getenv("RAG_CHUNK_SIZE_CHARS", "3200"))
 CHUNK_OVERLAP_CHARS = int(os.getenv("RAG_CHUNK_OVERLAP_CHARS", "400"))
 TOP_K_CHUNKS = int(os.getenv("RAG_TOP_K", "5"))
-EMBEDDING_DIM = 768
+EMBEDDING_DIM = int(os.getenv("RAG_EMBEDDING_DIM", "1024"))
 
 SYSTEM_PROMPT_TEMPLATE = """Você é o **Assistente Municipal Sinidu+Clima**, copiloto institucional para gestores públicos brasileiros.
 Município em foco: **{municipio_nome}**.

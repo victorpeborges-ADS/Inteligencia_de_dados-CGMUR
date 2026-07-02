@@ -18,6 +18,7 @@ from app.schemas import (
 )
 from app.seed_demo_municipalities import RENDA_REFERENCIA_MENSAL
 from app.services.analytical_engine import AnalyticalEngine
+from app.data_connectors.mapbiomas_collector import vegetation_coverage_percent
 
 UF_REGION = {
     "AC": "Norte", "AP": "Norte", "AM": "Norte", "PA": "Norte", "RO": "Norte", "RR": "Norte", "TO": "Norte",
@@ -410,12 +411,7 @@ class MitigationPlanner:
     def _municipality_metrics(db: Session, municipio: Municipio) -> Dict[str, float | str]:
         avg_income = db.query(func.avg(SetorCensitario.renda_media)).filter(SetorCensitario.municipio_id == municipio.id).scalar()
         income = float(RENDA_REFERENCIA_MENSAL.get(municipio.codigo_ibge, float(avg_income or 0.0)))
-        total_area_deg = db.scalar(func.ST_Area(municipio.geom))
-        forest_area_deg = db.query(func.sum(func.ST_Area(CoberturaVegetalMapBiomas.geom))).filter(
-            CoberturaVegetalMapBiomas.municipio_id == municipio.id,
-            CoberturaVegetalMapBiomas.classe_uso == "Vegetação / Floresta",
-        ).scalar()
-        veg_percent = (float(forest_area_deg) / float(total_area_deg)) * 100 if forest_area_deg and total_area_deg else 0.0
+        veg_percent, _ = vegetation_coverage_percent(db, municipio)
         disasters = db.query(HistoricoDesastreS2ID).filter(HistoricoDesastreS2ID.municipio_id == municipio.id).count()
         damages = db.query(func.sum(HistoricoDesastreS2ID.danos_materiais)).filter(HistoricoDesastreS2ID.municipio_id == municipio.id).scalar()
         return {

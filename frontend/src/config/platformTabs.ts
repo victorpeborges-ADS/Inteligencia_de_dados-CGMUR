@@ -12,7 +12,7 @@ export type ActiveTab =
   | 'audit'
   | 'system';
 
-export type LayerQuality = 'Oficial' | 'Estimado' | 'Derivado Sinidu+Clima';
+export type LayerQuality = 'Oficial' | 'Referencia' | 'Estimado' | 'Derivado Sinidu+Clima' | 'Indisponível';
 
 export type LayerOption = {
   id: string;
@@ -20,6 +20,8 @@ export type LayerOption = {
   group: 'Base' | 'Dados urbanos' | 'Clima e riscos' | 'Planejamento' | 'Saúde e segurança';
   source: string;
   quality: LayerQuality;
+  disponivel?: boolean;
+  tooltipEstimado?: string;
 };
 
 export const TAB_ROUTES: Record<ActiveTab, string> = {
@@ -41,10 +43,10 @@ export const ROUTE_TO_TAB: Record<string, ActiveTab> = Object.fromEntries(
 
 export const DEFAULT_LAYER_OPTIONS: LayerOption[] = [
   { id: 'municipio', label: 'Limite Municipal', group: 'Base', source: 'IBGE / Geocidades', quality: 'Oficial' },
-  { id: 'bairros', label: 'Malha de Bairros', group: 'Base', source: 'Prefeitura / CTM', quality: 'Estimado' },
+  { id: 'bairros', label: 'Malha de Bairros', group: 'Base', source: 'IBGE Censo 2022 / CTM municipal', quality: 'Oficial' },
   { id: 'infraestrutura', label: 'Equipamentos e Redes', group: 'Dados urbanos', source: 'OSM / bases locais', quality: 'Estimado' },
   { id: 'socioeconomico', label: 'Socioeconômico (IBGE/CTM)', group: 'Dados urbanos', source: 'IBGE / CTM', quality: 'Estimado' },
-  { id: 'cobertura', label: 'Uso do Solo (MapBiomas)', group: 'Clima e riscos', source: 'MapBiomas', quality: 'Oficial' },
+  { id: 'cobertura', label: 'Uso do Solo (MapBiomas)', group: 'Clima e riscos', source: 'MapBiomas + partição espacial', quality: 'Derivado Sinidu+Clima' },
   { id: 'vulnerabilidade', label: 'Vulnerabilidade Climática', group: 'Clima e riscos', source: 'Sinidu+Clima: IBGE + MapBiomas + S2ID', quality: 'Derivado Sinidu+Clima' },
   { id: 'inundacao', label: 'Risco de Inundação', group: 'Clima e riscos', source: 'Sinidu+Clima: S2ID + hidrografia', quality: 'Derivado Sinidu+Clima' },
   { id: 'alertas', label: 'Alertas Ativos (CEMADEN)', group: 'Clima e riscos', source: 'CEMADEN / GeoRiscos', quality: 'Oficial' },

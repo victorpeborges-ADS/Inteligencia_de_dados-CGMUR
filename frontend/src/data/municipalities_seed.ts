@@ -42,7 +42,7 @@ export const SEED_MUNICIPALITIES: MunicipalityOption[] = [
   { codigo_ibge: '4316907', nome: 'Santa Maria', uf: 'RS', criterio: 's2id_emergencia' },
   { codigo_ibge: '3109006', nome: 'Brumadinho', uf: 'MG', criterio: 's2id_emergencia' },
   { codigo_ibge: '2602902', nome: 'Cabo de Santo Agostinho', uf: 'PE', criterio: 's2id_emergencia' },
-  { codigo_ibge: '4318908', nome: 'São Luiz Gonzaga', uf: 'RS', criterio: 's2id_emergencia' },
+  { codigo_ibge: '4318903', nome: 'São Luiz Gonzaga', uf: 'RS', criterio: 's2id_emergencia' },
   { codigo_ibge: '3201506', nome: 'Colatina', uf: 'ES', criterio: 's2id_emergencia' },
   { codigo_ibge: '1702109', nome: 'Araguaína', uf: 'TO', criterio: 'cidades_mais_inteligentes' },
   { codigo_ibge: '1400233', nome: 'Caroebe', uf: 'RR', criterio: 'cidades_mais_inteligentes' },

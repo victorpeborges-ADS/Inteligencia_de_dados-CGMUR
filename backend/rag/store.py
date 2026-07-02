@@ -8,7 +8,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from rag.config import EMBEDDING_DIM, TOP_K_CHUNKS
-from rag.ollama_client import ollama_client
+from rag.embeddings import embed_text
 
 logger = logging.getLogger(__name__)
 
@@ -82,4 +82,4 @@ def count_documents(db: Session) -> int:
 
 
 def embed_query(text_query: str) -> List[float]:
-    return ollama_client.embed(text_query)
+    return embed_text(text_query)

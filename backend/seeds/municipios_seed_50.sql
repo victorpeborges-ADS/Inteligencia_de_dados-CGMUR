@@ -41,7 +41,7 @@ VALUES
   ('4316907', 'Santa Maria', 'RS', 's2id_emergencia', 19, 2),
   ('3109006', 'Brumadinho', 'MG', 's2id_emergencia', 18, 2),
   ('2602902', 'Cabo de Santo Agostinho', 'PE', 's2id_emergencia', 18, 2),
-  ('4318908', 'São Luiz Gonzaga', 'RS', 's2id_emergencia', 17, 2),
+  ('4318903', 'São Luiz Gonzaga', 'RS', 's2id_emergencia', 17, 2),
   ('3201506', 'Colatina', 'ES', 's2id_emergencia', 16, 2),
   ('1702109', 'Araguaína', 'TO', 'cidades_mais_inteligentes', 11, 3),
   ('1400233', 'Caroebe', 'RR', 'cidades_mais_inteligentes', 9, 3),

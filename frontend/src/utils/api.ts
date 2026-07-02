@@ -148,6 +148,22 @@ export interface SystemOverview {
     csv_path?: string | null;
     colecao: string;
   };
+  dem: {
+    prioritarios: number;
+    processados: number;
+    local_ou_lidar: number;
+    refinado_piloto: number;
+    resolucao_media_m: number | null;
+    local_dem_dir: string;
+    refine_pilot_enabled: boolean;
+    piloto: {
+      codigo_ibge: string;
+      nome: string;
+      dem_source?: string;
+      dem_resolution_m?: number;
+      vertical_accuracy_m?: number;
+    } | null;
+  };
   tls: {
     status: string;
     configured?: boolean;
@@ -209,6 +225,10 @@ export interface ExecutiveIndicators {
   alertas_ativos_count: number;
   renda_media_setores: number;
   renda_media_fonte: string;
+  score_sinidu?: number;
+  media_ivc?: number;
+  media_iri?: number;
+  media_adaptacao?: number;
   danos_materiais_total: number;
   populacao_fonte?: string;
   populacao_qualidade?: string;
@@ -234,6 +254,9 @@ export interface ExecutiveIndicators {
   desastres_qualidade?: string;
   renda_qualidade?: string;
   densidade_qualidade?: string;
+  score_confiabilidade?: string;
+  confiabilidade_geral?: string;
+  malha_fonte?: string;
 }
 
 export interface IntegrationSourceStatus {
@@ -325,13 +348,40 @@ export interface OfficialUrbanClimateResponse {
     distancia_km: number;
     inicio_operacao?: string | null;
   } | null;
-  historical_timeline: { ano: number; temperatura_media: number | null; area_urbanizada_km2: number | null }[];
+  historical_timeline: {
+    ano: number;
+    temperatura_media?: number | null;
+    temperatura_qualidade?: string;
+    area_urbanizada_km2?: number | null;
+    qualidade_dado?: string;
+  }[];
   estimated_timeline: { ano: number; temperatura_media: number; area_urbanizada_km2: number; qualidade_dado: string }[];
   source: string;
   source_note: string;
   estimated_source?: string;
   estimated_methodology?: string;
   lacunas: string[];
+  temperatura_integrada?: boolean;
+  temperatura_oficial?: boolean;
+  mapbiomas_integrado?: boolean;
+  mapbiomas_oficial?: boolean;
+}
+
+export interface RainfallComparisonDelta {
+  baseline_mm: number;
+  scenario_mm: number;
+  affected_area_km2: number;
+  affected_population: number;
+  max_depth_m: number;
+  flood_patches: number;
+  bairros_novos: string[];
+  bairros_removidos: string[];
+}
+
+export interface RainfallComparison {
+  baseline: SimulationOutput;
+  scenario: SimulationOutput;
+  delta: RainfallComparisonDelta;
 }
 
 export interface SimulationOutput {
@@ -350,9 +400,18 @@ export interface SimulationOutput {
     dem_source?: string;
     method?: string;
     iri_applied?: boolean;
+    impermeability_applied?: boolean;
+    flow_accumulation_applied?: boolean;
+    flood_patches?: number;
     landslide_method?: string;
     landslide_zones?: number;
     contour_interval_m?: number;
+    contour_count?: number;
+    dem_resolution_m?: number;
+    vertical_accuracy_m?: number;
+    precision_note?: string;
+    model_version?: string;
+    twi_applied?: boolean;
     altitude_min_m?: number;
     altitude_max_m?: number;
     altitude_media_m?: number;
@@ -360,6 +419,10 @@ export interface SimulationOutput {
     pct_declividade_critica?: number;
     precipitation_mm?: number;
     max_depth_m?: number;
+    mean_impermeability?: number;
+    max_flow_accumulation?: number;
+    bairros_exposicao?: { bairro: string; exposicao_pct: number; populacao_exposta: number }[];
+    bairros_atingidos_count?: number;
   };
   risk_context?: BairroRiskContext[];
 }
@@ -391,6 +454,33 @@ export interface SimulationAnalysis {
   ai_model?: string | null;
   disclaimer: string;
   risk_context?: BairroRiskContext[];
+}
+
+export interface SimulationInterpret {
+  resumo_executivo: string;
+  areas_criticas: string[];
+  equipamentos_em_risco: string[];
+  comparacao_historica: string;
+  recomendacoes_imediatas: string[];
+  interpretacao_diferencial?: string | null;
+  disclaimer: string;
+  findings?: string[];
+  metricas?: Record<string, unknown>;
+  ai_provider: string;
+  ai_model?: string | null;
+  confidence?: string;
+}
+
+export interface SlopeInterpretation {
+  codigo_ibge: string;
+  area_suscetivel_km2: number;
+  populacao_exposta: number;
+  bairros_encosta: string[];
+  nivel_suscetibilidade: string;
+  interpretacao_ia: string;
+  referencia_cobrade: string;
+  dem_source?: string | null;
+  precipitacao_mm?: number | null;
 }
 
 export interface MitigationAction {
@@ -545,6 +635,16 @@ export interface ChatResponse {
   ai_model?: string;
 }
 
+export interface ContextualChatPayload {
+  message: string;
+  municipio_codigo: string;
+  pagina_atual: string;
+  descricao_pagina?: string;
+  dados_pagina?: Record<string, unknown>;
+  historico?: ChatMessage[];
+  stream?: boolean;
+}
+
 export interface SuccessCase {
   id: number;
   municipio: string;
@@ -621,6 +721,27 @@ export interface MunicipalityComparison {
   municipios: MunicipalityComparisonRow[];
 }
 
+export interface SocioeconomicRankingRow {
+  bairro: string;
+  renda_media: number;
+  populacao_estimada: number;
+  setores: number;
+  classe_renda: string;
+}
+
+export interface SocioeconomicRanking {
+  codigo_ibge: string;
+  nome: string;
+  renda_municipal_media: number;
+  pib_per_capita_ibge: number | null;
+  classificacao: string;
+  limiares: { p33: number; p66: number };
+  mais_ricos: SocioeconomicRankingRow[];
+  mais_pobres: SocioeconomicRankingRow[];
+  metodo: string;
+  fonte: string;
+}
+
 export interface TerrainStats {
   altitude_min_m: number;
   altitude_max_m: number;
@@ -681,6 +802,60 @@ export interface DataCatalogBase {
   status: 'Integrado' | 'Estimado' | 'Em integracao' | 'Ausente';
   score: number;
   recomendacao: string;
+  ultima_sync?: string | null;
+  registros?: number;
+  requisito?: string | null;
+  impacto_confiabilidade?: number | null;
+  impacto_confiabilidade_label?: string | null;
+  integravel_etl?: boolean;
+  dificuldade?: string;
+  impacto_score_pts?: number;
+}
+
+export interface LacunaRankingItem {
+  rank: number;
+  id: string;
+  nome: string;
+  status: string;
+  impacto_estimado: number;
+  impacto_label: string;
+  dificuldade: string;
+  requisito?: string;
+}
+
+export interface MaturityDetail {
+  maturidade_percentual: number;
+  radar: { eixo: string; valor: number }[];
+  timeline: { anterior: number; atual: number; delta: number; label: string };
+  projecao: { percentual: number; fontes_alvo: string[]; label: string };
+  explicacao_ia: string;
+  lacunas_ranking: LacunaRankingItem[];
+}
+
+export interface FonteImpactAnalysis {
+  fonte_id: string;
+  fonte_nome: string;
+  status_atual: string;
+  campos_score: string[];
+  impacto_confiabilidade: number;
+  impacto_score_estimado: number;
+  dificuldade: string;
+  requisito: string;
+  explicacao_ia: string;
+  ai_provider?: string;
+}
+
+export interface CatalogRefreshJob {
+  id: string;
+  status: string;
+  progress: number;
+  result?: {
+    progress?: number;
+    sources?: { fonte_id: string; nome: string; status: string; detail?: string }[];
+    done?: number;
+    total?: number;
+  };
+  error?: string | null;
 }
 
 export interface DataCoverage {
@@ -693,6 +868,8 @@ export interface DataCoverage {
   classificacao: 'Alta' | 'Media' | 'Baixa';
   bases: DataCatalogBase[];
   lacunas_prioritarias: DataCatalogBase[];
+  lacunas_ranking?: LacunaRankingItem[];
+  maturity_detail?: MaturityDetail;
   resumo: string;
 }
 
@@ -738,8 +915,67 @@ export interface ExecutiveDiagnostic {
   headline: string;
   conteudo: Record<string, unknown>;
   narrativa_md: string;
+  narrativa_ia?: string | null;
+  narrativa_ia_meta?: {
+    ai_provider?: string;
+    ai_model?: string;
+    disclaimer?: string;
+    paragrafos?: string[];
+  } | null;
   origem: string;
   gerado_em: string | null;
+  nome_arquivo?: string | null;
+  tamanho_bytes?: number | null;
+  download_url?: string | null;
+}
+
+export interface PresentationPayload {
+  municipio: { nome: string; uf: string; codigo_ibge: string; populacao?: number };
+  score: number;
+  severidade: string;
+  ivc?: number;
+  iri?: number;
+  data_apresentacao: string;
+  narrativa: {
+    texto_completo?: string | null;
+    paragrafos: string[];
+    contexto: string;
+    prioridades: string;
+    proximos_passos: string;
+    disclaimer?: string;
+    ai_provider?: string;
+  };
+  mapa: {
+    layer: string;
+    png_base64: string;
+    legenda: { cor: string; label: string }[];
+  };
+  bairros_prioritarios: {
+    bairro: string;
+    score: number;
+    populacao?: number | null;
+    risco_principal: string;
+  }[];
+  historico_desastres: {
+    total_10_anos: number;
+    por_ano: { ano: number; eventos: number }[];
+    maior_dano: number;
+    data_maior_dano?: string | null;
+  };
+  saude_fiscal: {
+    capag?: string | null;
+    capacidade_financiamento: string;
+    interpretacao?: string;
+    receita_corrente_liquida?: number | null;
+    programas_elegiveis: { nome?: string; programa?: string }[];
+  };
+  plano_acao: {
+    curto_prazo: { total: number; acoes: { titulo: string }[] };
+    medio_prazo: { total: number; acoes: { titulo: string }[] };
+    longo_prazo: { total: number; acoes: { titulo: string }[] };
+  };
+  pdf: { download_url?: string | null; nome_arquivo?: string | null };
+  diagnostic?: ExecutiveDiagnostic;
 }
 
 export interface ExecutiveDiagnosticHistoryItem {
@@ -748,6 +984,9 @@ export interface ExecutiveDiagnosticHistoryItem {
   headline: string;
   origem: string;
   gerado_em: string | null;
+  nome_arquivo?: string | null;
+  tamanho_bytes?: number | null;
+  download_url?: string | null;
 }
 
 export interface ActionPlanItem {
@@ -987,7 +1226,18 @@ export const api = {
 
   getLayersMeta: async (codigoIbge?: string): Promise<{
     codigo_ibge: string;
-    layers: Record<string, { quality: string; source: string; snis?: Record<string, unknown> }>;
+    malha_fonte?: string;
+    malha_disponivel?: boolean;
+    camadas_bloqueadas?: string[];
+    score_confiabilidade?: string;
+    confiabilidade_geral?: string;
+    layers: Record<string, {
+      quality: string;
+      source: string;
+      disponivel?: boolean;
+      tooltip_estimado?: string;
+      snis?: Record<string, unknown>;
+    }>;
   }> => {
     const qs = codigoIbge ? `?codigo_ibge=${encodeURIComponent(codigoIbge)}` : '';
     const res = await apiFetch(`${getApiBaseUrl()}/api/v1/indicators/layers/meta${qs}`);
@@ -1049,10 +1299,63 @@ export const api = {
     return res.json();
   },
 
+  getSocioeconomicRanking: async (codigoIbge?: string, limit = 5): Promise<SocioeconomicRanking> => {
+    const params = new URLSearchParams();
+    if (codigoIbge) params.set('codigo_ibge', codigoIbge);
+    params.set('limit', String(limit));
+    const res = await apiFetch(`${getApiBaseUrl()}/api/v1/analytics/socioeconomic-ranking?${params}`);
+    if (!res.ok) throw new Error('Failed to load socioeconomic ranking');
+    return res.json();
+  },
+
   getDataCoverage: async (codigoIbge?: string): Promise<DataCoverage> => {
     const qs = codigoIbge ? `?codigo_ibge=${encodeURIComponent(codigoIbge)}` : '';
     const res = await apiFetch(`${getApiBaseUrl()}/api/v1/data-catalog/coverage${qs}`);
     if (!res.ok) throw new Error('Failed to load data coverage');
+    return res.json();
+  },
+
+  getFonteImpactAnalysis: async (codigoIbge: string, fonteId: string): Promise<FonteImpactAnalysis> => {
+    const res = await apiFetch(
+      `${getApiBaseUrl()}/api/v1/data-catalog/impact-analysis/${encodeURIComponent(codigoIbge)}/${encodeURIComponent(fonteId)}`,
+    );
+    if (!res.ok) throw new Error('Falha na análise de impacto');
+    return res.json();
+  },
+
+  getFontePreview: async (codigoIbge: string, fonteId: string): Promise<{ registros: Record<string, unknown>[] }> => {
+    const res = await apiFetch(
+      `${getApiBaseUrl()}/api/v1/data-catalog/source-preview/${encodeURIComponent(codigoIbge)}/${encodeURIComponent(fonteId)}`,
+    );
+    if (!res.ok) throw new Error('Falha ao carregar preview');
+    return res.json();
+  },
+
+  refreshCatalogSource: async (codigoIbge: string, fonteId: string, force = false): Promise<{ ok: boolean }> => {
+    const qs = force ? '?force=true' : '';
+    const res = await apiFetch(
+      `${getApiBaseUrl()}/api/v1/data-catalog/refresh-source/${encodeURIComponent(codigoIbge)}/${encodeURIComponent(fonteId)}${qs}`,
+      { method: 'POST' },
+    );
+    if (!res.ok) {
+      const detail = await res.json().catch(() => ({}));
+      throw new Error(detail.detail || 'Falha ao atualizar fonte');
+    }
+    return res.json();
+  },
+
+  refreshAllCatalogSources: async (codigoIbge: string): Promise<{ job_id: string }> => {
+    const res = await apiFetch(
+      `${getApiBaseUrl()}/api/v1/data-catalog/refresh-all/${encodeURIComponent(codigoIbge)}`,
+      { method: 'POST' },
+    );
+    if (!res.ok) throw new Error('Falha ao iniciar atualização em lote');
+    return res.json();
+  },
+
+  getCatalogRefreshJob: async (jobId: string): Promise<CatalogRefreshJob> => {
+    const res = await apiFetch(`${getApiBaseUrl()}/api/v1/data-catalog/refresh-job/${encodeURIComponent(jobId)}`);
+    if (!res.ok) throw new Error('Job não encontrado');
     return res.json();
   },
 
@@ -1098,6 +1401,24 @@ export const api = {
     return res.json();
   },
 
+  compareRainfallScenarios: async (
+    scenarioMm: number,
+    baselineMm: number = 80,
+    codigoIbge?: string,
+  ): Promise<RainfallComparison> => {
+    const res = await apiFetch(`${getApiBaseUrl()}/api/v1/simulations/extreme-rainfall/compare`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        baseline_mm: baselineMm,
+        scenario_mm: scenarioMm,
+        codigo_ibge: codigoIbge,
+      }),
+    });
+    if (!res.ok) throw new Error('Rainfall comparison failed');
+    return res.json();
+  },
+
   simulateDrainageDeficit: async (pct: number, codigoIbge?: string): Promise<SimulationOutput> => {
     const res = await apiFetch(`${getApiBaseUrl()}/api/v1/simulations/drainage-deficit`, {
       method: 'POST',
@@ -1126,6 +1447,78 @@ export const api = {
       }),
     });
     if (!res.ok) throw new Error('Simulation analysis failed');
+    return res.json();
+  },
+
+  interpretSimulation: async (
+    payload: {
+      municipio_codigo: string;
+      tipo_simulacao: 'chuva' | 'asfalto' | 'vegetacao' | 'drenagem';
+      parametro_atual: number;
+      parametro_referencia?: number;
+      resultado_simulacao: SimulationOutput;
+      resultado_referencia?: SimulationOutput;
+      comparacao_delta?: RainfallComparison['delta'];
+    },
+  ): Promise<SimulationInterpret> => {
+    const res = await apiFetch(`${getApiBaseUrl()}/api/v1/simulations/interpret`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        ...payload,
+        use_ai: true,
+      }),
+    });
+    if (!res.ok) throw new Error('Falha na interpretação da simulação');
+    return res.json();
+  },
+
+  getSlopeInterpretation: async (codigoIbge: string, precipitacaoMm = 80): Promise<SlopeInterpretation> => {
+    const params = new URLSearchParams({ precipitacao_mm: String(precipitacaoMm) });
+    const res = await apiFetch(
+      `${getApiBaseUrl()}/api/v1/simulations/slope-interpretation/${encodeURIComponent(codigoIbge)}?${params}`,
+    );
+    if (!res.ok) throw new Error('Falha na interpretação de encostas');
+    return res.json();
+  },
+
+  exportSimulationGeojson: async (
+    simulation: SimulationOutput,
+    codigoIbge?: string,
+    comparisonDelta?: RainfallComparison['delta'],
+  ): Promise<{ download_url: string; nome_arquivo: string }> => {
+    const res = await apiFetch(`${getApiBaseUrl()}/api/v1/simulations/export/geojson`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        codigo_ibge: codigoIbge,
+        simulation,
+        comparison_delta: comparisonDelta ?? null,
+      }),
+    });
+    if (!res.ok) throw new Error('Exportação GeoJSON falhou');
+    return res.json();
+  },
+
+  exportSimulationPdf: async (
+    simulation: SimulationOutput,
+    codigoIbge?: string,
+    options?: {
+      comparisonDelta?: RainfallComparison['delta'];
+      analysis?: SimulationAnalysis | SimulationInterpret;
+    },
+  ): Promise<{ download_url: string; nome_arquivo: string }> => {
+    const res = await apiFetch(`${getApiBaseUrl()}/api/v1/simulations/export/pdf`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        codigo_ibge: codigoIbge,
+        simulation,
+        comparison_delta: options?.comparisonDelta ?? null,
+        analysis: options?.analysis ?? null,
+      }),
+    });
+    if (!res.ok) throw new Error('Exportação PDF falhou');
     return res.json();
   },
 
@@ -1170,6 +1563,72 @@ export const api = {
       })
     });
     if (!res.ok) throw new Error('Chat communication failed');
+    return res.json();
+  },
+
+  chatContextualAssistantStream: async (
+    payload: ContextualChatPayload,
+    onToken: (fullText: string) => void,
+  ): Promise<string> => {
+    const res = await apiFetch(`${getApiBaseUrl()}/api/v1/assistant/chat-contextual`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
+      body: JSON.stringify({ ...payload, stream: true }),
+    });
+    if (!res.ok) {
+      const detail = await res.json().catch(() => ({}));
+      throw new Error(detail.detail || 'Falha no agente contextual');
+    }
+    if (!res.body) throw new Error('Streaming indisponível');
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let full = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const parts = buffer.split('\n\n');
+      buffer = parts.pop() || '';
+      for (const part of parts) {
+        const line = part.trim();
+        if (!line.startsWith('data:')) continue;
+        try {
+          const evt = JSON.parse(line.slice(5).trim()) as {
+            type?: string;
+            content?: string;
+            response?: string;
+          };
+          if (evt.type === 'token' && evt.content) {
+            full += evt.content;
+            onToken(full);
+          } else if (evt.type === 'done' && evt.response) {
+            full = evt.response;
+            onToken(full);
+          } else if (evt.type === 'error') {
+            throw new Error(evt.content || 'Erro no agente');
+          }
+        } catch (e) {
+          if (e instanceof Error && e.message !== 'Erro no agente') {
+            /* ignore parse noise */
+          } else {
+            throw e;
+          }
+        }
+      }
+    }
+    return full.trim();
+  },
+
+  chatContextualAssistant: async (payload: ContextualChatPayload): Promise<ChatResponse> => {
+    const res = await apiFetch(`${getApiBaseUrl()}/api/v1/assistant/chat-contextual`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...payload, stream: false }),
+    });
+    if (!res.ok) throw new Error('Falha no agente contextual');
     return res.json();
   },
 
@@ -1283,6 +1742,15 @@ export const api = {
   getExecutiveDiagnosticHistory: async (codigoIbge: string): Promise<{ items: ExecutiveDiagnosticHistoryItem[] }> => {
     const res = await apiFetch(`${getApiBaseUrl()}/api/v1/diagnostic/${encodeURIComponent(codigoIbge)}/history`);
     if (!res.ok) throw new Error('Falha ao carregar histórico de diagnósticos');
+    return res.json();
+  },
+
+  getPresentationData: async (codigoIbge: string): Promise<PresentationPayload> => {
+    const res = await apiFetch(`${getApiBaseUrl()}/api/v1/diagnostic/${encodeURIComponent(codigoIbge)}/presentation`);
+    if (!res.ok) {
+      const detail = await res.json().catch(() => ({}));
+      throw new Error(detail.detail || 'Apresentação indisponível — gere o diagnóstico executivo primeiro.');
+    }
     return res.json();
   },
 
@@ -1660,6 +2128,42 @@ export const api = {
   startExternalSourcesBatchJob: async (limit = 61): Promise<{ job_id: string; job: BackgroundJob }> => {
     const res = await apiFetch(`${getApiBaseUrl()}/api/v1/system/jobs/fontes-externas-batch?limit=${limit}`, { method: 'POST' });
     if (!res.ok) throw await httpError(res, 'Falha ao sincronizar fontes externas');
+    return res.json();
+  },
+
+  startDemBatchJob: async (limit = 61, force = false): Promise<{ job_id: string; job: BackgroundJob }> => {
+    const qs = new URLSearchParams({ limit: String(limit), force: String(force) });
+    const res = await apiFetch(`${getApiBaseUrl()}/api/v1/system/jobs/dem-batch?${qs}`, { method: 'POST' });
+    if (!res.ok) throw await httpError(res, 'Falha ao iniciar batch DEM');
+    return res.json();
+  },
+
+  startHomologationFullJob: async (
+    onboardingLimit = 61,
+    forceDem = false,
+  ): Promise<{ job_id: string; job: BackgroundJob }> => {
+    const qs = new URLSearchParams({
+      onboarding_limit: String(onboardingLimit),
+      force_dem: String(forceDem),
+    });
+    const res = await apiFetch(`${getApiBaseUrl()}/api/v1/system/jobs/homologation-full?${qs}`, { method: 'POST' });
+    if (!res.ok) throw await httpError(res, 'Falha ao iniciar pipeline MCID completo');
+    return res.json();
+  },
+
+  importLocalDem: async (
+    codigoIbge: string,
+    file: File,
+    reprocess = true,
+  ): Promise<Record<string, unknown>> => {
+    const form = new FormData();
+    form.append('file', file);
+    const qs = reprocess ? '' : '?reprocess=false';
+    const res = await apiFetch(
+      `${getApiBaseUrl()}/api/v1/terrain/${encodeURIComponent(codigoIbge)}/import-local-dem${qs}`,
+      { method: 'POST', body: form },
+    );
+    if (!res.ok) throw await httpError(res, 'Falha ao importar DEM local');
     return res.json();
   },
 

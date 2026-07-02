@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from app.db import get_db
 from app.models import Municipio
@@ -10,12 +11,14 @@ from app.schemas import (
     AIProviderTestResponse,
     ChatRequest,
     ChatResponse,
+    ContextualChatRequest,
     CasoSucessoOut,
     MunicipalAssistantContext,
     MunicipalDataSource,
     RagSource,
 )
 from app.services.municipal_assistant_context import build_municipal_assistant_context
+from app.services.contextual_agent_service import contextual_chat_stream, contextual_chat_sync
 from app.services.semantic_search import SuccessCaseSearchService
 from rag.chat import rag_assistant
 from rag.providers.registry import (
@@ -111,6 +114,48 @@ def assistant_chat(payload: ChatRequest, request: Request, db: Session = Depends
         rag_sources=rag_sources,
         municipal_sources=municipal_sources,
         suggested_questions=result.get("suggested_questions") or [],
+        response_time_ms=result.get("response_time_ms"),
+        ai_provider=result.get("ai_provider"),
+        ai_model=result.get("ai_model"),
+    )
+
+
+@router.post("/chat-contextual")
+def assistant_chat_contextual(payload: ContextualChatRequest, request: Request, db: Session = Depends(get_db)):
+    """Agente contextual com dados da página e function calling Mistral."""
+    muni = get_accessible_municipio(db, payload.municipio_codigo, request=request)
+    history = [{"role": h.role, "content": h.content} for h in payload.historico]
+    descricao = payload.descricao_pagina or f"Módulo {payload.pagina_atual}"
+
+    if payload.stream:
+        generator = contextual_chat_stream(
+            db,
+            muni,
+            message=payload.message,
+            pagina_atual=payload.pagina_atual,
+            descricao_pagina=descricao,
+            dados_pagina=payload.dados_pagina,
+            historico=history,
+            ai_provider=payload.ai_provider,
+            ai_model=payload.ai_model,
+            ai_api_key=payload.ai_api_key,
+        )
+        return StreamingResponse(generator, media_type="text/event-stream")
+
+    result = contextual_chat_sync(
+        db,
+        muni,
+        message=payload.message,
+        pagina_atual=payload.pagina_atual,
+        descricao_pagina=descricao,
+        dados_pagina=payload.dados_pagina,
+        historico=history,
+        ai_provider=payload.ai_provider,
+        ai_model=payload.ai_model,
+        ai_api_key=payload.ai_api_key,
+    )
+    return ChatResponse(
+        response=result.get("response") or "",
         response_time_ms=result.get("response_time_ms"),
         ai_provider=result.get("ai_provider"),
         ai_model=result.get("ai_model"),

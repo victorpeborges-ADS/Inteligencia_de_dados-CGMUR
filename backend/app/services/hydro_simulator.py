@@ -16,12 +16,20 @@ from app.services.dem_processor import (
     SLOPE_CRITICAL_DEG,
     _compute_slope_degrees,
     _flow_paths_geojson,
+    _load_local_dem_geotiff,
+    _meters_per_degree,
     _synthetic_dem,
     dem_dir,
+    find_local_dem,
     is_processed,
     load_meta,
     process_municipality_dem,
 )
+
+# SRTM GL1 — resolução horizontal ~30 m; RMSE vertical típico ±16 m (NASA/USGS)
+SRTM_HORIZONTAL_M = 30.0
+SRTM_VERTICAL_RMSE_M = 16.0
+HYDRO_MODEL_VERSION = "2.3"
 
 logger = logging.getLogger(__name__)
 
@@ -37,20 +45,95 @@ FLOOD_COLORS = {
     "critica": "#1e3a8a",
 }
 
+MAX_FLOOD_POLYGONS_PER_BAND = 28
+MIN_FLOOD_POLYGON_AREA_DEG2 = 1.5e-8
+D8_OFFSETS = (
+    (-1, 0),
+    (1, 0),
+    (0, -1),
+    (0, 1),
+    (-1, -1),
+    (-1, 1),
+    (1, -1),
+    (1, 1),
+)
+
+
+def _compute_d8_accumulation(elevation: np.ndarray, mask: np.ndarray) -> np.ndarray:
+    """Acúmulo de fluxo D8 — células a montante que drenam para cada pixel."""
+    rows, cols = elevation.shape
+    mean_elev = float(np.nanmean(elevation[mask])) if mask.any() else 0.0
+    elev = np.where(mask, np.nan_to_num(elevation, nan=mean_elev), np.inf)
+
+    acc = np.zeros((rows, cols), dtype=np.float64)
+    acc[mask] = 1.0
+
+    r_idx, c_idx = np.where(mask)
+    order = np.argsort(-elev[r_idx, c_idx])
+
+    for k in order:
+        r, c = int(r_idx[k]), int(c_idx[k])
+        if not mask[r, c]:
+            continue
+        cur = elev[r, c]
+        best: tuple[int, int] | None = None
+        best_drop = 0.0
+        for dr, dc in D8_OFFSETS:
+            nr, nc = r + dr, c + dc
+            if 0 <= nr < rows and 0 <= nc < cols and mask[nr, nc]:
+                drop = cur - elev[nr, nc]
+                if drop > best_drop:
+                    best_drop = drop
+                    best = (nr, nc)
+        if best is not None:
+            acc[best[0], best[1]] += acc[r, c]
+
+    return acc
+
+
+def _normalize_masked(values: np.ndarray, mask: np.ndarray, percentile: float = 98.0) -> np.ndarray:
+    if not mask.any():
+        return np.zeros_like(values)
+    vmax = float(np.percentile(values[mask], percentile))
+    if vmax <= 0:
+        return np.zeros_like(values)
+    return np.clip(values / vmax, 0.0, 1.0)
+
 
 def _load_elevation_grid(
     db: Session,
     codigo_ibge: str,
     muni: Municipio,
 ) -> tuple[np.ndarray, float, float, float, float, dict[str, Any]] | None:
-    tif = dem_dir(codigo_ibge) / "dem.tif"
     meta = load_meta(codigo_ibge)
+    tif = dem_dir(codigo_ibge) / "dem.tif"
+
+    clip_bounds: tuple[float, float, float, float] | None = None
+    try:
+        geo = json.loads(db.scalar(muni.geom.ST_AsGeoJSON()))
+        west, south, east, north = shape(geo).bounds
+        pad = max((east - west), (north - south)) * 0.05
+        clip_bounds = (west - pad, south - pad, east + pad, north + pad)
+    except Exception as exc:
+        logger.debug("Bounds municipal indisponíveis: %s", exc)
+
+    local_path = find_local_dem(codigo_ibge)
+    if local_path and clip_bounds:
+        loaded = _load_local_dem_geotiff(local_path, *clip_bounds)
+        if loaded is not None:
+            elev, res_x, res_y, west, south = loaded
+            rows, cols = elev.shape
+            meta = dict(meta or {})
+            meta.setdefault("dem_source", "LiDAR/DSM local")
+            meta["dem_resolution_m"] = _dem_resolution_m(res_x, res_y, south + rows * res_y / 2)
+            return elev, west, south, res_x, res_y, meta
 
     if not tif.exists():
         try:
             if not is_processed(codigo_ibge):
                 process_municipality_dem(db, codigo_ibge)
             meta = load_meta(codigo_ibge) or {}
+            tif = dem_dir(codigo_ibge) / "dem.tif"
         except Exception as exc:
             logger.warning("DEM indisponível para %s: %s", codigo_ibge, exc)
 
@@ -105,6 +188,98 @@ def _muni_raster_mask(
     )
 
 
+def _dem_resolution_m(res_x: float, res_y: float, lat_c: float) -> float:
+    lon_m, lat_m = _meters_per_degree(lat_c)
+    return float((abs(res_x) * lon_m + abs(res_y) * lat_m) / 2.0)
+
+
+def _lat_grid(rows: int, south: float, res_y: float) -> np.ndarray:
+    """Latitude por linha do raster (linha 0 = norte, padrão GeoTIFF)."""
+    north = south + rows * res_y
+    return north - (np.arange(rows) + 0.5) * res_y
+
+
+def _lon_grid(cols: int, west: float, res_x: float) -> np.ndarray:
+    return west + (np.arange(cols) + 0.5) * res_x
+
+
+def _smooth_dem(elev: np.ndarray, mask: np.ndarray, passes: int = 2) -> np.ndarray:
+    """Suaviza ruído do SRTM preservando o relevo geral."""
+    if not mask.any():
+        return elev
+    mean_elev = float(np.nanmean(elev[mask]))
+    work = np.where(mask, np.nan_to_num(elev, nan=mean_elev), mean_elev)
+    kernel = np.array([[1, 2, 1], [2, 4, 2], [1, 2, 1]], dtype=np.float64) / 16.0
+    for _ in range(passes):
+        padded = np.pad(work, 1, mode="edge")
+        smoothed = np.zeros_like(work)
+        for r in range(work.shape[0]):
+            for c in range(work.shape[1]):
+                smoothed[r, c] = float(np.sum(padded[r : r + 3, c : c + 3] * kernel))
+        work = smoothed
+    return np.where(mask, work, np.nan)
+
+
+def _adaptive_contour_interval(e_min: float, e_max: float, resolution_m: float) -> float:
+    """Intervalo de cota proporcional ao desnível e à resolução do raster."""
+    span = max(e_max - e_min, 0.0)
+    if span <= 12:
+        base = 2.0
+    elif span <= 30:
+        base = 5.0
+    elif span <= 70:
+        base = 10.0
+    else:
+        base = max(10.0, round(span / 14.0 / 5.0) * 5.0)
+    # Intervalo mínimo compatível com resolução horizontal (≈1/15 da resolução)
+    min_supported = max(2.0, resolution_m / 15.0)
+    return float(max(min_supported, base))
+
+
+def _simplify_line_coords(coords: list[list[float]], tolerance_deg: float) -> list[list[float]]:
+    if len(coords) <= 6:
+        return coords
+    try:
+        from shapely.geometry import LineString
+
+        line = LineString(coords)
+        simplified = line.simplify(max(tolerance_deg, 1e-7), preserve_topology=True)
+        if simplified.is_empty:
+            return coords
+        if simplified.geom_type == "MultiLineString":
+            longest = max(simplified.geoms, key=lambda g: g.length)
+            return [[round(x, 6), round(y, 6)] for x, y in longest.coords]
+        return [[round(x, 6), round(y, 6)] for x, y in simplified.coords]
+    except Exception:
+        return coords
+
+
+def _is_index_contour(level: float, interval: float) -> bool:
+    if interval <= 0:
+        return False
+    return int(round(level / interval)) % 5 == 0
+
+
+def _contour_feature(
+    level: float,
+    coords: list[list[float]],
+    interval_m: float,
+    resolution_m: float,
+) -> dict[str, Any]:
+    return {
+        "type": "Feature",
+        "properties": {
+            "layer_type": "contour",
+            "elevation_m": round(level, 1),
+            "nome": f"Cota {level:.0f} m",
+            "interval_m": round(interval_m, 1),
+            "dem_resolution_m": round(resolution_m, 1),
+            "index_contour": _is_index_contour(level, interval_m),
+        },
+        "geometry": {"type": "LineString", "coordinates": coords},
+    }
+
+
 def contours_geojson(
     elevation: np.ndarray,
     west: float,
@@ -112,17 +287,17 @@ def contours_geojson(
     res_x: float,
     res_y: float,
     muni_mask: np.ndarray | None = None,
-    interval_m: float = 5.0,
-    max_levels: int = 8,
-    max_features: int = 80,
+    interval_m: float | None = None,
+    max_levels: int = 14,
+    max_features: int = 140,
+    lat_c: float | None = None,
 ) -> dict[str, Any]:
-    """Gera isolinhas de cota a partir do raster de elevação."""
-    import matplotlib
+    """Gera isolinhas de cota a partir do raster de elevação (GeoTIFF north-up)."""
+    rows, cols = elevation.shape
+    lat_rows = _lat_grid(rows, south, res_y)
+    lons = _lon_grid(cols, west, res_x)
 
-    matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
-
-    elev = np.nan_to_num(elevation.astype(np.float64), nan=np.nanmean(elevation))
+    elev = elevation.astype(np.float64)
     if muni_mask is not None:
         elev = np.where(muni_mask, elev, np.nan)
 
@@ -130,53 +305,84 @@ def contours_geojson(
     if not valid.any():
         return {"type": "FeatureCollection", "features": []}
 
-    e_min = float(np.nanmin(elev))
-    e_max = float(np.nanmax(elev))
-    span = e_max - e_min
-    interval_m = max(interval_m, span / max_levels) if span > 0 else interval_m
+    elev_smooth = _smooth_dem(np.nan_to_num(elev, nan=float(np.nanmean(elev[valid]))), valid, passes=2)
+    elev_smooth = np.where(valid, elev_smooth, np.nan)
+
+    e_min = float(np.nanmin(elev_smooth))
+    e_max = float(np.nanmax(elev_smooth))
+    resolution_m = _dem_resolution_m(res_x, res_y, lat_c or float(lat_rows.mean()))
+    if interval_m is None:
+        interval_m = _adaptive_contour_interval(e_min, e_max, resolution_m)
 
     start = np.floor(e_min / interval_m) * interval_m
-    levels = np.arange(start, e_max + interval_m, interval_m)
+    levels = np.arange(start, e_max + interval_m * 0.5, interval_m)
     if len(levels) > max_levels:
         step = max(1, int(np.ceil(len(levels) / max_levels)))
         levels = levels[::step]
 
-    rows, cols = elev.shape
-    yy = south + np.arange(rows) * res_y
-    xx = west + np.arange(cols) * res_x
-
     features: list[dict[str, Any]] = []
-    fig = plt.figure(figsize=(2, 2), dpi=80)
-    ax = fig.add_subplot(111)
+    simplify_tol = max(abs(res_x), abs(res_y)) * 0.75
+
     try:
-        cs = ax.contour(xx, yy, elev, levels=levels)
-        for level_idx, segs in enumerate(cs.allsegs):
+        import contourpy as cpy
+
+        gen = cpy.contour_generator(lons, lat_rows, np.nan_to_num(elev_smooth, nan=e_min - interval_m))
+        for level in levels:
             if len(features) >= max_features:
                 break
-            level = float(cs.levels[level_idx])
-            for seg in segs:
-                if len(seg) < 10:
+            for seg in gen.lines(float(level)):
+                if seg is None or len(seg) < 8:
                     continue
-                step = max(1, len(seg) // 32)
-                coords = [[round(float(x), 6), round(float(y), 6)] for x, y in seg[::step]]
+                coords = _simplify_line_coords(
+                    [[round(float(x), 6), round(float(y), 6)] for x, y in seg],
+                    simplify_tol,
+                )
                 if len(coords) < 4:
                     continue
-                features.append({
-                    "type": "Feature",
-                    "properties": {
-                        "layer_type": "contour",
-                        "elevation_m": round(level, 1),
-                        "nome": f"Cota {level:.0f} m",
-                        "interval_m": round(interval_m, 1),
-                    },
-                    "geometry": {"type": "LineString", "coordinates": coords},
-                })
+                features.append(_contour_feature(level, coords, float(interval_m), resolution_m))
                 if len(features) >= max_features:
                     break
-    finally:
-        plt.close(fig)
+    except Exception as exc:
+        logger.warning("contourpy indisponível (%s) — fallback matplotlib", exc)
+        import matplotlib
 
-    return {"type": "FeatureCollection", "features": features}
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+
+        xx, yy = np.meshgrid(lons, lat_rows)
+        fig = plt.figure(figsize=(2, 2), dpi=80)
+        ax = fig.add_subplot(111)
+        try:
+            cs = ax.contour(xx, yy, np.nan_to_num(elev_smooth, nan=e_min - interval_m), levels=levels)
+            for level_idx, segs in enumerate(cs.allsegs):
+                if len(features) >= max_features:
+                    break
+                level = float(cs.levels[level_idx])
+                for seg in segs:
+                    if len(seg) < 8:
+                        continue
+                    coords = _simplify_line_coords(
+                        [[round(float(x), 6), round(float(y), 6)] for x, y in seg],
+                        simplify_tol,
+                    )
+                    if len(coords) < 4:
+                        continue
+                    features.append(_contour_feature(level, coords, float(interval_m), resolution_m))
+                    if len(features) >= max_features:
+                        break
+        finally:
+            plt.close(fig)
+
+    return {
+        "type": "FeatureCollection",
+        "features": features,
+        "properties": {
+            "interval_m": round(float(interval_m), 1),
+            "dem_resolution_m": round(resolution_m, 1),
+            "vertical_accuracy_m": SRTM_VERTICAL_RMSE_M,
+            "contour_count": len(features),
+        },
+    }
 
 
 def _vectorize_band(
@@ -250,6 +456,87 @@ def _iri_raster_for_municipio(
         fill=0.5,
         dtype=np.float64,
     )
+
+
+def _impermeability_raster_for_municipio(
+    db: Session,
+    muni_id: int,
+    muni_mask: np.ndarray,
+    west: float,
+    south: float,
+    res_x: float,
+    res_y: float,
+) -> np.ndarray:
+    """Rasteriza coeficiente de impermeabilização (0–1) a partir do MapBiomas."""
+    import rasterio.features
+    from rasterio.transform import from_bounds
+
+    rows, cols = muni_mask.shape
+    north = south + rows * res_y
+    east = west + cols * res_x
+    transform = from_bounds(west, south, east, north, cols, rows)
+
+    class_to_imperm = {
+        "Área Urbana": 0.88,
+        "Área construída/outros": 0.82,
+        "Corpo d'água": 0.05,
+        "Vegetação / Floresta": 0.22,
+    }
+    shapes: list[tuple[Any, float]] = []
+    coverages = (
+        db.query(CoberturaVegetalMapBiomas.classe_uso, CoberturaVegetalMapBiomas.geom)
+        .filter(CoberturaVegetalMapBiomas.municipio_id == muni_id)
+        .all()
+    )
+    for row in coverages:
+        geom = shape(json.loads(db.scalar(row.geom.ST_AsGeoJSON())))
+        coef = class_to_imperm.get(row.classe_uso, 0.55)
+        shapes.append((mapping(geom), coef))
+
+    if not shapes:
+        return np.full(muni_mask.shape, 0.65, dtype=np.float64)
+
+    return rasterio.features.rasterize(
+        shapes,
+        out_shape=muni_mask.shape,
+        transform=transform,
+        fill=0.60,
+        dtype=np.float64,
+    )
+
+
+def _river_depth_boost(
+    depth: np.ndarray,
+    muni_mask: np.ndarray,
+    river_shapes: list,
+    west: float,
+    south: float,
+    res_x: float,
+    res_y: float,
+    precip_mm: float,
+    flood_rise_m: float,
+) -> np.ndarray:
+    """Reforça profundidade ao longo de corpos d'água (buffer proporcional à chuva)."""
+    if not river_shapes:
+        return depth
+
+    import rasterio.features
+    from rasterio.transform import from_bounds
+
+    rows, cols = depth.shape
+    north = south + rows * res_y
+    east = west + cols * res_x
+    transform = from_bounds(west, south, east, north, cols, rows)
+    buffer_deg = min(0.004, (precip_mm / 100.0) * 0.0008)
+    combined = unary_union(river_shapes).buffer(buffer_deg)
+    river_mask = rasterio.features.geometry_mask(
+        [mapping(combined)],
+        (rows, cols),
+        transform,
+        invert=True,
+    )
+    boost = flood_rise_m * (1.2 + min(precip_mm / 200.0, 0.8))
+    return np.where(river_mask & muni_mask, np.maximum(depth, boost), depth)
 
 
 def landslide_features_from_slope(
@@ -384,68 +671,96 @@ def flood_bands_geojson(
     res_x: float,
     res_y: float,
     iri_raster: np.ndarray | None = None,
+    impermeability_raster: np.ndarray | None = None,
+    slope_deg: np.ndarray | None = None,
+    accumulation: np.ndarray | None = None,
 ) -> tuple[dict[str, Any], np.ndarray]:
-    """Estima manchas de alagamento por profundidade com base em cota simulada + baixadas."""
+    """Estima manchas de alagamento por profundidade com DEM, acúmulo D8 e impermeabilização."""
     muni_mask = _muni_raster_mask(elevation, muni_geom, west, south, res_x, res_y)
-    elev = np.nan_to_num(elevation, nan=np.nanmean(elevation))
+    elev = np.nan_to_num(elevation, nan=np.nanmean(elevation[muni_mask]) if muni_mask.any() else 0.0)
 
     muni_elev = elev[muni_mask]
     if muni_elev.size == 0:
         return {"type": "FeatureCollection", "features": []}, muni_mask
 
-    # Cota base: percentil 20 (vales) + incremento pluviométrico (mm → m, coef. escoamento)
-    runoff_coeff = 0.35 + min(precip_mm / 500.0, 0.25)
-    flood_rise_m = (precip_mm / 1000.0) * runoff_coeff * 8.0
-    base_level = float(np.percentile(muni_elev, 20))
-    water_level = base_level + flood_rise_m
+    if accumulation is None:
+        accumulation = _compute_d8_accumulation(elev, muni_mask)
+    if impermeability_raster is None:
+        impermeability_raster = np.full(elev.shape, 0.60, dtype=np.float64)
+    if slope_deg is None:
+        lat_c = (muni_geom.bounds[1] + muni_geom.bounds[3]) / 2.0
+        slope_deg = _compute_slope_degrees(elev, lat_c, res_x, res_y)
 
-    depth = np.maximum(0.0, water_level - elev)
+    runoff_coeff = 0.22 + 0.58 * np.clip(impermeability_raster, 0.0, 1.0)
+    effective_rain_m = (precip_mm / 1000.0) * runoff_coeff
+    flood_rise_m = effective_rain_m * (5.5 + min(precip_mm / 120.0, 1.5))
+
+    muni_elev = elev[muni_mask]
+    base_level = float(np.percentile(muni_elev, 10))
+    mean_rise = float(np.mean(flood_rise_m[muni_mask]))
+    acc_norm = _normalize_masked(accumulation, muni_mask)
+
+    # Superfície d'água modulada por acúmulo D8 (vales e linhas de drenagem)
+    water_surface = base_level + mean_rise * (1.0 + 0.75 * acc_norm)
+    depth = np.maximum(0.0, water_surface - elev)
+    depth = depth * (0.65 + 0.55 * effective_rain_m / max(float(np.mean(effective_rain_m[muni_mask])), 1e-6))
     depth = np.where(muni_mask, depth, 0.0)
 
-    # Modular profundidade pelo IRI local (bairros com maior risco acumulam mais água)
+    depth *= 1.0 + 1.6 * np.log1p(acc_norm * 6.0) / np.log(7.0)
+    depth = np.where(muni_mask, depth, 0.0)
+
+    slope_drain = np.clip(1.0 - slope_deg / 48.0, 0.22, 1.0)
+    depth *= slope_drain
+    depth = np.where(muni_mask, depth, 0.0)
+
+    # Índice de umidade topográfica (TWI) — reforça baixadas e planícies
+    twi = np.log1p(accumulation) - np.log1p(np.tan(np.radians(np.clip(slope_deg, 0.1, 60.0))))
+    twi_norm = _normalize_masked(twi, muni_mask, percentile=96.0)
+    depth *= 1.0 + 0.65 * twi_norm
+    depth = np.where(muni_mask, depth, 0.0)
+
     if iri_raster is not None:
-        depth = depth * (0.75 + 0.55 * np.clip(iri_raster, 0.0, 1.0))
+        depth = depth * (0.72 + 0.52 * np.clip(iri_raster, 0.0, 1.0))
         depth = np.where(muni_mask, depth, 0.0)
 
-    # Reforço hidrográfico: expandir profundidade ao longo dos corpos d'água
-    if river_shapes:
-        from shapely.geometry import Point
-
-        rows, cols = elevation.shape
-        river_boost = np.zeros_like(depth)
-        buffer_deg = (precip_mm / 100.0) * 0.0006
-        combined = unary_union(river_shapes)
-        river_zone = combined.buffer(buffer_deg)
-        for r in range(0, rows, max(1, rows // 64)):
-            for c in range(0, cols, max(1, cols // 64)):
-                lon = west + c * res_x
-                lat = south + r * res_y
-                if river_zone.contains(Point(lon, lat)):
-                    river_boost[r, c] = flood_rise_m * 1.4
-        depth = np.maximum(depth, river_boost * muni_mask)
+    depth = _river_depth_boost(
+        depth, muni_mask, river_shapes, west, south, res_x, res_y, precip_mm, float(np.mean(flood_rise_m[muni_mask]))
+    )
+    depth = np.where(depth >= 0.04, depth, 0.0)
+    depth = np.where(muni_mask, depth, 0.0)
 
     features: list[dict[str, Any]] = []
     for band_id, lo, hi, label in DEPTH_BANDS:
         shapes = _vectorize_band(depth, lo, hi, muni_mask, west, south, res_x, res_y)
         if not shapes:
             continue
-        merged = unary_union(shapes).intersection(muni_geom)
-        if merged.is_empty:
-            continue
-        features.append({
-            "type": "Feature",
-            "geometry": mapping(merged),
-            "properties": {
-                "layer_type": "flood_band",
-                "depth_band": band_id,
-                "name": label,
-                "precipitation_mm": precip_mm,
-                "water_level_m": round(water_level, 2),
-                "depth_min_m": lo,
-                "depth_max_m": hi if hi < 900 else None,
-                "fill_color": FLOOD_COLORS[band_id],
-            },
-        })
+
+        ranked = sorted(
+            (s.intersection(muni_geom) for s in shapes if s.area >= MIN_FLOOD_POLYGON_AREA_DEG2),
+            key=lambda g: g.area,
+            reverse=True,
+        )
+        for idx, poly in enumerate(ranked[:MAX_FLOOD_POLYGONS_PER_BAND]):
+            if poly.is_empty:
+                continue
+            geom = poly
+            if geom.geom_type == "MultiPolygon" and len(geom.geoms) == 1:
+                geom = geom.geoms[0]
+            features.append({
+                "type": "Feature",
+                "geometry": mapping(geom),
+                "properties": {
+                    "layer_type": "flood_band",
+                    "depth_band": band_id,
+                    "patch_id": idx + 1,
+                    "name": f"{label} — mancha {idx + 1}",
+                    "precipitation_mm": precip_mm,
+                    "water_level_m": round(float(np.mean(water_surface[muni_mask])), 2),
+                    "depth_min_m": lo,
+                    "depth_max_m": hi if hi < 900 else None,
+                    "fill_color": FLOOD_COLORS[band_id],
+                },
+            })
 
     return {"type": "FeatureCollection", "features": features}, depth
 
@@ -494,20 +809,42 @@ def enrich_rainfall_simulation(
 
     muni_mask = _muni_raster_mask(elev, muni_geom, west, south, res_x, res_y)
     iri_raster = _iri_raster_for_municipio(db, muni.id, muni_mask, west, south, res_x, res_y)
+    impermeability = _impermeability_raster_for_municipio(
+        db, muni.id, muni_mask, west, south, res_x, res_y,
+    )
+    lat_c = (muni_geom.bounds[1] + muni_geom.bounds[3]) / 2.0
+    slope_deg = _compute_slope_degrees(elev, lat_c, res_x, res_y)
+    accumulation = _compute_d8_accumulation(elev, muni_mask)
     stats = meta.get("stats", {})
-    interval = max(10.0, (stats.get("altitude_max_m", 50) - stats.get("altitude_min_m", 0)) / 8)
+    resolution_m = _dem_resolution_m(res_x, res_y, lat_c)
+    e_min = stats.get("altitude_min_m")
+    e_max = stats.get("altitude_max_m")
+    if e_min is None or e_max is None:
+        muni_elev = elev[muni_mask]
+        e_min = float(np.min(muni_elev)) if muni_elev.size else 0.0
+        e_max = float(np.max(muni_elev)) if muni_elev.size else 50.0
+    interval = _adaptive_contour_interval(float(e_min), float(e_max), resolution_m)
 
     flood_fc, depth_raster = flood_bands_geojson(
         elev, muni_geom, precip_mm, river_shapes, west, south, res_x, res_y,
         iri_raster=iri_raster,
+        impermeability_raster=impermeability,
+        slope_deg=slope_deg,
+        accumulation=accumulation,
     )
     contours = contours_geojson(
-        elev, west, south, res_x, res_y, muni_mask=muni_mask, interval_m=interval,
+        elev, west, south, res_x, res_y,
+        muni_mask=muni_mask,
+        interval_m=interval,
+        lat_c=lat_c,
     )
+    contour_props = contours.get("properties") or {}
 
     flow = load_flow_paths(muni.codigo_ibge)
     if not flow or not flow.get("features"):
-        flow = _flow_paths_geojson(elev, west, south, res_x, res_y, max_paths=16)
+        flow = _flow_paths_geojson(
+            elev, west, south, res_x, res_y, max_paths=20, muni_mask=muni_mask,
+        )
 
     for feat in flow.get("features", []):
         feat.setdefault("properties", {})["layer_type"] = "flow_path"
@@ -523,10 +860,10 @@ def enrich_rainfall_simulation(
         all_flood_features.append(ls)
 
     lat_c = (muni_geom.bounds[1] + muni_geom.bounds[3]) / 2.0
-    slope_deg = _compute_slope_degrees(elev, lat_c, res_x, res_y)
     crit_slope_pct = float(
         np.sum(muni_mask & (slope_deg >= SLOPE_CRITICAL_DEG)) / max(np.sum(muni_mask), 1) * 100.0
     )
+    flood_features = [f for f in flood_fc.get("features", []) if f.get("properties", {}).get("layer_type") == "flood_band"]
 
     return {
         "flood_bands": {"type": "FeatureCollection", "features": all_flood_features},
@@ -536,11 +873,19 @@ def enrich_rainfall_simulation(
         "simulation_meta": {
             "dem_available": True,
             "dem_source": meta.get("dem_source", "SRTM 30m"),
-            "method": "dem_pluvial_proxy_iri",
+            "method": "dem_pluvial_d8_twi",
+            "model_version": HYDRO_MODEL_VERSION,
             "iri_applied": True,
+            "impermeability_applied": True,
+            "flow_accumulation_applied": True,
+            "twi_applied": True,
+            "flood_patches": len(flood_features),
             "landslide_method": "dem_slope",
             "landslide_zones": len(landslide_features),
-            "contour_interval_m": interval,
+            "contour_interval_m": contour_props.get("interval_m", interval),
+            "contour_count": contour_props.get("contour_count", len(contours.get("features", []))),
+            "dem_resolution_m": contour_props.get("dem_resolution_m", round(resolution_m, 1)),
+            "vertical_accuracy_m": SRTM_VERTICAL_RMSE_M,
             "altitude_min_m": stats.get("altitude_min_m"),
             "altitude_max_m": stats.get("altitude_max_m"),
             "altitude_media_m": stats.get("altitude_media_m"),
@@ -548,5 +893,12 @@ def enrich_rainfall_simulation(
             "pct_declividade_critica": round(crit_slope_pct, 2),
             "precipitation_mm": precip_mm,
             "max_depth_m": round(float(np.max(depth_raster[muni_mask])), 2) if muni_mask.any() else 0,
+            "mean_impermeability": round(float(np.mean(impermeability[muni_mask])), 3) if muni_mask.any() else None,
+            "max_flow_accumulation": int(np.max(accumulation[muni_mask])) if muni_mask.any() else 0,
+            "precision_note": (
+                f"DEM {meta.get('dem_source', 'SRTM 30m')} (~{round(resolution_m)} m); "
+                f"isolinhas a cada {contour_props.get('interval_m', interval)} m; "
+                f"incerteza vertical ±{SRTM_VERTICAL_RMSE_M:.0f} m."
+            ),
         },
     }

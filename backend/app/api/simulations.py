@@ -1,21 +1,39 @@
 from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import FileResponse
+from pathlib import Path
 from sqlalchemy.orm import Session
 from app.db import get_db
 from app.schemas import (
     ImpermeabilizacaoSimRequest,
     PerdaVegetacaoSimRequest,
     ChuvaExtremaSimRequest,
+    ChuvaExtremaCompareRequest,
+    RainfallComparisonResponse,
     DrenagemSimRequest,
     SimulationOutput,
     SimulationAnalyzeRequest,
     SimulationAnalysisResponse,
+    SimulationInterpretRequest,
+    SimulationInterpretResponse,
+    SlopeInterpretationResponse,
+    SimulationExportRequest,
+    SimulationExportResponse,
     MitigationPlanRequest,
     MitigationPlanResponse,
+    GeoJSONFeatureCollection,
 )
 from app.services.analytical_engine import AnalyticalEngine
 from app.services.mitigation_planner import MitigationPlanner
 from app.services.simulation_analyzer import analyze_simulation
+from app.services.simulation_interpreter import interpret_simulation, interpret_slope_zones
+from app.services.simulation_export import (
+    export_download_meta,
+    generate_simulation_pdf,
+    save_simulation_geojson,
+    simulation_export_dir,
+)
 from app.security.municipio_access import get_accessible_municipio
+from app.services.audit_service import log_audit, resolve_actor
 
 router = APIRouter()
 
@@ -44,6 +62,35 @@ def simulate_extreme_rainfall(payload: ChuvaExtremaSimRequest, request: Request,
     )
 
 
+@router.post("/extreme-rainfall/compare", response_model=RainfallComparisonResponse)
+def compare_extreme_rainfall(payload: ChuvaExtremaCompareRequest, request: Request, db: Session = Depends(get_db)):
+    muni = get_accessible_municipio(db, payload.codigo_ibge, request=request)
+    baseline = AnalyticalEngine.run_chuva_extrema_simulation(db, muni.id, payload.baseline_mm)
+    scenario = AnalyticalEngine.run_chuva_extrema_simulation(db, muni.id, payload.scenario_mm)
+    base_bairros = set(baseline.get("affected_bairros") or [])
+    scen_bairros = set(scenario.get("affected_bairros") or [])
+    base_meta = baseline.get("simulation_meta") or {}
+    scen_meta = scenario.get("simulation_meta") or {}
+    return {
+        "baseline": baseline,
+        "scenario": scenario,
+        "delta": {
+            "baseline_mm": payload.baseline_mm,
+            "scenario_mm": payload.scenario_mm,
+            "affected_area_km2": round(
+                float(scenario.get("affected_area_km2", 0)) - float(baseline.get("affected_area_km2", 0)), 2
+            ),
+            "affected_population": int(scenario.get("affected_population", 0)) - int(baseline.get("affected_population", 0)),
+            "max_depth_m": round(
+                float(scen_meta.get("max_depth_m") or 0) - float(base_meta.get("max_depth_m") or 0), 2
+            ),
+            "flood_patches": int(scen_meta.get("flood_patches") or 0) - int(base_meta.get("flood_patches") or 0),
+            "bairros_novos": sorted(scen_bairros - base_bairros),
+            "bairros_removidos": sorted(base_bairros - scen_bairros),
+        },
+    }
+
+
 @router.post("/drainage-deficit", response_model=SimulationOutput)
 def simulate_drainage_deficit(payload: DrenagemSimRequest, request: Request, db: Session = Depends(get_db)):
     muni = get_accessible_municipio(db, payload.codigo_ibge, request=request)
@@ -66,6 +113,39 @@ def analyze_simulation_result(payload: SimulationAnalyzeRequest, request: Reques
     )
 
 
+@router.post("/interpret", response_model=SimulationInterpretResponse)
+def interpret_simulation_result(payload: SimulationInterpretRequest, request: Request, db: Session = Depends(get_db)):
+    muni = get_accessible_municipio(db, payload.municipio_codigo, request=request)
+    tipo = payload.tipo_simulacao.strip().lower()
+    if tipo not in {"chuva", "asfalto", "vegetacao", "drenagem"}:
+        raise HTTPException(status_code=400, detail="tipo_simulacao inválido.")
+    return interpret_simulation(
+        db,
+        muni,
+        tipo_simulacao=tipo,  # type: ignore[arg-type]
+        parametro_atual=payload.parametro_atual,
+        parametro_referencia=payload.parametro_referencia,
+        resultado_simulacao=payload.resultado_simulacao,
+        resultado_referencia=payload.resultado_referencia,
+        comparacao_delta=payload.comparacao_delta,
+        ai_provider=payload.ai_provider,
+        ai_model=payload.ai_model,
+        ai_api_key=payload.ai_api_key,
+        use_ai=payload.use_ai,
+    )
+
+
+@router.get("/slope-interpretation/{codigo_ibge}", response_model=SlopeInterpretationResponse)
+def slope_interpretation(
+    codigo_ibge: str,
+    request: Request,
+    precipitacao_mm: float = 80.0,
+    db: Session = Depends(get_db),
+):
+    muni = get_accessible_municipio(db, codigo_ibge, request=request)
+    return interpret_slope_zones(db, muni, precip_mm=precipitacao_mm)
+
+
 @router.post("/extreme-rainfall/mitigation-plan", response_model=MitigationPlanResponse)
 def generate_rainfall_mitigation_plan(payload: MitigationPlanRequest, request: Request, db: Session = Depends(get_db)):
     muni = get_accessible_municipio(db, payload.codigo_ibge, request=request)
@@ -85,3 +165,63 @@ def generate_mitigation_plan(payload: MitigationPlanRequest, request: Request, d
         return MitigationPlanner.build_plan(db, muni, payload.scenario_type, value)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/export/geojson", response_model=SimulationExportResponse)
+def export_simulation_geojson(payload: SimulationExportRequest, request: Request, db: Session = Depends(get_db)):
+    muni = get_accessible_municipio(db, payload.codigo_ibge, request=request)
+    path = save_simulation_geojson(
+        payload.simulation,
+        muni,
+        comparison=payload.comparison_delta,
+    )
+    actor = resolve_actor(request)
+    log_audit(
+        db,
+        user=actor,
+        action="simulation.export_geojson",
+        resource_type="simulation",
+        resource_id=muni.codigo_ibge,
+        codigo_ibge=muni.codigo_ibge,
+        metadata={"filename": path.name, "scenario": payload.simulation.get("scenario_type")},
+        request=request,
+    )
+    meta = export_download_meta(path)
+    return SimulationExportResponse(format="geojson", **meta)
+
+
+@router.post("/export/pdf", response_model=SimulationExportResponse)
+def export_simulation_pdf(payload: SimulationExportRequest, request: Request, db: Session = Depends(get_db)):
+    muni = get_accessible_municipio(db, payload.codigo_ibge, request=request)
+    path = generate_simulation_pdf(
+        payload.simulation,
+        muni,
+        comparison=payload.comparison_delta,
+        analysis=payload.analysis,
+    )
+    actor = resolve_actor(request)
+    log_audit(
+        db,
+        user=actor,
+        action="simulation.export_pdf",
+        resource_type="simulation",
+        resource_id=muni.codigo_ibge,
+        codigo_ibge=muni.codigo_ibge,
+        metadata={"filename": path.name, "scenario": payload.simulation.get("scenario_type")},
+        request=request,
+    )
+    meta = export_download_meta(path)
+    return SimulationExportResponse(format="pdf", **meta)
+
+
+@router.get("/download/{filename}")
+def download_simulation_export(filename: str, request: Request, db: Session = Depends(get_db)):
+    safe = Path(filename).name
+    if safe != filename or ".." in filename:
+        raise HTTPException(status_code=400, detail="Nome de arquivo inválido.")
+    path = simulation_export_dir() / safe
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="Arquivo não encontrado.")
+    media = "application/pdf" if path.suffix.lower() == ".pdf" else "application/geo+json"
+    return FileResponse(path, media_type=media, filename=safe)
+

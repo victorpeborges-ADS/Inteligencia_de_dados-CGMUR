@@ -26,6 +26,10 @@ MIGRATIONS = (
     "009_municipios_saneamento.sql",
     "010_audit_log_sei.sql",
     "011_mapbiomas_stats.sql",
+    "012_fontes_externas.sql",
+    "013_rag_mistral_embeddings.sql",
+    "014_municipio_data_honesty.sql",
+    "015_diagnostic_narrativa_ia.sql",
 )
 
 

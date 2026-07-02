@@ -131,63 +131,35 @@ def _grid_cells(poly, count: int = 6):
 
 def _minimal_layers(db: Session, muni: Municipio, risk: str = "inundacao") -> None:
     poly = shape(json.loads(db.scalar(muni.geom.ST_AsGeoJSON())))
-    bairro_names = ["Centro", "Zona Norte", "Zona Sul", "Zona Leste", "Zona Oeste", "Periferia"]
-    cells = _grid_cells(poly, len(bairro_names))
 
     for model in (Bairro, SetorCensitario, HistoricoDesastreS2ID, AlertaCemaden, CoberturaVegetalMapBiomas, InfraestruturaUrbana):
         db.query(model).filter(model.municipio_id == muni.id).delete(synchronize_session=False)
     db.commit()
 
-    for idx, (name, cell) in enumerate(zip(bairro_names, cells)):
-        bairro = Bairro(
-            municipio_id=muni.id,
-            nome=name,
-            codigo_bairro=f"{muni.codigo_ibge}-{idx+1:02d}",
-            geom=from_shape(cell, srid=4326),
-        )
-        db.add(bairro)
-        db.flush()
-        for sidx, sector_cell in enumerate(_grid_cells(cell, 4)):
-            db.add(SetorCensitario(
-                municipio_id=muni.id,
-                codigo_setor=f"{muni.codigo_ibge}{idx+1:02d}{sidx+1}",
-                populacao=max(1000, muni.populacao // max(len(bairro_names) * 4, 1)),
-                renda_media=1800 + (idx * 120),
-                geom=from_shape(sector_cell, srid=4326),
-            ))
+    from app.data_connectors.territorial_mesh_collector import sync_territorial_mesh
 
-    disaster_type = "Deslizamento" if risk == "encosta" else "Inundação"
-    centroid = poly.centroid
-    db.add(HistoricoDesastreS2ID(
-        municipio_id=muni.id,
-        tipo_desastre=disaster_type,
-        data_ocorrencia=datetime.date(2022, 3, 15),
-        populacao_afetada=max(500, muni.populacao // 200),
-        danos_materiais=250000.00,
-        geom=from_shape(Point(centroid.x, centroid.y), srid=4326),
-    ))
+    sync_territorial_mesh(db, muni, force=True)
+
+    from app.data_connectors.s2id_collector import collect_s2id_municipality
+
+    collect_s2id_municipality(db, muni.codigo_ibge, force=True, risk=risk)
+    cells = _grid_cells(poly, 6)
     db.add(AlertaCemaden(
         municipio_id=muni.id,
         nivel_alerta="MEDIO",
         descricao=f"Monitoramento climático — {muni.nome}",
         geom=from_shape(cells[0], srid=4326),
     ))
-    urban = poly.intersection(poly.buffer(-0.002)) if poly.area > 0 else poly
-    if urban.is_empty:
-        urban = poly
-    db.add(CoberturaVegetalMapBiomas(
-        municipio_id=muni.id, ano=2023, classe_uso="Área Urbana", geom=from_shape(urban, srid=4326),
-    ))
-    forest = poly.difference(urban)
-    if not forest.is_empty:
-        db.add(CoberturaVegetalMapBiomas(
-            municipio_id=muni.id, ano=2023, classe_uso="Vegetação / Floresta", geom=from_shape(forest, srid=4326),
-        ))
-    db.add(InfraestruturaUrbana(
-        municipio_id=muni.id, tipo="hospital", nome=f"Hospital Municipal {muni.nome}", subgrupo="atendimento_medico",
-        geom=from_shape(centroid, srid=4326),
-    ))
     db.commit()
+
+
+def _apply_socioeconomic_calibration(db: Session, muni: Municipio) -> None:
+    try:
+        from app.services.socioeconomic_engine import enrich_municipal_socioeconomics
+
+        enrich_municipal_socioeconomics(db, muni)
+    except Exception as exc:
+        logger.warning("Calibração socioeconômica falhou para %s: %s", muni.codigo_ibge, exc)
 
 
 def compute_initial_score(db: Session, muni: Municipio) -> float:
@@ -231,6 +203,7 @@ def load_municipio_from_seed(db: Session, seed: MunicipioSeed, skip_integrations
 
     risk = "encosta" if seed.uf in {"RJ", "ES"} and seed.criterio == "s2id_emergencia" else "inundacao"
     _minimal_layers(db, muni, risk=risk)
+    _apply_socioeconomic_calibration(db, muni)
 
     if not skip_integrations:
         try:

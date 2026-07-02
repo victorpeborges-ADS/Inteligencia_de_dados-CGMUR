@@ -4,14 +4,57 @@ from __future__ import annotations
 
 import pytest
 
-from app.data_connectors.mapbiomas_collector import build_landcover_series, _normalize_class
+from app.data_connectors.mapbiomas_collector import (
+    _build_landcover_partition,
+    _classify_xlsx_row,
+    _geometry_is_horizontal_band,
+    _parse_area,
+    build_landcover_series,
+    _normalize_class,
+)
+from shapely.geometry import Polygon
+
+
+def test_build_landcover_partition_disjoint():
+    poly = Polygon([
+        (-34.95, -8.12), (-34.88, -8.12), (-34.88, -8.05), (-34.95, -8.05), (-34.95, -8.12),
+    ])
+    parts = _build_landcover_partition(poly, {
+        "Área Urbana": 18000.0,
+        "Vegetação / Floresta": 3000.0,
+        "Corpo d'água": 800.0,
+    })
+    assert len(parts) >= 2
+    names = list(parts.keys())
+    for i, a in enumerate(names):
+        for b in names[i + 1:]:
+            inter = parts[a].intersection(parts[b])
+            assert inter.is_empty or inter.area < poly.area * 0.01
+
+
+def test_recife_landcover_not_horizontal_bands():
+    poly = Polygon([
+        (-34.95, -8.12), (-34.88, -8.12), (-34.88, -8.05), (-34.95, -8.05), (-34.95, -8.12),
+    ])
+    parts = _build_landcover_partition(poly, {
+        "Área Urbana": 21840.0,
+        "Vegetação / Floresta": 1750.0,
+        "Corpo d'água": 900.0,
+    }, codigo_ibge="2611606")
+    assert len(parts) == 3
+    for geom in parts.values():
+        assert not _geometry_is_horizontal_band(geom, poly)
 
 
 def test_build_landcover_series_recife_reference():
     series = build_landcover_series("2611606", area_km2=218.0, populacao=1_600_000)
     urban_2024 = next(r for r in series if r["ano"] == 2024 and r["classe_uso"] == "Área Urbana")
+    veg_2024 = next(r for r in series if r["ano"] == 2024 and r["classe_uso"] == "Vegetação / Floresta")
     assert urban_2024["area_ha"] == pytest.approx(21840.0, rel=0.01)
     assert urban_2024["data_quality"] == "referencia_mapbiomas"
+    assert veg_2024["area_ha"] == pytest.approx(1750.0, rel=0.01)
+    assert veg_2024["data_quality"] == "referencia_mapbiomas"
+    assert veg_2024["area_ha"] / (218.0 * 100) * 100 == pytest.approx(8.0, rel=0.05)
 
 
 def test_build_landcover_series_other_city_derivado():
@@ -26,3 +69,16 @@ def test_normalize_class_labels():
     assert _normalize_class("Area Urbanizada") == "Área Urbana"
     assert _normalize_class("Floresta") == "Vegetação / Floresta"
     assert _normalize_class("Corpos d agua") == "Corpo d'água"
+
+
+def test_classify_xlsx_row_mapbiomas_col10():
+    assert _classify_xlsx_row("4. Non vegetated area", "4.2. Urban Area") == "Área Urbana"
+    assert _classify_xlsx_row("1. Forest", "1.1. Forest Formation") == "Vegetação / Floresta"
+    assert _classify_xlsx_row("5. Water and Marine Environment", "5.1. River, Lake and Ocean") == "Corpo d'água"
+    assert _classify_xlsx_row("3. Farming", "3.1. Pasture") is None
+
+
+def test_parse_area_float_from_xlsx():
+    assert _parse_area(2858.596846) == pytest.approx(2858.596846)
+    assert _parse_area("1.234,56") == pytest.approx(1234.56)
+    assert _parse_area("2858.59") == pytest.approx(2858.59)

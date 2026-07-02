@@ -27,6 +27,9 @@ export function getLayerStyle(layerName: string, feature: any): LayerStyle {
     if (cls === "Corpo d'água") {
       return { fillColor: '#0ea5e9', fillOpacity: 0.55, color: '#0369a1', weight: 1 };
     }
+    if (cls === 'Área Urbana') {
+      return { fillColor: '#71717a', fillOpacity: 0.5, color: '#52525b', weight: 1 };
+    }
     return { fillColor: '#71717a', fillOpacity: 0.35, color: '#3f3f46', weight: 1 };
   }
 
@@ -43,7 +46,14 @@ export function getLayerStyle(layerName: string, feature: any): LayerStyle {
 
   if (layerName === 'vulnerabilidade') {
     const value = Number(props.indice_vulnerabilidade || 0);
-    return { fillColor: scoreColor(value, ['#7f1d1d', '#f97316', '#fde047']), fillOpacity: 0.45, color: '#fecaca', weight: 1.3 };
+    const cls = props.classe_vulnerabilidade;
+    if (cls === 'ALTA' || value >= 0.66) {
+      return { fillColor: '#7f1d1d', fillOpacity: 0.52, color: '#fecaca', weight: 1.3 };
+    }
+    if (cls === 'MEDIA' || value >= 0.33) {
+      return { fillColor: '#f97316', fillOpacity: 0.45, color: '#fed7aa', weight: 1.1 };
+    }
+    return { fillColor: '#fde047', fillOpacity: 0.38, color: '#fef08a', weight: 1.0 };
   }
 
   if (layerName === 'inundacao') {
@@ -62,13 +72,25 @@ export function getLayerStyle(layerName: string, feature: any): LayerStyle {
   }
 
   if (layerName === 'prioridade_planejamento') {
-    const value = Number(props.prioridade_planejamento || 0);
-    return { fillColor: scoreColor(value, ['#be123c', '#9333ea', '#c4b5fd']), fillOpacity: 0.42, color: '#f5d0fe', weight: 1.2 };
+    const cls = props.classe_prioridade;
+    if (cls === 'ALTA') {
+      return { fillColor: '#be123c', fillOpacity: 0.58, color: '#881337', weight: 1.4 };
+    }
+    if (cls === 'MEDIA') {
+      return { fillColor: '#9333ea', fillOpacity: 0.48, color: '#6b21a8', weight: 1.2 };
+    }
+    return { fillColor: '#c4b5fd', fillOpacity: 0.42, color: '#8b5cf6', weight: 1.0 };
   }
 
   if (layerName === 'saneamento_drenagem') {
-    const value = Number(props.risco_drenagem || 0);
-    return { fillColor: scoreColor(value, ['#0e7490', '#06b6d4', '#a5f3fc']), fillOpacity: 0.4, color: '#cffafe', weight: 1.2 };
+    const cls = props.classe_drenagem;
+    if (cls === 'CRITICA') {
+      return { fillColor: '#0e7490', fillOpacity: 0.58, color: '#155e75', weight: 1.4 };
+    }
+    if (cls === 'ATENCAO') {
+      return { fillColor: '#06b6d4', fillOpacity: 0.48, color: '#0891b2', weight: 1.2 };
+    }
+    return { fillColor: '#e0f2fe', fillOpacity: 0.42, color: '#7dd3fc', weight: 1.0 };
   }
 
   if (layerName === 'lacunas_dados') {
@@ -76,34 +98,71 @@ export function getLayerStyle(layerName: string, feature: any): LayerStyle {
     return { fillColor: scoreColor(value, ['#16a34a', '#f59e0b', '#e11d48']), fillOpacity: 0.5, color: '#fef3c7', weight: 2 };
   }
 
+  if (layerName === 'bairros') {
+    const nome = String(props.nome || props.codigo_bairro || '');
+    let hash = 0;
+    for (let i = 0; i < nome.length; i += 1) {
+      hash = (hash * 31 + nome.charCodeAt(i)) >>> 0;
+    }
+    const hue = hash % 360;
+    const fill = `hsl(${hue}, 62%, 42%)`;
+    const stroke = `hsl(${hue}, 72%, 68%)`;
+    return { fillColor: fill, fillOpacity: 0.28, color: stroke, weight: 1.2 };
+  }
+
   if (layerName === 'desastres') {
     return { fillColor: '#ef4444', fillOpacity: 0.7, color: '#fecaca', weight: 2, radius: 7 };
   }
 
   if (layerName === 'infraestrutura') {
+    const tipo = props.tipo;
+    if (tipo === 'hospital') {
+      return { fillColor: '#ef4444', fillOpacity: 0.85, color: '#fecaca', weight: 2, radius: 8 };
+    }
+    if (tipo === 'escola') {
+      return { fillColor: '#3b82f6', fillOpacity: 0.85, color: '#bfdbfe', weight: 2, radius: 6 };
+    }
+    if (tipo === 'via') {
+      return { fillColor: 'transparent', fillOpacity: 0, color: '#c4b5fd', weight: 3, opacity: 0.9 };
+    }
     return { fillColor: '#a78bfa', fillOpacity: 0.55, color: '#ddd6fe', weight: 1.5, radius: 5 };
   }
 
   if (layerName === 'saude_risco') {
     const cls = props.cobertura_classe;
-    const color = cls === 'ADEQUADA' ? '#16a34a' : cls === 'ATENCAO' ? '#eab308' : '#ef4444';
-    return { fillColor: color, fillOpacity: 0.85, color: '#fafafa', weight: 2, radius: 7 };
+    const palette: Record<string, string> = {
+      ADEQUADA: '#16a34a',
+      ATENCAO: '#eab308',
+      CRITICA: '#ef4444',
+    };
+    const color = palette[cls] || '#64748b';
+    if (props.feature_kind === 'setor_pressao') {
+      return { fillColor: color, fillOpacity: 0.24, color, weight: 0.7 };
+    }
+    return { fillColor: 'transparent', fillOpacity: 0, color: 'transparent', weight: 0 };
   }
 
   if (layerName === 'seguranca_publica') {
-    const value = Number(props.intensidade_seguranca || 0);
-    return { fillColor: scoreColor(value, ['#fde68a', '#f97316', '#7f1d1d']), fillOpacity: 0.48, color: '#fecaca', weight: 1.2 };
+    const cls = props.classe_intensidade;
+    if (cls === 'ALTA') {
+      return { fillColor: '#7f1d1d', fillOpacity: 0.58, color: '#991b1b', weight: 1.3 };
+    }
+    if (cls === 'MEDIA') {
+      return { fillColor: '#f97316', fillOpacity: 0.48, color: '#ea580c', weight: 1.1 };
+    }
+    return { fillColor: '#fde68a', fillOpacity: 0.42, color: '#fbbf24', weight: 1.0 };
   }
 
   if (layerName === 'vulnerabilidade_multidimensional') {
-    const value = Number(props.indice_vm || 0);
     const flagged = props.vulnerabilidade_multidimensional;
-    return {
-      fillColor: flagged ? '#581c87' : scoreColor(value, ['#e9d5ff', '#a855f7', '#581c87']),
-      fillOpacity: flagged ? 0.62 : 0.45,
-      color: flagged ? '#f5d0fe' : '#ddd6fe',
-      weight: flagged ? 2.5 : 1.2,
-    };
+    const cls = props.classe_vm;
+    if (flagged || cls === 'CRITICA') {
+      return { fillColor: '#581c87', fillOpacity: 0.58, color: '#f5d0fe', weight: 2 };
+    }
+    if (cls === 'ALTA') {
+      return { fillColor: '#a855f7', fillOpacity: 0.48, color: '#ddd6fe', weight: 1.2 };
+    }
+    return { fillColor: '#e9d5ff', fillOpacity: 0.38, color: '#c4b5fd', weight: 1.0 };
   }
 
   return {
