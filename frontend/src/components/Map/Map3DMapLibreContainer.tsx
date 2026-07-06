@@ -1,8 +1,10 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
+import { Droplets, Thermometer, MapPin } from 'lucide-react';
 import { api } from '@/utils/api';
-import { syncThematicLayers } from './maplibreLayers';
+import { syncThematicLayers, setInspectMarker, clearInspectMarker, simulationLayerIds } from './maplibreLayers';
+import { buildInspectResult, formatElevation, type FloodInspectResult } from '@/utils/floodInspect';
 
 type BasemapId = 'satellite' | 'dark';
 type MapLibreMap = any;
@@ -21,6 +23,8 @@ interface Props {
   simFlowPaths?: any;
   selectedMunicipio: string;
   mapFocus: [number, number];
+  simulating?: boolean;
+  focusMode?: boolean;
 }
 
 declare global {
@@ -173,6 +177,8 @@ export default function Map3DMapLibreContainer({
   simFlowPaths,
   selectedMunicipio,
   mapFocus,
+  simulating = false,
+  focusMode = false,
 }: Props) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const mapDivRef = useRef<HTMLDivElement>(null);
@@ -191,6 +197,13 @@ export default function Map3DMapLibreContainer({
   const [layerData, setLayerData] = useState<Record<string, any>>({});
   const [layersLoading, setLayersLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [inspect, setInspect] = useState<FloodInspectResult | null>(null);
+  const hasSimulation = Boolean(simGeoJSON?.features?.length);
+  const isHeatSim =
+    simGeoJSON?.features?.some(
+      (f: { properties?: { temp_increase_celsius?: number } }) =>
+        f.properties?.temp_increase_celsius != null,
+    ) ?? false;
 
   activeLayersRef.current = activeLayers;
   simGeoJSONRef.current = simGeoJSON;
@@ -309,6 +322,66 @@ export default function Map3DMapLibreContainer({
 
   useEffect(() => {
     const map = mapRef.current;
+    if (!map || !mapReady || !hasSimulation) return;
+
+    const bounds = boundsFromGeoJSON(simGeoJSON);
+    if (bounds) {
+      map.fitBounds(bounds, {
+        padding: { top: 80, bottom: 120, left: 64, right: 320 },
+        maxZoom: 15,
+        pitch: 68,
+        bearing: -28,
+        duration: 1600,
+      });
+    } else {
+      map.easeTo({ pitch: 68, duration: 1200 });
+    }
+  }, [simGeoJSON, mapReady, hasSimulation]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !mapReady) return;
+
+    const onClick = (e: any) => {
+      const layers = simulationLayerIds().filter((id) => map.getLayer(id));
+      const hits = layers.length
+        ? map.queryRenderedFeatures(e.point, { layers })
+        : [];
+      const props = hits[0]?.properties ?? null;
+
+      let ground: number | null = null;
+      try {
+        if (typeof map.queryTerrainElevation === 'function') {
+          ground = map.queryTerrainElevation(e.lngLat);
+        }
+      } catch {
+        ground = null;
+      }
+
+      const result = buildInspectResult(e.lngLat.lat, e.lngLat.lng, props, ground);
+      setInspect(result);
+      setInspectMarker(map, e.lngLat.lng, e.lngLat.lat);
+    };
+
+    map.on('click', onClick);
+    map.getCanvas().style.cursor = hasSimulation ? 'crosshair' : '';
+
+    return () => {
+      map.off('click', onClick);
+      map.getCanvas().style.cursor = '';
+    };
+  }, [mapReady, hasSimulation]);
+
+  useEffect(() => {
+    if (!hasSimulation) {
+      setInspect(null);
+      const map = mapRef.current;
+      if (map && mapReady) clearInspectMarker(map);
+    }
+  }, [hasSimulation, mapReady]);
+
+  useEffect(() => {
+    const map = mapRef.current;
     if (!map || !mapReady) return;
     const boundsLayer = layerData.bairros || layerData.municipio;
     const bounds = boundsLayer ? boundsFromGeoJSON(boundsLayer) : null;
@@ -386,7 +459,8 @@ export default function Map3DMapLibreContainer({
         </div>
       )}
 
-      <div className="absolute right-4 top-24 z-10 w-48 rounded-xl border border-teal-500/30 bg-zinc-950/95 p-3 shadow-2xl backdrop-blur-md">
+      {!focusMode && (
+      <div className="absolute right-4 top-24 z-10 w-48 rounded-xl border border-teal-500/30 bg-zinc-950/95 p-3 shadow-2xl backdrop-blur-md transition-opacity duration-300">
         <p className="mb-2 text-[10px] font-extrabold uppercase text-teal-300">Basemap</p>
         <div className="flex gap-1">
           <button
@@ -440,9 +514,78 @@ export default function Map3DMapLibreContainer({
         />
 
         <p className="text-[9px] leading-snug text-zinc-600">
-          {activeLayers.length} camada(s) ativa(s) · mesmas manchas do mapa 2D
+          {activeLayers.length} camada(s) · clique na mancha para ver profundidade
         </p>
       </div>
+      )}
+
+      {hasSimulation && !focusMode && (
+        <div className="absolute bottom-6 left-6 z-10 max-w-sm rounded-xl border border-sky-500/40 bg-zinc-950/95 p-4 shadow-2xl backdrop-blur-md transition-opacity duration-300">
+          <p className="flex items-center gap-1.5 text-[10px] font-extrabold uppercase tracking-wider text-sky-300">
+            {isHeatSim ? (
+              <>
+                <Thermometer size={12} /> Simulação 3D — ilha de calor
+              </>
+            ) : (
+              <>
+                <Droplets size={12} /> Simulação 3D — volume de água
+              </>
+            )}
+          </p>
+          <p className="mt-1 text-[10px] leading-relaxed text-zinc-400">
+            {isHeatSim
+              ? 'Colunas vermelhas = aumento térmico estimado. Clique na mancha para ver o delta no ponto.'
+              : 'Barras azuis = profundidade estimada (DEM SRTM 30 m). Clique em uma mancha para ver cota e altura da água no ponto.'}
+          </p>
+          {simulating && (
+            <p className="mt-2 animate-pulse text-[10px] text-sky-200">Calculando manchas…</p>
+          )}
+          {inspect && (
+            <div className="mt-3 space-y-2 border-t border-zinc-800 pt-3 text-[11px]">
+              <p className="flex items-center gap-1 text-zinc-500">
+                <MapPin size={11} />
+                {inspect.lat.toFixed(5)}, {inspect.lng.toFixed(5)}
+              </p>
+              {inspect.scenario === 'flood' && inspect.inFlood && (
+                <>
+                  <p className="text-lg font-black text-sky-300">
+                    +{inspect.depthCm} cm <span className="text-sm font-semibold text-zinc-400">de água</span>
+                  </p>
+                  <p className="text-zinc-300">{inspect.bandLabel}</p>
+                  <p className="text-zinc-500">
+                    Solo ~{formatElevation(inspect.groundElevationM)} · Cota da água ~{formatElevation(inspect.waterSurfaceM)}
+                  </p>
+                  {inspect.precipitationMm != null && (
+                    <p className="text-zinc-500">Cenário: {inspect.precipitationMm} mm de chuva</p>
+                  )}
+                </>
+              )}
+              {inspect.scenario === 'heat' && inspect.tempIncreaseC != null && (
+                <p className="flex items-center gap-1 text-rose-300">
+                  <Thermometer size={14} />
+                  +{inspect.tempIncreaseC}°C estimado (ilha de calor)
+                </p>
+              )}
+              {inspect.scenario === 'none' && (
+                <p className="text-zinc-400">
+                  Sem alagamento neste ponto
+                  {inspect.groundElevationM != null && ` · solo ~${formatElevation(inspect.groundElevationM)}`}
+                </p>
+              )}
+            </div>
+          )}
+          {!inspect && !simulating && (
+            <p className="mt-2 text-[10px] italic text-zinc-500">Clique no mapa para inspecionar um ponto</p>
+          )}
+          {!isHeatSim && (
+            <div className="mt-3 flex flex-wrap gap-2 border-t border-zinc-800 pt-3 text-[9px]">
+              <span className="rounded border border-sky-700/40 bg-sky-900/40 px-2 py-0.5 text-sky-200">Superficial &lt;35 cm</span>
+              <span className="rounded border border-indigo-700/40 bg-indigo-900/40 px-2 py-0.5 text-indigo-200">Moderada 35–80 cm</span>
+              <span className="rounded border border-violet-700/40 bg-violet-900/40 px-2 py-0.5 text-violet-200">Crítica &gt;80 cm</span>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

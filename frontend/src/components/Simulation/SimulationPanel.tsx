@@ -63,6 +63,7 @@ export default function SimulationPanel({
   const [lidarUploading, setLidarUploading] = useState(false);
   const [lidarMessage, setLidarMessage] = useState<string | null>(null);
   const [simError, setSimError] = useState<string | null>(null);
+  const [simProgress, setSimProgress] = useState<{ progress: number; stage_label?: string } | null>(null);
 
   useEffect(() => {
     if (analysisLoading) {
@@ -146,6 +147,7 @@ export default function SimulationPanel({
     setLoading(true);
     onSimulatingChange?.(true);
     setSimError(null);
+    setSimProgress(null);
     setMitigationPlan(null);
     setSimInterpret(null);
     setSlopeInterpret(null);
@@ -154,6 +156,10 @@ export default function SimulationPanel({
     try {
       let data: SimulationOutput;
       let comparison: RainfallComparison | null = null;
+      const onJobProgress = (p: { progress: number; stage_label?: string }) => {
+        setSimProgress({ progress: p.progress, stage_label: p.stage_label });
+      };
+
       if (activeTab === 'waterproofing') {
         data = await api.simulateWaterproofing(waterproofingPct, codigoIbge);
       } else if (activeTab === 'veg_loss') {
@@ -161,11 +167,16 @@ export default function SimulationPanel({
       } else if (activeTab === 'drainage') {
         data = await api.simulateDrainageDeficit(drainageDeficitPct, codigoIbge);
       } else if (compareRainfall) {
-        comparison = await api.compareRainfallScenarios(rainfallMm, baselineRainfallMm, codigoIbge);
+        comparison = await api.compareRainfallScenariosAsync(
+          rainfallMm,
+          baselineRainfallMm,
+          codigoIbge,
+          onJobProgress,
+        );
         setRainfallComparison(comparison);
         data = comparison.scenario;
       } else {
-        data = await api.simulateExtremeRainfall(rainfallMm, codigoIbge);
+        data = await api.simulateExtremeRainfallAsync(rainfallMm, codigoIbge, onJobProgress);
       }
       setResult(data);
       onSimulate(data);
@@ -175,6 +186,7 @@ export default function SimulationPanel({
       setSimError(err instanceof Error ? err.message : 'Falha na simulação pluvial.');
     } finally {
       setLoading(false);
+      setSimProgress(null);
       onSimulatingChange?.(false);
     }
   };
@@ -601,7 +613,21 @@ export default function SimulationPanel({
         )}
 
         {activeTab !== 'predictive' && loading && activeTab === 'rainfall' && (
-          <div className="mt-4 rounded-lg border border-sky-500/30 bg-sky-950/20 p-3">
+          <div className="mt-4 rounded-lg border border-sky-500/30 bg-sky-950/20 p-3 space-y-2">
+            {simProgress && (
+              <>
+                <div className="flex items-center justify-between text-[10px] text-sky-200">
+                  <span>{simProgress.stage_label || 'Processando…'}</span>
+                  <span>{simProgress.progress}%</span>
+                </div>
+                <div className="h-1.5 w-full overflow-hidden rounded-full bg-zinc-800">
+                  <div
+                    className="h-full bg-sky-500 transition-all duration-500"
+                    style={{ width: `${Math.max(simProgress.progress, 4)}%` }}
+                  />
+                </div>
+              </>
+            )}
             <RotatingLoader messages={SIMULATION_MESSAGES(rainfallMm)} className="text-sky-200" />
           </div>
         )}
@@ -663,6 +689,9 @@ export default function SimulationPanel({
                   DEM: {result.simulation_meta.dem_source} · Δh max {result.simulation_meta.max_depth_m} m
                   {result.simulation_meta.flood_patches != null && (
                     <> · {result.simulation_meta.flood_patches} manchas</>
+                  )}
+                  {result.from_cache && (
+                    <span className="ml-1 text-sky-300">· cache</span>
                   )}
                 </p>
               )}

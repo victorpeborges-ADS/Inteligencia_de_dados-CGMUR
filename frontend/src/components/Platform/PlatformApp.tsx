@@ -30,12 +30,13 @@ import {
   type ActiveTab,
   type LayerQuality,
 } from '@/config/platformTabs';
-import { useAppStore } from '@/stores/useAppStore';
+import { useAppStore, FOCUS_MODE_STORAGE_KEY } from '@/stores/useAppStore';
 import AgenteSinidu from '@/components/AgenteSinidu';
 import { useAgenteProativo } from '@/hooks/useAgenteContexto';
 import WorkshopCenter from '@/components/Workshop/WorkshopCenter';
 import MunicipioLoadProgress from '@/components/Platform/MunicipioLoadProgress';
 import OnboardingBanner from '@/components/Onboarding/OnboardingBanner';
+import LayerPanel from '@/components/Map/LayerPanel';
 
 const MapContainer = dynamic(
   () => import('@/components/Map/MapContainer'),
@@ -47,7 +48,7 @@ const Map3DMapLibreContainer = dynamic(
   { ssr: false }
 );
 
-import { LayoutDashboard, Sliders, MessageSquare, BookOpen, Layers, MapPin, Eye, Box, Shield, Radio, Building2, ClipboardList, Server, Database } from 'lucide-react';
+import { LayoutDashboard, Sliders, MessageSquare, BookOpen, MapPin, Box, Shield, Radio, Building2, ClipboardList, Server, Database, Focus } from 'lucide-react';
 
 type PlatformAppProps = {
   initialTab?: ActiveTab;
@@ -82,8 +83,48 @@ export default function PlatformApp({ initialTab }: PlatformAppProps) {
   const setMunicipioEnsureError = useAppStore((s) => s.setMunicipioEnsureError);
   const layerOptions = useAppStore((s) => s.layerOptions);
   const setLayerOptions = useAppStore((s) => s.setLayerOptions);
+  const focusMode = useAppStore((s) => s.focusMode);
+  const setFocusMode = useAppStore((s) => s.setFocusMode);
+  const toggleFocusMode = useAppStore((s) => s.toggleFocusMode);
 
   useAgenteProativo();
+
+  useEffect(() => {
+    try {
+      if (localStorage.getItem(FOCUS_MODE_STORAGE_KEY) === 'true') {
+        setFocusMode(true);
+      }
+    } catch {
+      /* localStorage indisponível */
+    }
+  }, [setFocusMode]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(FOCUS_MODE_STORAGE_KEY, String(focusMode));
+    } catch {
+      /* localStorage indisponível */
+    }
+  }, [focusMode]);
+
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== 'f' && e.key !== 'F') return;
+      const target = e.target;
+      if (
+        target instanceof HTMLInputElement
+        || target instanceof HTMLTextAreaElement
+        || target instanceof HTMLSelectElement
+        || (target instanceof HTMLElement && target.isContentEditable)
+      ) {
+        return;
+      }
+      e.preventDefault();
+      toggleFocusMode();
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [toggleFocusMode]);
 
   const [simGeoJSON, setSimGeoJSON] = useState<any>(null);
   const [simContours, setSimContours] = useState<any>(null);
@@ -254,8 +295,23 @@ export default function PlatformApp({ initialTab }: PlatformAppProps) {
     setSimContours(payload?.contours ?? null);
     setSimFlowPaths(payload?.flow_paths ?? null);
 
-    if (geojson?.features?.length > 0) {
-        setMapFocus(getGeoJsonCenter(geojson) || mapFocus);
+    const isFlood =
+      geojson?.features?.some(
+        (f: { properties?: { layer_type?: string; depth_band?: string } }) =>
+          f.properties?.layer_type === 'flood_band' || f.properties?.depth_band,
+      ) ?? false;
+    const isHeat =
+      geojson?.features?.some(
+        (f: { properties?: { temp_increase_celsius?: number } }) =>
+          f.properties?.temp_increase_celsius != null,
+      ) ?? false;
+
+    if ((isFlood || isHeat) && geojson?.features?.length > 0) {
+      setMapMode('3d');
+      setMapFocus(getGeoJsonCenter(geojson) || mapFocus);
+      setZoom(14);
+    } else if (geojson?.features?.length > 0) {
+      setMapFocus(getGeoJsonCenter(geojson) || mapFocus);
       setZoom(13);
     }
   };
@@ -369,29 +425,55 @@ export default function PlatformApp({ initialTab }: PlatformAppProps) {
     ] : []),
   ];
 
-  const layerGroups = Array.from(new Set(layerOptions.map((opt) => opt.group)));
-
   return (
     <main className="min-h-screen bg-background text-zinc-100 flex flex-col font-sans select-none">
       {/* Premium Header */}
-      <header className="h-22 min-h-[88px] shrink-0 border-b border-border bg-card/65 backdrop-blur-md px-6 flex items-center justify-between z-50">
+      <header
+        className={`shrink-0 border-b border-border bg-card/65 backdrop-blur-md px-6 flex items-center justify-between z-50 transition-all duration-300 ${
+          focusMode ? 'min-h-[56px] py-2' : 'h-22 min-h-[88px]'
+        }`}
+      >
         <div className="flex items-center gap-4">
           <img
             src="/logo-sinidu-clima.png"
             alt="Logo Sinidu+Clima"
-            className="h-[72px] w-[72px] rounded-2xl border border-zinc-800 bg-black object-cover shadow-lg shadow-indigo-600/20"
+            className={`rounded-2xl border border-zinc-800 bg-black object-cover shadow-lg shadow-indigo-600/20 transition-all duration-300 ${
+              focusMode ? 'h-10 w-10' : 'h-[72px] w-[72px]'
+            }`}
           />
-          <div>
-            <h1 className="font-extrabold text-2xl tracking-tight bg-gradient-to-r from-zinc-100 to-zinc-400 bg-clip-text text-transparent">
+          <div className={focusMode ? 'hidden sm:block' : undefined}>
+            <h1
+              className={`font-extrabold tracking-tight bg-gradient-to-r from-zinc-100 to-zinc-400 bg-clip-text text-transparent transition-all duration-300 ${
+                focusMode ? 'text-lg' : 'text-2xl'
+              }`}
+            >
               Sinidu+Clima <span className="text-indigo-400 font-medium">INTERNO</span>
             </h1>
-            <span className="text-[11px] text-zinc-500 uppercase tracking-[0.22em] font-semibold block">Plataforma de Inteligência Territorial</span>
+            {!focusMode && (
+              <span className="text-[11px] text-zinc-500 uppercase tracking-[0.22em] font-semibold block">
+                Plataforma de Inteligência Territorial
+              </span>
+            )}
           </div>
         </div>
         
         {/* Pilot Info Badge */}
         <div className="flex items-center gap-3">
-          <AuthBar />
+          <button
+            type="button"
+            onClick={toggleFocusMode}
+            title="Modo Focus — tecla F"
+            className={`flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider transition-all duration-300 ${
+              focusMode
+                ? 'border-teal-400/50 bg-teal-500/20 text-teal-200'
+                : 'border-zinc-700 bg-zinc-950/80 text-zinc-400 hover:border-indigo-500/40 hover:text-indigo-200'
+            }`}
+          >
+            <Focus size={12} />
+            {focusMode ? 'Focus ativo' : 'Modo Focus'}
+            {!focusMode && <span className="hidden md:inline text-zinc-600 font-normal normal-case">(F)</span>}
+          </button>
+          {!focusMode && <AuthBar />}
           <select
             value={selectedMunicipio}
             onChange={(e) => handleMunicipioChange(e.target.value)}
@@ -454,7 +536,12 @@ export default function PlatformApp({ initialTab }: PlatformAppProps) {
       <div className="flex-1 flex overflow-hidden">
         
         {/* Left Sidepanel (Glassmorphism, 40% width) */}
-        <section className="w-[450px] border-r border-border bg-card/15 backdrop-blur-md flex flex-col overflow-hidden shrink-0 z-40">
+        <section
+          className={`border-r border-border bg-card/10 backdrop-blur-sm flex flex-col overflow-hidden shrink-0 z-40 transition-all duration-300 ease-in-out ${
+            focusMode ? 'w-0 border-r-0 opacity-0 pointer-events-none' : 'w-[450px] opacity-100'
+          }`}
+          aria-hidden={focusMode}
+        >
           
           {/* Tab Navigation */}
           <div className="flex flex-wrap border-b border-border bg-zinc-950/60 p-2 gap-1 shrink-0">
@@ -578,7 +665,7 @@ export default function PlatformApp({ initialTab }: PlatformAppProps) {
         </section>
 
         {/* Right Mapping View (60% width) */}
-        <section className="flex-1 relative bg-zinc-950 overflow-hidden">
+        <section className="relative flex-1 overflow-hidden bg-zinc-950 ring-1 ring-inset ring-zinc-900/80">
           <WorkshopCenter
             selectedMunicipio={selectedMunicipio}
             municipioNome={selectedMunicipioInfo?.nome}
@@ -597,96 +684,17 @@ export default function PlatformApp({ initialTab }: PlatformAppProps) {
             <div className="pointer-events-none absolute inset-0 z-[500] animate-pulse bg-sky-500/5" aria-hidden />
           )}
           
-          {/* Layer Selector Overlay Widget */}
-          <div className="absolute top-4 left-4 z-[999] bg-card/85 backdrop-blur-md border border-border p-3 rounded-xl shadow-2xl flex flex-col gap-2 w-64">
-            <div className="flex items-center justify-between border-b border-zinc-800 pb-1.5 mb-1.5">
-              <span className="text-[10px] uppercase font-bold text-zinc-400 tracking-wider flex items-center gap-1.5">
-                <Layers size={12} className="text-indigo-400" /> Camadas Espaciais
-              </span>
-              <span className="text-[9px] text-zinc-500 italic">{activeLayers.length} ativa(s)</span>
-            </div>
+          {!focusMode && (
+            <LayerPanel
+              activeLayers={activeLayers}
+              setActiveLayers={setActiveLayers}
+              toggleLayer={toggleLayer}
+              layerOptions={layerOptions}
+              malhaIndisponivel={malhaIndisponivel}
+            />
+          )}
 
-            <div className="grid grid-cols-2 gap-1.5">
-              <button
-                onClick={() => setActiveLayers(['bairros', 'vulnerabilidade', 'inundacao'])}
-                className="rounded-lg border border-indigo-500/30 bg-indigo-500/10 px-2 py-1 text-[10px] font-bold text-indigo-300 hover:bg-indigo-500/20"
-              >
-                Cruzar riscos
-              </button>
-              <button
-                onClick={() => setActiveLayers([])}
-                className="rounded-lg border border-zinc-700 bg-zinc-950/70 px-2 py-1 text-[10px] font-bold text-zinc-400 hover:text-zinc-100"
-              >
-                Limpar
-              </button>
-            </div>
-            
-            <div className="flex max-h-[62vh] flex-col gap-3 overflow-y-auto pr-1">
-              {malhaIndisponivel && (
-                <div className="rounded-lg border border-amber-500/40 bg-amber-950/30 px-2.5 py-2 text-[10px] leading-relaxed text-amber-100">
-                  Malha de bairros não disponível para este município.
-                  Camadas dependentes (socioeconômico, vulnerabilidade por bairro) estão desativadas.
-                </div>
-              )}
-              {layerGroups.map((group) => (
-                <div key={group} className="flex flex-col gap-1">
-                  <span className="px-1 text-[9px] font-extrabold uppercase tracking-wider text-zinc-500">{group}</span>
-                  {layerOptions.filter((opt) => opt.group === group).map((opt) => {
-                    const isActive = activeLayers.includes(opt.id);
-                    const isDisabled = opt.disponivel === false;
-                    return (
-                      <button
-                        key={opt.id}
-                        onClick={() => !isDisabled && toggleLayer(opt.id)}
-                        disabled={isDisabled}
-                        title={opt.tooltipEstimado || (isDisabled ? 'Camada indisponível — malha territorial ausente' : undefined)}
-                        className={`w-full text-left py-1.5 px-2.5 rounded-lg text-xs transition-all flex items-center justify-between border ${
-                          isDisabled
-                            ? 'cursor-not-allowed border-zinc-800 bg-zinc-950/40 text-zinc-600 opacity-60'
-                            : isActive
-                            ? 'bg-zinc-900 border-indigo-500/40 text-indigo-300 font-bold'
-                            : 'border-transparent text-zinc-400 hover:text-zinc-200 hover:bg-zinc-900/40'
-                        }`}
-                      >
-                        <span className="flex min-w-0 flex-1 flex-col gap-1 pr-2">
-                          <span className="truncate">{opt.label}</span>
-                          <span className={`w-fit rounded-md border px-1.5 py-0.5 text-[8px] font-bold uppercase tracking-wide ${
-                            isActive
-                              ? 'border-indigo-400/40 bg-indigo-500/15 text-indigo-200'
-                              : 'border-zinc-700 bg-zinc-950/70 text-zinc-500'
-                          }`}>
-                            Origem: {opt.source}
-                          </span>
-                          <span className={`w-fit rounded-md border px-1.5 py-0.5 text-[8px] font-bold uppercase tracking-wide ${
-                            opt.quality === 'Oficial'
-                              ? 'border-emerald-400/40 bg-emerald-500/10 text-emerald-300'
-                              : opt.quality === 'Referencia'
-                                ? 'border-cyan-400/40 bg-cyan-500/10 text-cyan-300'
-                              : opt.quality === 'Estimado'
-                                ? 'border-amber-400/40 bg-amber-500/10 text-amber-300'
-                                : opt.quality === 'Indisponível'
-                                  ? 'border-rose-400/40 bg-rose-500/10 text-rose-300'
-                                : 'border-sky-400/40 bg-sky-500/10 text-sky-300'
-                          }`}>
-                            {opt.quality === 'Oficial' && opt.id === 'bairros'
-                              ? 'OFICIAL — IBGE Censo 2022'
-                              : opt.quality}
-                          </span>
-                        </span>
-                        <span className={`h-4 w-4 rounded border flex items-center justify-center ${
-                          isActive ? 'border-indigo-400 bg-indigo-500/20 text-indigo-200' : 'border-zinc-700'
-                        }`}>
-                          {isActive && <Eye size={11} />}
-                        </span>
-                      </button>
-                    );
-                  })}
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {socioRanking && activeLayers.includes('socioeconomico') && (
+          {socioRanking && activeLayers.includes('socioeconomico') && !focusMode && (
             <div className="absolute bottom-4 right-4 z-[998] w-72 rounded-xl border border-amber-500/30 bg-zinc-950/92 p-3 shadow-2xl backdrop-blur-md">
               <p className="text-[10px] font-extrabold uppercase tracking-wider text-amber-200">
                 Desigualdade intra-municipal
@@ -768,6 +776,8 @@ export default function PlatformApp({ initialTab }: PlatformAppProps) {
             simFlowPaths={simFlowPaths}
             selectedMunicipio={selectedMunicipio}
             mapFocus={mapFocus}
+            simulating={simulating}
+            focusMode={focusMode}
           />
           )}
         </section>

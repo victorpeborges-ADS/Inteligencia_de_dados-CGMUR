@@ -44,7 +44,11 @@ export default function CompareModal({ open, onClose, codigoA, nomeA, municipali
 
   useEffect(() => {
     if (!open) return;
-    const fallback = municipalities.find((m) => m.codigo_ibge !== codigoA);
+    const municipioA = municipalities.find((m) => m.codigo_ibge === codigoA);
+    const sameUf = municipalities.find(
+      (m) => m.codigo_ibge !== codigoA && municipioA?.uf && m.uf === municipioA.uf,
+    );
+    const fallback = sameUf ?? municipalities.find((m) => m.codigo_ibge !== codigoA);
     setCodigoB(fallback?.codigo_ibge ?? '');
     setData(null);
     setError(null);

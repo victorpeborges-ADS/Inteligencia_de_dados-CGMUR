@@ -382,6 +382,20 @@ export interface RainfallComparison {
   baseline: SimulationOutput;
   scenario: SimulationOutput;
   delta: RainfallComparisonDelta;
+  from_cache?: boolean;
+}
+
+export interface SimulationJobProgress {
+  job_id: string;
+  type?: string;
+  status: 'queued' | 'running' | 'completed' | 'failed';
+  progress: number;
+  stage?: string;
+  stage_label?: string;
+  error?: string | null;
+  result?: SimulationOutput;
+  comparison?: RainfallComparison;
+  from_cache?: boolean;
 }
 
 export interface SimulationOutput {
@@ -425,6 +439,7 @@ export interface SimulationOutput {
     bairros_atingidos_count?: number;
   };
   risk_context?: BairroRiskContext[];
+  from_cache?: boolean;
 }
 
 export interface BairroRiskContext {
@@ -1527,6 +1542,63 @@ export const api = {
     });
     if (!res.ok) throw new Error('Rainfall comparison failed');
     return res.json();
+  },
+
+  pollSimulationJob: async (
+    jobId: string,
+    onProgress?: (progress: SimulationJobProgress) => void,
+    intervalMs = 900,
+  ): Promise<SimulationJobProgress> => {
+    for (;;) {
+      const res = await apiFetch(`${getApiBaseUrl()}/api/v1/simulations/jobs/${jobId}`);
+      if (!res.ok) throw new Error('Falha ao consultar job de simulação');
+      const data: SimulationJobProgress = await res.json();
+      onProgress?.(data);
+      if (data.status === 'completed') return data;
+      if (data.status === 'failed') {
+        throw new Error(data.error || 'Simulação falhou');
+      }
+      await new Promise((r) => setTimeout(r, intervalMs));
+    }
+  },
+
+  simulateExtremeRainfallAsync: async (
+    mm: number,
+    codigoIbge?: string,
+    onProgress?: (progress: SimulationJobProgress) => void,
+  ): Promise<SimulationOutput> => {
+    const res = await apiFetch(`${getApiBaseUrl()}/api/v1/simulations/extreme-rainfall/async`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ precipitacao_mm: mm, codigo_ibge: codigoIbge }),
+    });
+    if (!res.ok) throw new Error('Extreme rainfall simulation failed');
+    const { job_id } = await res.json();
+    const finished = await api.pollSimulationJob(job_id, onProgress);
+    if (!finished.result) throw new Error('Job concluído sem resultado');
+    return finished.result;
+  },
+
+  compareRainfallScenariosAsync: async (
+    scenarioMm: number,
+    baselineMm: number = 80,
+    codigoIbge?: string,
+    onProgress?: (progress: SimulationJobProgress) => void,
+  ): Promise<RainfallComparison> => {
+    const res = await apiFetch(`${getApiBaseUrl()}/api/v1/simulations/extreme-rainfall/compare/async`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        baseline_mm: baselineMm,
+        scenario_mm: scenarioMm,
+        codigo_ibge: codigoIbge,
+      }),
+    });
+    if (!res.ok) throw new Error('Rainfall comparison failed');
+    const { job_id } = await res.json();
+    const finished = await api.pollSimulationJob(job_id, onProgress);
+    if (!finished.comparison) throw new Error('Job concluído sem comparação');
+    return finished.comparison;
   },
 
   simulateDrainageDeficit: async (pct: number, codigoIbge?: string): Promise<SimulationOutput> => {

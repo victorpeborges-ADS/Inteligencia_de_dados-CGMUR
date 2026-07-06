@@ -1,6 +1,6 @@
 # Sinidu+Clima — Roadmap Priorizado
 
-**Atualizado:** junho/2026  
+**Atualizado:** julho/2026  
 **Referência:** avaliação técnica de maturidade + documentação em `documentacao/DOCUMENTACAO_TECNICA_COMPLETA.md`
 
 ---
@@ -146,7 +146,7 @@
 | 9.5 | **Fontes externas** Adapta/GeoSGB/SIRENE/Brasil MAIS | ✅ | `external_sources_collector` + migration 012 |
 | 9.6 | **Orchestrator** sync fontes externas | ✅ | `fontes_externas` no `sync_all` |
 | 9.7 | **Testes** OSRM, batch export, fontes externas | ✅ | `test_osrm_router`, `test_batch_export`, … |
-| 9.8 | **Documentação técnica** atualizada | ✅ | Auth, OSRM, batch, integrações |
+| 9.8 | **Documentação técnica** atualizada | ✅ | Auth, OSRM, batch, integrações, Fase A 3D (jul/2026) |
 
 ---
 
@@ -186,6 +186,87 @@ OSRM_REGION=nordeste bash docker/osrm/setup-osrm.sh && docker compose up -d osrm
 
 ---
 
+## Fase 11 — Produto territorial avançado (Steps 8–9 + Fase A 3D)
+
+| # | Item | Status | Notas |
+|---|------|--------|-------|
+| 11.1 | **PDF completo 8+ págs** — gráficos Python, narrativa IA, mapa estático | ✅ | `report_completo_service.py`, `municipal_report_completo.html` |
+| 11.2 | **Polimento UX Step 9** — loading states, tooltips, Central da Oficina | ✅ | `RotatingLoader`, `TermTooltip`, `WorkshopCenter` |
+| 11.3 | **Comparação de municípios** — tabela, radar, IA, export PDF | ✅ | `CompareModal.tsx` + `compare.analytics` na auditoria |
+| 11.4 | **Trilha de auditoria expandida** — diagnóstico, PDF, comparação, onboarding | ✅ | Aba `/auditoria` + filtros por ação/IBGE |
+| 11.5 | **Simulação 3D Fase A** — extrusão de manchas + inspeção por clique | ✅ | MapLibre + Terrarium; **sem** Google Street View |
+| 11.6 | **Auto 3D** após simulação pluvial ou ilha de calor | ✅ | `PlatformApp.handleSimulate` → `setMapMode('3d')` |
+| 11.7 | **Inspeção de profundidade** — solo, água (cm), cota | ✅ | `floodInspect.ts` + `queryTerrainElevation` |
+| 11.8 | **Google Street View 3D** | ➖ | `Map3DGoogleContainer.tsx` existe mas não está no fluxo principal (custo de API) |
+
+**Arquivos frontend (Fase A 3D):**
+
+| Arquivo | Função |
+|---------|--------|
+| `Map3DMapLibreContainer.tsx` | Terreno 3D, painel de inspeção, voo oblíquo pós-simulação |
+| `maplibreLayers.ts` | `fill-extrusion`, marcador de clique, camadas de simulação |
+| `layerStyles.ts` | `_extrusionHeightM` (água e calor) |
+| `floodInspect.ts` | Cálculo de profundidade/cota no ponto clicado |
+
+**Smoke test Fase A (Recife 2611606):**
+
+```bash
+# Backend — compare 120 mm vs 80 mm (~60 s)
+curl -X POST "http://localhost:8000/api/v1/simulations/extreme-rainfall/compare" \
+  -H "Content-Type: application/json" \
+  -d '{"codigo_ibge":"2611606","scenario_mm":120,"baseline_mm":80}'
+```
+
+Frontend: Simulações → Rodar → Terreno 3D ativo → clicar na mancha azul.
+
+---
+
+## Fase 12 — Performance simulação e UX oficina (P1)
+
+| # | Item | Status | Notas |
+|---|------|--------|-------|
+| 12.1 | **Cache Redis** simulação pluvial | ✅ | `simulation_cache.py`, TTL 24 h |
+| 12.2 | **Compare paralelo** baseline + cenário | ✅ | `ThreadPoolExecutor` |
+| 12.3 | **Jobs async** + polling UI | ✅ | `/extreme-rainfall/async`, `/compare/async`, `/jobs/{id}` |
+| 12.4 | **Barra de progresso** na aba Chuva | ✅ | `stage_label` + % |
+| 12.5 | **Legenda 3D** faixas de profundidade | ✅ | Painel MapLibre |
+| 12.6 | **CompareModal** par mesma UF | ✅ | Fallback inteligente |
+| 12.7 | **Testes cache** | ✅ | `test_simulation_cache.py` |
+
+Ver `CHECKLIST_FASE_12.md`.
+
+---
+
+## Fase 13 — Experiência institucional (UX/UI, plano 06/07)
+
+Roteiro incremental **frontend-only** (sem alterar API), derivado do plano de melhoria Sinidu 06/07. Executar **após** estabilizar Fase 12b (OSRM, homolog auth/TLS).
+
+| # | Prompt / item | Status | Notas |
+|---|---------------|--------|-------|
+| 13.0 | **Design System** (tokens + componentes base) | ✅ | `KpiCard`, `PanelSection`, `Badge` |
+| 13.1 | **Modo Focus** (tecla F) | ✅ | Sidebar/camadas recolhidas; mapa + WorkshopCenter |
+| 13.2 | Hierarquia visual painéis | ✅ | KPIs primários vs secundários no painel executivo |
+| 13.3 | Sidebar camadas agrupada | ✅ | `LayerPanel` colapsável + ícones por grupo |
+| 13.4 | Estados vazios e loading | ⬜ | Prompt 05 |
+| 13.5 | Fluxo simulação guiado | ⬜ | Prompt 06 — complementa Fase A 3D |
+| 13.6 | Painel executivo narrativo | ⬜ | Prompt 07 — enriquecer `ExecutiveDashboard` |
+| 13.7 | Motor de recomendações | ➖ | Prompt 08 — adiar até explicabilidade IA |
+| 13.8 | Onboarding contextual | ⬜ | Prompt 09 — `OnboardingBanner` parcial |
+| 13.9 | Comparador territorial | ⬜ | Prompt 10 — `CompareModal` base existe |
+| 13.10 | Apresentação executiva | ✅ | Prompt 11 — `/apresentacao/{ibge}` 8 slides |
+| 13.11 | Auditoria legível | ✅ | Prompt 12 — `AuditPanel` |
+| 13.12 | Agente proativo | ✅ | Prompt 13 — `AgenteSinidu` + `useAgenteProativo` |
+| 13.13 | Glossário inline | ✅ | Prompt 14 — `TermTooltip` |
+| 13.14 | Remover rótulos MVP | ➖ | Prompt 15 — adiar pós-homologação |
+
+**Já existente (não refazer):** `WorkshopCenter`, `/apresentacao/{ibge}`, `ExecutiveDashboard`, `AgenteSinidu`, `AuditPanel`, `TermTooltip`.
+
+**Ordem sugerida:** 13.0 → 13.1 → 13.2 → 13.3 → 13.5 → 13.6 → 13.9 → demais.
+
+Ver `CHECKLIST_FASE_13.md`.
+
+---
+
 ## Ecossistema MCID — Sinidu vs Pro-Cidades
 
 Dois produtos complementares, repositórios separados:
@@ -211,7 +292,7 @@ Referência Pro-Cidades: `Pro-cidades/README.md`, `Pro-cidades/automacao/README_
 | Integrações externas | 72% | 72% | 85% |
 | Análise e índices | 78% | 78% | 88% |
 | IA e RAG | 70% | 72% | 82% |
-| Visualização 2D/3D | 75% | 75% | 85% |
+| Visualização 2D/3D | 75% | 80% | 88% |
 | Contingência e alerta | 80% | 80% | 88% |
 | **Segurança e auth** | **8%** | **55%** | **80%** |
 | **Testes automatizados** | **40%** | **45%** | **70%** |

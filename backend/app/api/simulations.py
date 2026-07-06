@@ -11,6 +11,7 @@ from app.schemas import (
     RainfallComparisonResponse,
     DrenagemSimRequest,
     SimulationOutput,
+    SimulationJobStartResponse,
     SimulationAnalyzeRequest,
     SimulationAnalysisResponse,
     SimulationInterpretRequest,
@@ -23,6 +24,12 @@ from app.schemas import (
     GeoJSONFeatureCollection,
 )
 from app.services.analytical_engine import AnalyticalEngine
+from app.services.simulation_cache import compare_rainfall_cached, run_rainfall_cached
+from app.services.simulation_job_service import (
+    get_simulation_job_progress,
+    run_rainfall_compare_job,
+    run_rainfall_simulation_job,
+)
 from app.services.mitigation_planner import MitigationPlanner
 from app.services.simulation_analyzer import analyze_simulation
 from app.services.simulation_interpreter import interpret_simulation, interpret_slope_zones
@@ -57,38 +64,41 @@ def simulate_vegetation_loss(payload: PerdaVegetacaoSimRequest, request: Request
 @router.post("/extreme-rainfall", response_model=SimulationOutput)
 def simulate_extreme_rainfall(payload: ChuvaExtremaSimRequest, request: Request, db: Session = Depends(get_db)):
     muni = get_accessible_municipio(db, payload.codigo_ibge, request=request)
-    return AnalyticalEngine.run_chuva_extrema_simulation(
-        db, muni.id, payload.precipitacao_mm
-    )
+    return run_rainfall_cached(db, muni.id, muni.codigo_ibge, payload.precipitacao_mm)
+
+
+@router.post("/extreme-rainfall/async", response_model=SimulationJobStartResponse)
+def simulate_extreme_rainfall_async(payload: ChuvaExtremaSimRequest, request: Request, db: Session = Depends(get_db)):
+    muni = get_accessible_municipio(db, payload.codigo_ibge, request=request)
+    job_id = run_rainfall_simulation_job(muni.codigo_ibge, muni.id, payload.precipitacao_mm)
+    return {"job_id": job_id, "async_mode": True, "status": "queued"}
 
 
 @router.post("/extreme-rainfall/compare", response_model=RainfallComparisonResponse)
 def compare_extreme_rainfall(payload: ChuvaExtremaCompareRequest, request: Request, db: Session = Depends(get_db)):
     muni = get_accessible_municipio(db, payload.codigo_ibge, request=request)
-    baseline = AnalyticalEngine.run_chuva_extrema_simulation(db, muni.id, payload.baseline_mm)
-    scenario = AnalyticalEngine.run_chuva_extrema_simulation(db, muni.id, payload.scenario_mm)
-    base_bairros = set(baseline.get("affected_bairros") or [])
-    scen_bairros = set(scenario.get("affected_bairros") or [])
-    base_meta = baseline.get("simulation_meta") or {}
-    scen_meta = scenario.get("simulation_meta") or {}
-    return {
-        "baseline": baseline,
-        "scenario": scenario,
-        "delta": {
-            "baseline_mm": payload.baseline_mm,
-            "scenario_mm": payload.scenario_mm,
-            "affected_area_km2": round(
-                float(scenario.get("affected_area_km2", 0)) - float(baseline.get("affected_area_km2", 0)), 2
-            ),
-            "affected_population": int(scenario.get("affected_population", 0)) - int(baseline.get("affected_population", 0)),
-            "max_depth_m": round(
-                float(scen_meta.get("max_depth_m") or 0) - float(base_meta.get("max_depth_m") or 0), 2
-            ),
-            "flood_patches": int(scen_meta.get("flood_patches") or 0) - int(base_meta.get("flood_patches") or 0),
-            "bairros_novos": sorted(scen_bairros - base_bairros),
-            "bairros_removidos": sorted(base_bairros - scen_bairros),
-        },
-    }
+    return compare_rainfall_cached(
+        db, muni.id, muni.codigo_ibge, payload.baseline_mm, payload.scenario_mm
+    )
+
+
+@router.post("/extreme-rainfall/compare/async", response_model=SimulationJobStartResponse)
+def compare_extreme_rainfall_async(
+    payload: ChuvaExtremaCompareRequest, request: Request, db: Session = Depends(get_db)
+):
+    muni = get_accessible_municipio(db, payload.codigo_ibge, request=request)
+    job_id = run_rainfall_compare_job(
+        muni.codigo_ibge, muni.id, payload.scenario_mm, payload.baseline_mm
+    )
+    return {"job_id": job_id, "async_mode": True, "status": "queued"}
+
+
+@router.get("/jobs/{job_id}")
+def simulation_job_status(job_id: str):
+    progress = get_simulation_job_progress(job_id)
+    if not progress:
+        raise HTTPException(status_code=404, detail="Job de simulação não encontrado.")
+    return progress
 
 
 @router.post("/drainage-deficit", response_model=SimulationOutput)

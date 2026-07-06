@@ -1,7 +1,7 @@
 # Sinidu+Clima — Documentação Técnica Completa do Sistema
 
 **Plataforma Nacional de Inteligência Territorial**  
-**Versão do documento:** junho/2026  
+**Versão do documento:** julho/2026  
 **Município piloto:** Recife/PE (IBGE `2611606`)  
 **Escopo:** 61 municípios prioritários MCID
 
@@ -56,8 +56,9 @@ O **Sinidu+Clima** é uma plataforma web para diagnóstico territorial, simulaç
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │                     Frontend (Next.js 13)                        │
-│  Painel · Municípios · Simulações · Monitor · Contingência ·    │
-│  Assistente · Casos · Mapa 2D (Leaflet) / 3D (MapLibre)        │
+│  Painel · Municípios · Catálogo · Simulações · Monitor ·        │
+│  Contingência · Assistente · Casos · Auditoria · Sistema ·      │
+│  Mapa 2D (Leaflet) / 3D (MapLibre + extrusão de simulação)      │
 └────────────────────────────┬────────────────────────────────────┘
                              │ HTTP / WebSocket
 ┌────────────────────────────▼────────────────────────────────────┐
@@ -84,7 +85,7 @@ O **Sinidu+Clima** é uma plataforma web para diagnóstico territorial, simulaç
 | Pasta | Conteúdo |
 |-------|----------|
 | `backend/` | API FastAPI, modelos, serviços, ETL, ML, RAG, migrations, seeds, testes |
-| `frontend/` | Aplicação Next.js (SPA em `src/app/page.tsx`) |
+| `frontend/` | Aplicação Next.js (App Router + `PlatformApp` compartilhado) |
 | `docker/` | Configurações Docker (Postgres, Ollama, OSRM, Gotify) |
 | `documentacao/` | PDFs e esta documentação |
 | `scripts/` | Utilitários (geração de PDFs de documentação) |
@@ -402,14 +403,29 @@ Gera narrativa Markdown com 7 seções:
 - Auto-geração após diagnóstico executivo
 - Histórico versionado
 
-### Terreno 3D
+### Terreno 3D e simulação volumétrica (Fase A)
 
-**Arquivo:** `dem_processor.py` · **API:** `/api/v1/terrain`
+**Backend:** `dem_processor.py`, `hydro_simulator.py` · **API:** `/api/v1/terrain`, `/api/v1/simulations`
 
-- Download SRTM via OpenTopography
-- Tiles Terrarium para visualização MapLibre 3D
-- Análise de declividade e caminhos de escoamento
-- Arquivos estáticos: `GET /static/dem/*`
+- Download SRTM via OpenTopography; upload LiDAR local (`POST /terrain/{ibge}/import-local-dem`)
+- Tiles Terrarium (encoding `terrarium`) para MapLibre GL 4.7 via CDN
+- Simulação pluvial retorna GeoJSON com faixas `depth_band` (`superficial`, `moderada`, `critica`) e propriedades `depth_min_m`, `depth_max_m`, `precipitation_mm`
+- Perda de vegetação retorna `temp_increase_celsius` por polígono (ilha de calor)
+
+**Frontend 3D** (`Map3DMapLibreContainer.tsx`):
+
+| Recurso | Implementação |
+|---------|---------------|
+| Terreno inclinado | `pitch` ~62–68°, `fitBounds` automático após simulação |
+| Extrusão de manchas | `fill-extrusion` em `maplibreLayers.ts`; altura = média `(depth_min_m + depth_max_m) / 2` |
+| Ilha de calor | Extrusão proporcional a `temp_increase_celsius × 12` |
+| Inspeção por clique | `queryTerrainElevation` + painel (solo, +cm água, cota da água) via `floodInspect.ts` |
+| Auto 3D | `PlatformApp` alterna para modo 3D ao concluir simulação pluvial ou de calor |
+| Controles | Basemap satélite/escuro, exagero de relevo (1–4×), inclinação manual |
+
+**Não integrado ao fluxo principal:** `Map3DGoogleContainer.tsx` (Google Street View — requer API key paga; mantido apenas como referência).
+
+**Limitação:** DEM SRTM 30 m (±16 m vertical). Piloto Recife pode usar LiDAR local para curvas e simulação refinada; extrusão 3D ainda usa resolução do raster disponível.
 
 ### Relatórios PDF
 
@@ -425,6 +441,8 @@ Conteúdo do relatório municipal:
 - Programas federais sugeridos (órgão e contato)
 - Previsão climática (Open-Meteo)
 - Histórico de gerações
+
+**Relatório completo (Step 8):** template `municipal_report_completo.html` (8+ páginas) com gráficos Python (`chart_generator.py`), radar de score, mapa estático e narrativa IA. Endpoint assíncrono: `POST /reports/municipal/codigo/{ibge}/completo?async=true`.
 
 ---
 
@@ -474,28 +492,52 @@ Retorna status, nome da plataforma e município piloto.
 ## 9. Interface web (frontend)
 
 **URL:** `http://localhost:3000`  
-**Arquitetura:** SPA única (`frontend/src/app/page.tsx`)
+**Arquitetura:** Next.js App Router — rotas por módulo (`/painel`, `/simulacoes`, `/auditoria`…) com shell compartilhado `PlatformApp.tsx` e estado Zustand (`useAppStore`).
 
 ### Abas principais
 
-| Aba | Componente | Funcionalidade |
-|-----|------------|----------------|
-| Painel | `ExecutiveDashboard` | KPIs, maturidade, diagnóstico, plano de ação, relatórios |
-| Municípios | `OnboardingPanel` | Cadastro e validação de municípios |
-| Simulações | `SimulationPanel` | Cenários + mitigação + contingência |
-| Monitor | `MonitoringPanel` | CEMADEN, clima, timeline, ativação |
-| Contingência | `ContingencyWizard` | CRUD plano, desenho de zonas, PDF |
-| Assistente | `AssistantPanel` | Chat IA com contexto municipal |
-| Casos | `CaseStudiesPanel` | Busca semântica de casos de sucesso |
+| Aba | Rota | Componente | Funcionalidade |
+|-----|------|------------|----------------|
+| Painel | `/painel` | `ExecutiveDashboard` | KPIs, maturidade, diagnóstico PDF, plano de ação, relatório completo IA |
+| Municípios | `/municipios` | `OnboardingPanel` | Cadastro e validação de municípios |
+| Catálogo | `/catalogo` | `DataCatalogPanel` | Panorama nacional de bases de dados |
+| Simulações | `/simulacoes` | `SimulationPanel` | Chuva, preditiva, asfalto, vegetação, drenagem + IA + export |
+| Monitor | `/monitor` | `MonitoringPanel` | CEMADEN, clima, timeline, ativação |
+| Contingência | `/contingencia` | `ContingencyWizard` | CRUD plano, desenho de zonas, PDF |
+| Assistente | `/assistente` | `AssistantPanel` | Chat IA com contexto municipal |
+| Casos | `/casos` | `CaseStudiesPanel` | Busca semântica de casos de sucesso |
+| Auditoria | `/auditoria` | `AuditPanel` | Trilha de ações (admin ou `AUTH_ENABLED=false`) |
+| Sistema | `/sistema` | `SystemPanel` | Jobs, pipeline MCID, saúde operacional |
+
+### Central da Oficina (Step 9)
+
+Componente flutuante `WorkshopCenter.tsx` sobre o mapa:
+
+- **Diagnóstico** — gera/atualiza diagnóstico executivo (tooltip com hora se gerado hoje)
+- **Apresentar** — abre `/apresentacao/{ibge}` com loading rotativo
+- **Relatório** — dropdown rápido / completo (8+ págs)
+- **Comparar** — modal `CompareModal` (tabela Score/IVC/IRI/CAPAG, radar Recharts, narrativa IA, export PDF)
 
 ### Mapa
 
-- **2D:** Leaflet com 16 camadas temáticas e seletor de município
+- **2D:** Leaflet com 16 camadas temáticas, manchas de simulação, curvas de nível e vetores D8
 - **3D:** MapLibre GL + DEM Terrarium (`Map3DMapLibreContainer`)
-- Toggle 2D/3D na barra lateral
+- Toggle **Mapa 2D** / **Terreno 3D** no canto superior direito
 - Sincronização de camadas via `layerStyles.ts` e `maplibreLayers.ts`
+- Após simulação pluvial ou ilha de calor: modo 3D automático + painel de inspeção por clique
 
-### Recursos transversais
+### Recursos transversais (Step 9)
+
+| Recurso | Componente | Onde aparece |
+|---------|------------|--------------|
+| Loading rotativo | `RotatingLoader.tsx` | PDF, simulação, IA, apresentação, recarga município |
+| Tooltips técnicos | `TermTooltip.tsx` | CAPAG, IVC, IRI, Score, SRTM no Painel e Simulações |
+| Banner onboarding | `OnboardingBanner.tsx` | Painel — só se `onboarding_status != concluido` |
+| Progresso carga | `MunicipioLoadProgress.tsx` | Ao trocar município |
+| Agente proativo | `AgenteSinidu` | Chat contextual por aba |
+| Shimmer simulação | overlay em `PlatformApp` | Enquanto `simulating=true` |
+
+### Recursos transversais (geral)
 
 - Seletor de 61 municípios prioritários + carregados no DB
 - Toast de alertas via WebSocket
@@ -722,11 +764,13 @@ Principais variáveis (`docker-compose.yml`):
         ↓
 4. Plano de Ação       → Carteira de ações + programas federais
         ↓
-5. Simulações          → Testar cenários e mitigação
+5. Simulações          → Testar cenários; mapa 3D com extrusão e inspeção por clique
         ↓
 6. Contingência        → Plano COBRADE + rotas OSRM + PDF
         ↓
 7. Monitoramento       → Alertas CEMADEN + clima + WebSocket
+        ↓
+8. Comparação / Oficina → Comparar municípios, apresentação guiada, auditoria
         ↓
 8. Assistente          → Perguntas com citação de fontes
         ↓
@@ -763,6 +807,13 @@ Desenvolvido e testado em Mac mini 2018 (Intel i5, 32 GB RAM). Ollama limitado a
 - S2ID e MapBiomas podem usar seeds demo até ETL completo
 - CAPAG depende do layout da planilha Tesouro Transparente (coletor com detecção automática de header)
 - OSRM: região configurável via `OSRM_REGION` (padrão Nordeste); cobertura nacional exige PBF `brazil` (~1,5 GB+) ou troca de região
+- Simulação pluvial comparada (120 vs 80 mm): ~60 s no piloto Recife (dois passes hidrológicos)
+- Extrusão 3D é proxy visual (DEM 30 m); não substitui modelagem hidrodinâmica 2D
+
+### Visualização 3D
+
+- Google Street View **não** está no fluxo principal (`Map3DGoogleContainer` isolado)
+- Precisão vertical limitada pelo SRTM/Terrarium; LiDAR local melhora simulação 2D/curvas, não fachadas de rua
 
 ### Infraestrutura
 
@@ -792,7 +843,10 @@ Desenvolvido e testado em Mac mini 2018 (Intel i5, 32 GB RAM). Ollama limitado a
 | MaturityEngine | `maturity_engine.py` | Score de maturidade |
 | MitigationPlanner | `mitigation_planner.py` | Planos pós-simulação |
 | MunicipioLoader | `municipio_loader.py` | Malhas IBGE |
-| DemProcessor | `dem_processor.py` | SRTM e terreno 3D |
+| DemProcessor | `dem_processor.py` | SRTM, LiDAR local e terreno 3D |
+| HydroSimulator | `hydro_simulator.py` | Simulação pluvial, faixas de profundidade, curvas D8 |
+| DiagnosticReport | `diagnostic_report.py` | PDF diagnóstico executivo enriquecido |
+| SocioeconomicEngine | `socioeconomic_engine.py` | Ranking intra-municipal (camada socioeconômico) |
 | OsrmRouter | `osrm_router.py` | Rotas de evacuação |
 | ContingencyPlanner | `contingency_planner.py` | Planos COBRADE |
 | CobradeTemplates | `cobrade_templates.py` | Ações por nível |

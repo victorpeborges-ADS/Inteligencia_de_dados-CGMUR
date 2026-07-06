@@ -149,11 +149,19 @@ class SimulationOutput(BaseModel):
     flow_paths: Optional[GeoJSONFeatureCollection] = None
     simulation_meta: Optional[Dict[str, Any]] = None
     risk_context: Optional[List[Dict[str, Any]]] = None
+    from_cache: Optional[bool] = None
 
 class RainfallComparisonResponse(BaseModel):
     baseline: SimulationOutput
     scenario: SimulationOutput
     delta: Dict[str, Any]
+    from_cache: Optional[bool] = None
+
+
+class SimulationJobStartResponse(BaseModel):
+    job_id: str
+    async_mode: bool = True
+    status: str = "queued"
 
 class SimulationAnalyzeRequest(BaseModel):
     codigo_ibge: Optional[str] = Field(default=None)

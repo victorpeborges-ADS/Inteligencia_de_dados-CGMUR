@@ -64,7 +64,12 @@ type AppStore = {
   reportRequest: 'rapido' | 'completo' | null;
   requestReport: (type: 'rapido' | 'completo') => void;
   clearReportRequest: () => void;
+  focusMode: boolean;
+  setFocusMode: (value: boolean) => void;
+  toggleFocusMode: () => void;
 };
+
+export const FOCUS_MODE_STORAGE_KEY = 'sinidu-focus-mode';
 
 let msgCounter = 0;
 
@@ -175,4 +180,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
   reportRequest: null,
   requestReport: (type) => set({ reportRequest: type, activeTab: 'dashboard' }),
   clearReportRequest: () => set({ reportRequest: null }),
+  focusMode: false,
+  setFocusMode: (value) => set({ focusMode: value }),
+  toggleFocusMode: () => set((state) => ({ focusMode: !state.focusMode })),
 }));

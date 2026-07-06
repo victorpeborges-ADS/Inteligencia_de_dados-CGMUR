@@ -67,3 +67,5 @@
 ## Critério de done
 
 Demonstração fluida com feedback visual em todas operações pesadas, tooltips nos termos técnicos, Central da Oficina polida e trilha de auditoria populada automaticamente.
+
+Ver também: **Fase A 3D** em `CHECKLIST_FASE_A_3D.md` e **Fase 11** em `ROADMAP.md`.

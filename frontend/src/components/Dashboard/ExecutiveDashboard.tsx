@@ -8,6 +8,7 @@ import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, LineChart, L
 import { Users, Trees, ShieldAlert, DollarSign, Waves, FileDown, Loader2, Award, ListChecks } from 'lucide-react';
 import RotatingLoader, { PDF_DIAGNOSTIC_MESSAGES } from '@/components/UI/RotatingLoader';
 import TermTooltip from '@/components/UI/TermTooltip';
+import { KpiCard, PanelSection } from '@/design-system';
 
 const TIER_STYLE: Record<string, { bg: string; text: string; border: string }> = {
   Platina: { bg: 'bg-slate-400/15', text: 'text-slate-200', border: 'border-slate-400/40' },
@@ -527,6 +528,20 @@ export default function ExecutiveDashboard({
     ? [Math.floor(Math.min(...areaValues) / 10) * 10, Math.ceil(Math.max(...areaValues) / 10) * 10 + 10]
     : [50, 250];
 
+  const avgIvc = indices?.vulnerabilidade.length
+    ? indices.vulnerabilidade.reduce((sum, row) => sum + row.indice_vulnerabilidade, 0) / indices.vulnerabilidade.length
+    : null;
+  const avgIri = indices?.inundacao.length
+    ? indices.inundacao.reduce((sum, row) => sum + row.indice_risco_inundacao, 0) / indices.inundacao.length
+    : null;
+  const formatIndex = (value: number | null) =>
+    value != null ? `${Math.round(value * 100)}` : '—';
+  const alertasCard = cards.find((c) => c.title === 'Risco Territorial Ativo');
+  const maturityCard = cards.find((c) => c.title === 'Maturidade Municipal');
+  const secondaryCards = cards.filter((c) =>
+    !['Risco Territorial Ativo', 'Maturidade Municipal'].includes(c.title),
+  );
+
   return (
     <div className="flex flex-col gap-5 overflow-y-auto max-h-[85vh] pr-2">
       {dashboardError && (
@@ -544,7 +559,67 @@ export default function ExecutiveDashboard({
           </p>
         </div>
       )}
-      <div className="rounded-xl border border-indigo-500/30 bg-indigo-950/20 p-4">
+
+      <PanelSection
+        title="Indicadores prioritários"
+        tier="primary"
+        description="Leitura rápida para gestores — score territorial, risco climático e maturidade de dados"
+      >
+        <div className="grid grid-cols-2 gap-3">
+          <KpiCard
+            tier="primary"
+            className="col-span-2"
+            title="Score Sinidu+Clima"
+            value={indicators?.score_sinidu != null ? String(Math.round(indicators.score_sinidu)) : '—'}
+            description="Prioridade territorial composta (0–100) · maior score = maior atenção"
+            icon={Award}
+            iconClassName="text-indigo-300"
+            quality={indicators?.score_sinidu != null ? 'DERIVADO' : 'LACUNA'}
+          />
+          <KpiCard
+            tier="primary"
+            title="IVC médio municipal"
+            value={formatIndex(avgIvc)}
+            description={`Média entre bairros · escala 0–100 · ${indices?.vulnerabilidade.length || 0} setor(es)`}
+            icon={ShieldAlert}
+            iconClassName="text-rose-300"
+            quality={avgIvc != null ? 'DERIVADO' : 'LACUNA'}
+          />
+          <KpiCard
+            tier="primary"
+            title="IRI médio municipal"
+            value={formatIndex(avgIri)}
+            description={`Risco de inundação agregado · ${indices?.inundacao.length || 0} setor(es)`}
+            icon={Waves}
+            iconClassName="text-sky-300"
+            quality={avgIri != null ? 'DERIVADO' : 'LACUNA'}
+          />
+          {alertasCard && (
+            <KpiCard
+              tier="primary"
+              title={alertasCard.title}
+              value={alertasCard.value}
+              description={alertasCard.desc}
+              icon={alertasCard.icon}
+              iconClassName={alertasCard.color}
+              quality={alertasCard.quality}
+            />
+          )}
+          {maturityCard && (
+            <KpiCard
+              tier="primary"
+              title={maturityCard.title}
+              value={maturityCard.value}
+              description={maturityCard.desc}
+              icon={maturityCard.icon}
+              iconClassName={maturityCard.color}
+              quality={maturityCard.quality}
+            />
+          )}
+        </div>
+      </PanelSection>
+
+      <div className="rounded-xl border border-indigo-500/20 bg-indigo-950/10 p-4 opacity-95">
         <div className="mb-3 flex items-start justify-between gap-3">
           <div>
             <h4 className="text-xs font-extrabold uppercase tracking-wide text-indigo-200">Relatório territorial PDF</h4>
@@ -764,73 +839,65 @@ export default function ExecutiveDashboard({
         )}
       </div>
 
-      {/* Overview Cards Grid */}
-      <div className="grid grid-cols-2 gap-3">
-        {cards.map((c, i) => {
-          const Icon = c.icon;
-          const hasMaturityBreakdown = Boolean(c.maturityMetrics?.length);
-          return (
-            <div
-              key={i}
-              className={`bg-card/70 backdrop-blur-md border border-border p-3.5 rounded-xl transition-all duration-300 ${c.border} ${
-                i >= 4 ? 'col-span-2' : ''
-              } ${hasMaturityBreakdown ? 'flex flex-col gap-0' : 'flex items-center justify-between'}`}
+      {/* Indicadores complementares */}
+      <PanelSection title="Indicadores complementares" tier="secondary" description="Contexto demográfico, ambiental e histórico de desastres">
+        <div className="grid grid-cols-2 gap-3">
+          {secondaryCards.map((c) => {
+            const Icon = c.icon;
+            return (
+              <KpiCard
+                key={c.title}
+                tier="secondary"
+                title={c.title}
+                value={c.value}
+                description={c.desc}
+                icon={Icon}
+                iconClassName={c.color}
+                quality={c.quality}
+                badge={c.badge}
+              />
+            );
+          })}
+          {maturityCard?.maturityMetrics?.length ? (
+            <KpiCard
+              tier="secondary"
+              className="col-span-2"
+              title="Composição da maturidade"
+              value={maturityCard.value}
+              description="Detalhamento das 8 fontes integradas"
+              icon={Award}
+              iconClassName={maturityCard.color}
+              quality={maturityCard.quality}
             >
-              <div className={`flex w-full ${hasMaturityBreakdown ? 'items-start justify-between' : 'items-center justify-between'}`}>
-                <div className="min-w-0 flex-1">
-                  <span className="text-[9px] uppercase font-bold text-zinc-500 tracking-wider">{c.title}</span>
-                  {c.quality && (
-                    <span className={`ml-1.5 inline-flex rounded px-1.5 py-0.5 text-[7px] font-bold uppercase tracking-wide ${SOURCE_STATUS_STYLE[c.quality] || 'bg-zinc-800 text-zinc-400'}`}>
-                      {c.quality}
-                    </span>
-                  )}
-                  {c.badge && (
-                    <span className="ml-2 inline-flex rounded-full border border-emerald-500/30 bg-emerald-500/10 px-1.5 py-0.5 text-[8px] font-bold uppercase tracking-wide text-emerald-300">
-                      {c.badge}
-                    </span>
-                  )}
-                  <h3 className="text-lg font-extrabold text-zinc-100 mt-0.5">{c.value}</h3>
-                  <span className="text-[10px] text-zinc-400 mt-0.5 block leading-tight">{c.desc}</span>
-                </div>
-                <div className={`p-2 rounded-lg bg-zinc-950/80 border border-zinc-800 shrink-0 ${c.color}`}>
-                  <Icon size={18} />
-                </div>
-              </div>
-
-              {hasMaturityBreakdown && (
-                <div className="mt-3 border-t border-zinc-800 pt-2.5">
-                  <p className="mb-2 text-[8px] font-extrabold uppercase tracking-wider text-zinc-500">
-                    Composição do score (8 fontes · máx. 12,5 pts cada)
-                  </p>
-                  <div className="grid grid-cols-2 gap-1.5">
-                    {c.maturityMetrics!.map((fonte) => (
-                      <div
-                        key={fonte.id}
-                        className="flex items-center justify-between gap-1.5 rounded-md border border-zinc-800/80 bg-zinc-950/50 px-2 py-1"
-                      >
-                        <div className="min-w-0 flex-1">
-                          <span className="block truncate text-[9px] font-semibold text-zinc-300">{fonte.nome}</span>
-                          <span className={`text-[8px] font-bold uppercase ${SOURCE_STATUS_TEXT[fonte.status] || 'text-zinc-500'}`}>
-                            {fonte.status}
-                          </span>
-                        </div>
-                        <span className="shrink-0 font-mono text-[10px] font-bold text-zinc-200">
-                          {fonte.pontos.toFixed(1)}
+              <div className="mt-3 border-t border-zinc-800 pt-2.5">
+                <div className="grid grid-cols-2 gap-1.5">
+                  {maturityCard.maturityMetrics.map((fonte) => (
+                    <div
+                      key={fonte.id}
+                      className="flex items-center justify-between gap-1.5 rounded-md border border-zinc-800/80 bg-zinc-950/50 px-2 py-1"
+                    >
+                      <div className="min-w-0 flex-1">
+                        <span className="block truncate text-[9px] font-semibold text-zinc-300">{fonte.nome}</span>
+                        <span className={`text-[8px] font-bold uppercase ${SOURCE_STATUS_TEXT[fonte.status] || 'text-zinc-500'}`}>
+                          {fonte.status}
                         </span>
                       </div>
-                    ))}
-                  </div>
-                  {maturity && (
-                    <p className="mt-2 text-right text-[9px] font-mono text-zinc-500">
-                      Total: {maturity.fontes.reduce((sum, f) => sum + f.pontos, 0).toFixed(1)} / 100
-                    </p>
-                  )}
+                      <span className="shrink-0 font-mono text-[10px] font-bold text-zinc-200">
+                        {fonte.pontos.toFixed(1)}
+                      </span>
+                    </div>
+                  ))}
                 </div>
-              )}
-            </div>
-          );
-        })}
-      </div>
+                {maturity && (
+                  <p className="mt-2 text-right text-[9px] font-mono text-zinc-500">
+                    Total: {maturity.fontes.reduce((sum, f) => sum + f.pontos, 0).toFixed(1)} / 100
+                  </p>
+                )}
+              </div>
+            </KpiCard>
+          ) : null}
+        </div>
+      </PanelSection>
 
       {indicators && (
         <div className="rounded-xl border border-border bg-card/40 p-4">

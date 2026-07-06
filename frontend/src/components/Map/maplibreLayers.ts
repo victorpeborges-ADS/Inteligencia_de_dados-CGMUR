@@ -22,6 +22,18 @@ function circleId(layerName: string) {
   return `circle-${layerName}`;
 }
 
+function extrusionId(layerName: string) {
+  return `extrusion-${layerName}`;
+}
+
+function markerSourceId() {
+  return 'src-inspect-marker';
+}
+
+function markerLayerId() {
+  return 'inspect-marker';
+}
+
 function upsertSource(map: MapLibreMap, id: string, data: { type: 'FeatureCollection'; features: any[] }) {
   if (map.getSource(id)) {
     map.getSource(id).setData(data);
@@ -30,7 +42,7 @@ function upsertSource(map: MapLibreMap, id: string, data: { type: 'FeatureCollec
   }
 }
 
-function upsertFillLayer(map: MapLibreMap, layerName: string) {
+function upsertFillLayer(map: MapLibreMap, layerName: string, opts?: { flatOpacity?: number }) {
   const id = fillId(layerName);
   if (map.getLayer(id)) return;
   map.addLayer({
@@ -40,7 +52,24 @@ function upsertFillLayer(map: MapLibreMap, layerName: string) {
     filter: POLYGON_FILTER,
     paint: {
       'fill-color': ['coalesce', ['get', '_fill'], '#6366f1'],
-      'fill-opacity': ['coalesce', ['get', '_fillOpacity'], 0.4],
+      'fill-opacity': opts?.flatOpacity ?? ['coalesce', ['get', '_fillOpacity'], 0.4],
+    },
+  });
+}
+
+function upsertExtrusionLayer(map: MapLibreMap, layerName: string) {
+  const id = extrusionId(layerName);
+  if (map.getLayer(id)) return;
+  map.addLayer({
+    id,
+    type: 'fill-extrusion',
+    source: sourceId(layerName),
+    filter: POLYGON_FILTER,
+    paint: {
+      'fill-extrusion-color': ['coalesce', ['get', '_fill'], '#0284c7'],
+      'fill-extrusion-height': ['coalesce', ['get', '_extrusionHeightM'], 0.25],
+      'fill-extrusion-opacity': 0.78,
+      'fill-extrusion-base': 0,
     },
   });
 }
@@ -79,11 +108,47 @@ function upsertCircleLayer(map: MapLibreMap, layerName: string) {
 }
 
 function removeLayerBundle(map: MapLibreMap, layerName: string) {
-  [circleId(layerName), lineId(layerName), fillId(layerName)].forEach((id) => {
+  [extrusionId(layerName), circleId(layerName), lineId(layerName), fillId(layerName)].forEach((id) => {
     if (map.getLayer(id)) map.removeLayer(id);
   });
   const sid = sourceId(layerName);
   if (map.getSource(sid)) map.removeSource(sid);
+}
+
+export function setInspectMarker(map: MapLibreMap, lng: number, lat: number) {
+  const data = {
+    type: 'FeatureCollection' as const,
+    features: [
+      {
+        type: 'Feature',
+        geometry: { type: 'Point', coordinates: [lng, lat] },
+        properties: {},
+      },
+    ],
+  };
+  upsertSource(map, markerSourceId(), data);
+  if (!map.getLayer(markerLayerId())) {
+    map.addLayer({
+      id: markerLayerId(),
+      type: 'circle',
+      source: markerSourceId(),
+      paint: {
+        'circle-radius': 8,
+        'circle-color': '#fbbf24',
+        'circle-stroke-color': '#0f172a',
+        'circle-stroke-width': 2,
+      },
+    });
+  }
+}
+
+export function clearInspectMarker(map: MapLibreMap) {
+  if (map.getLayer(markerLayerId())) map.removeLayer(markerLayerId());
+  if (map.getSource(markerSourceId())) map.removeSource(markerSourceId());
+}
+
+export function simulationLayerIds(): string[] {
+  return [extrusionId('simulation'), fillId('simulation')];
 }
 
 export function syncThematicLayers(
@@ -122,7 +187,8 @@ export function syncThematicLayers(
   if (simGeoJSON?.features?.length) {
     wanted.add('simulation');
     upsertSource(map, sourceId('simulation'), enrichSimulationGeoJSON(simGeoJSON));
-    upsertFillLayer(map, 'simulation');
+    upsertFillLayer(map, 'simulation', { flatOpacity: 0.22 });
+    upsertExtrusionLayer(map, 'simulation');
     upsertLineLayer(map, 'simulation');
   }
 

@@ -220,8 +220,21 @@ export function getSimulationFeatureStyle(feature: any) {
 export function enrichSimulationGeoJSON(geojson: any): { type: 'FeatureCollection'; features: any[] } {
   const features = (geojson?.features || []).map((feature: any) => {
     const props = feature?.properties || {};
-    const isHeat = Boolean(props.temp_increase_celsius);
     const style = getSimulationFeatureStyle(feature);
+
+    let extrusionHeightM = 0.25;
+    let depthCm: number | null = null;
+
+    if (props.temp_increase_celsius != null) {
+      extrusionHeightM = Math.max(0.15, Number(props.temp_increase_celsius) * 12);
+    } else if (props.layer_type === 'flood_band' || props.depth_band) {
+      const lo = Number(props.depth_min_m ?? 0.05);
+      const hiRaw = props.depth_max_m;
+      const hi = hiRaw == null || Number(hiRaw) > 100 ? lo + 0.45 : Number(hiRaw);
+      extrusionHeightM = Math.max(0.08, (lo + hi) / 2);
+      depthCm = Math.round(extrusionHeightM * 100);
+    }
+
     return {
       ...feature,
       properties: {
@@ -230,6 +243,8 @@ export function enrichSimulationGeoJSON(geojson: any): { type: 'FeatureCollectio
         _fillOpacity: style.fillOpacity,
         _stroke: style.color,
         _strokeWidth: style.weight ?? 2,
+        _extrusionHeightM: extrusionHeightM,
+        _depthCm: depthCm,
       },
     };
   });
