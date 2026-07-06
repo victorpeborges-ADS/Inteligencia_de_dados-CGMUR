@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import dynamic from 'next/dynamic';
 import { usePathname, useRouter } from 'next/navigation';
-import { api, getApiBaseUrl, type MunicipalityComparison, type SocioeconomicRanking, type WorkshopDiagnostic } from '@/utils/api';
+import { api, getApiBaseUrl, type SocioeconomicRanking, type WorkshopDiagnostic } from '@/utils/api';
 import ExecutiveDashboard from '@/components/Dashboard/ExecutiveDashboard';
 import SimulationPanel, { DEFAULT_SIM_OVERLAYS, type SimOverlayOptions } from '@/components/Simulation/SimulationPanel';
 import AssistantPanel from '@/components/Assistant/AssistantPanel';
@@ -33,6 +33,9 @@ import {
 import { useAppStore } from '@/stores/useAppStore';
 import AgenteSinidu from '@/components/AgenteSinidu';
 import { useAgenteProativo } from '@/hooks/useAgenteContexto';
+import WorkshopCenter from '@/components/Workshop/WorkshopCenter';
+import MunicipioLoadProgress from '@/components/Platform/MunicipioLoadProgress';
+import OnboardingBanner from '@/components/Onboarding/OnboardingBanner';
 
 const MapContainer = dynamic(
   () => import('@/components/Map/MapContainer'),
@@ -44,7 +47,7 @@ const Map3DMapLibreContainer = dynamic(
   { ssr: false }
 );
 
-import { LayoutDashboard, Sliders, MessageSquare, BookOpen, Layers, MapPin, Eye, Sparkles, FileText, PlayCircle, Box, Shield, Radio, Building2, ClipboardList, Server, Database } from 'lucide-react';
+import { LayoutDashboard, Sliders, MessageSquare, BookOpen, Layers, MapPin, Eye, Box, Shield, Radio, Building2, ClipboardList, Server, Database } from 'lucide-react';
 
 type PlatformAppProps = {
   initialTab?: ActiveTab;
@@ -87,16 +90,15 @@ export default function PlatformApp({ initialTab }: PlatformAppProps) {
   const [simFlowPaths, setSimFlowPaths] = useState<any>(null);
   const [simOverlays, setSimOverlays] = useState<SimOverlayOptions>(DEFAULT_SIM_OVERLAYS);
   const [diagnostic, setDiagnostic] = useState<WorkshopDiagnostic | null>(null);
-  const [diagnosticLoading, setDiagnosticLoading] = useState(false);
-  const [storyStep, setStoryStep] = useState<string | null>(null);
-  const [comparison, setComparison] = useState<MunicipalityComparison | null>(null);
-  const [comparisonLoading, setComparisonLoading] = useState(false);
   const [socioRanking, setSocioRanking] = useState<SocioeconomicRanking | null>(null);
   const [mapMode, setMapMode] = useState<'2d' | '3d'>('2d');
   const [alertToast, setAlertToast] = useState<{ title: string; message: string } | null>(null);
   const [contingencyNivel, setContingencyNivel] = useState<string>('AMARELO');
   const [malhaIndisponivel, setMalhaIndisponivel] = useState(false);
   const [scoreConfiabilidade, setScoreConfiabilidade] = useState<string | null>(null);
+  const [simulating, setSimulating] = useState(false);
+  const [municipioLoadStep, setMunicipioLoadStep] = useState(0);
+  const requestReport = useAppStore((s) => s.requestReport);
 
   useEffect(() => {
     if (initialTab) {
@@ -194,18 +196,23 @@ export default function PlatformApp({ initialTab }: PlatformAppProps) {
 
     setMunicipioEnsuring(true);
     setMunicipioEnsureError(null);
+    setMunicipioLoadStep(0);
     setSelectedMunicipio(codigoIbge);
     setDiagnostic(null);
-    setStoryStep(null);
     setSimGeoJSON(null);
     setSimContours(null);
     setSimFlowPaths(null);
-    setComparison(null);
     setActiveLayers([...DEFAULT_MAP_LAYERS]);
 
+    const stepTimer = window.setInterval(() => {
+      setMunicipioLoadStep((s) => Math.min(s + 1, 3));
+    }, 1200);
+
     try {
+      setMunicipioLoadStep(1);
       let inDb = await isMunicipalityInDatabase(codigoIbge);
       if (!inDb) {
+        setMunicipioLoadStep(2);
         const ensured = await api.ensureMunicipality(codigoIbge);
         inDb = ensured.loaded;
         setMunicipalities((prev) =>
@@ -222,6 +229,7 @@ export default function PlatformApp({ initialTab }: PlatformAppProps) {
           ),
         );
       }
+      setMunicipioLoadStep(3);
     } catch (e) {
       const msg = e instanceof Error ? e.message : 'Falha ao integrar município';
       setMunicipioEnsureError(msg);
@@ -231,6 +239,7 @@ export default function PlatformApp({ initialTab }: PlatformAppProps) {
         ),
       );
     } finally {
+      window.clearInterval(stepTimer);
       setMunicipioEnsuring(false);
     }
 
@@ -269,133 +278,6 @@ export default function PlatformApp({ initialTab }: PlatformAppProps) {
   const handleAssistantFocusMap = (coords: [number, number], customZoom: number) => {
     setMapFocus(coords);
     setZoom(customZoom);
-  };
-
-  const loadDiagnostic = async () => {
-    setDiagnosticLoading(true);
-    try {
-      const [exec, workshop] = await Promise.all([
-        api.generateExecutiveDiagnostic(selectedMunicipio),
-        api.getWorkshopDiagnostic(selectedMunicipio),
-      ]);
-      setDiagnostic({ ...workshop, headline: exec.headline || workshop.headline });
-      setActiveLayers(workshop.recommended_layers);
-      if (workshop.critical_areas[0]) {
-        setMapFocus(workshop.critical_areas[0].coordinates);
-        setZoom(13);
-      }
-      return exec;
-    } finally {
-      setDiagnosticLoading(false);
-    }
-  };
-
-  const openPresentation = () => {
-    if (!selectedMunicipio) return;
-    router.push(`/apresentacao/${selectedMunicipio}`);
-  };
-
-  const exportDiagnosticReport = async () => {
-    try {
-      const exec = await api.getExecutiveDiagnostic(selectedMunicipio).catch(() =>
-        api.generateExecutiveDiagnostic(selectedMunicipio),
-      );
-      if (exec.download_url) {
-        await api.downloadReport(exec.download_url, exec.nome_arquivo || `diagnostico_${selectedMunicipio}.pdf`);
-        return;
-      }
-    } catch {
-      /* fallback HTML abaixo */
-    }
-    const data = diagnostic || (await api.getWorkshopDiagnostic(selectedMunicipio));
-    const rows = data.ranking.slice(0, 8).map((item, idx) => `
-      <tr>
-        <td>${idx + 1}</td>
-        <td>${item.bairro}</td>
-        <td>${item.score_sinidu}</td>
-        <td>${item.indice_vulnerabilidade.toFixed(2)}</td>
-        <td>${item.indice_risco_inundacao.toFixed(2)}</td>
-        <td>${item.acao_recomendada}</td>
-      </tr>
-    `).join('');
-    const opportunities = data.opportunities.map((item) => `<li>${item}</li>`).join('');
-    const report = `
-      <!doctype html>
-      <html lang="pt-BR">
-        <head>
-          <meta charset="utf-8" />
-          <title>Relatório Sinidu+Clima - ${data.municipio.nome}</title>
-          <style>
-            body { font-family: Arial, sans-serif; margin: 40px; color: #111827; }
-            h1 { color: #1e3a8a; }
-            h2 { margin-top: 28px; color: #334155; }
-            table { border-collapse: collapse; width: 100%; margin-top: 12px; }
-            th, td { border: 1px solid #cbd5e1; padding: 8px; font-size: 13px; text-align: left; }
-            th { background: #e0e7ff; }
-            .card { background: #f8fafc; border: 1px solid #cbd5e1; border-radius: 12px; padding: 16px; }
-          </style>
-        </head>
-        <body>
-          <h1>Relatório Executivo Sinidu+Clima</h1>
-          <div class="card">
-            <strong>${data.municipio.nome} - ${data.municipio.uf}</strong><br />
-            IBGE: ${data.municipio.codigo_ibge}<br />
-            População: ${data.municipio.populacao.toLocaleString('pt-BR')} habitantes<br />
-            Área: ${data.municipio.area_km2.toLocaleString('pt-BR')} km²
-          </div>
-          <h2>Diagnóstico</h2>
-          <p>${data.headline}</p>
-          <p><strong>Fórmula:</strong> ${data.score_formula}</p>
-          <h2>Ranking de Prioridade Territorial</h2>
-          <table>
-            <thead>
-              <tr><th>#</th><th>Bairro</th><th>Score</th><th>IVC</th><th>IRI</th><th>Ação recomendada</th></tr>
-            </thead>
-            <tbody>${rows}</tbody>
-          </table>
-          <h2>Oportunidades para a oficina</h2>
-          <ul>${opportunities}</ul>
-          <script>window.print();</script>
-        </body>
-      </html>
-    `;
-    const win = window.open('', '_blank');
-    win?.document.write(report);
-    win?.document.close();
-  };
-
-  const formatCompact = (value: number) => {
-    if (value >= 1_000_000_000) return `R$ ${(value / 1_000_000_000).toFixed(1)} bi`;
-    if (value >= 1_000_000) return `R$ ${(value / 1_000_000).toFixed(1)} mi`;
-    if (value >= 1_000) return `R$ ${(value / 1_000).toFixed(1)} mil`;
-    return `R$ ${value.toFixed(0)}`;
-  };
-
-  const METRO_PEER_CODES: Record<string, string[]> = {
-    '2611606': ['2611606', '2609600', '2607901'],
-    '2609600': ['2609600', '2611606', '2607901'],
-    '2607901': ['2607901', '2611606', '2609600'],
-  };
-
-  const runComparison = async () => {
-    setComparisonLoading(true);
-    try {
-      const peerPreset = METRO_PEER_CODES[selectedMunicipio];
-      const available = new Set(municipalities.map((item) => item.codigo_ibge));
-      const comparisonCodes = peerPreset
-        ? peerPreset.filter((code) => available.has(code))
-        : Array.from(new Set([
-            selectedMunicipio,
-            ...municipalities.map((item) => item.codigo_ibge).filter((code) => code !== selectedMunicipio).slice(0, 2),
-          ]));
-      if (comparisonCodes.length < 2) {
-        comparisonCodes.push(selectedMunicipio);
-      }
-      const data = await api.compareMunicipalities(comparisonCodes.slice(0, 3));
-      setComparison(data);
-    } finally {
-      setComparisonLoading(false);
-    }
   };
 
   useEffect(() => {
@@ -532,8 +414,8 @@ export default function PlatformApp({ initialTab }: PlatformAppProps) {
       </header>
 
       {municipioEnsuring && (
-        <div className="border-b border-indigo-500/40 bg-indigo-950/40 px-6 py-2 text-center text-xs text-indigo-100">
-          Integrando dados territoriais de <strong>{selectedMunicipioInfo?.nome || selectedMunicipio}</strong>… geometria IBGE, bairros, indicadores e integrações públicas.
+        <div className="border-b border-indigo-500/40 bg-indigo-950/40 px-6 py-3">
+          <MunicipioLoadProgress visible stepIndex={municipioLoadStep} />
         </div>
       )}
 
@@ -595,13 +477,16 @@ export default function PlatformApp({ initialTab }: PlatformAppProps) {
           {/* Active Tab Panel Content */}
           <div className="flex-1 min-h-0 overflow-y-auto p-5">
             {activeTab === 'dashboard' && (
-              <ExecutiveDashboard
+              <div className="flex flex-col gap-4">
+                <OnboardingBanner codigoIbge={selectedMunicipio} municipioNome={selectedMunicipioInfo?.nome} />
+                <ExecutiveDashboard
                 key={`${selectedMunicipio}-${selectedMunicipioInfo?.loaded}`}
                 codigoIbge={selectedMunicipio}
                 municipioLoaded={selectedMunicipioInfo?.loaded === true}
                 municipioEnsuring={municipioEnsuring}
                 municipioNome={selectedMunicipioInfo?.nome}
               />
+              </div>
             )}
             {activeTab === 'onboarding' && (
               <OnboardingPanel
@@ -639,6 +524,7 @@ export default function PlatformApp({ initialTab }: PlatformAppProps) {
                 key={selectedMunicipio}
                 onSimulate={handleSimulate}
                 onClear={handleClearSimulation}
+                onSimulatingChange={setSimulating}
                 codigoIbge={selectedMunicipio}
                 municipioNome={selectedMunicipioInfo?.nome}
                 municipioLoaded={selectedMunicipioInfo?.loaded === true}
@@ -686,125 +572,30 @@ export default function PlatformApp({ initialTab }: PlatformAppProps) {
                 initialNivel={contingencyNivel}
               />
             )}
-            {activeTab === 'audit' && isAdmin && <AuditPanel />}
+            {activeTab === 'audit' && isAdmin && <AuditPanel codigoIbge={selectedMunicipio} />}
             {activeTab === 'system' && isAdmin && <SystemPanel />}
           </div>
         </section>
 
         {/* Right Mapping View (60% width) */}
         <section className="flex-1 relative bg-zinc-950 overflow-hidden">
-          {/* Workshop Impact Panel */}
-          <div className="absolute top-4 left-[18rem] right-80 z-[998] rounded-xl border border-indigo-500/30 bg-zinc-950/90 p-3 shadow-2xl backdrop-blur-md">
-            <div className="flex items-center justify-between gap-3">
-              <div>
-                <p className="flex items-center gap-1.5 text-[10px] font-extrabold uppercase tracking-wider text-indigo-300">
-                  <Sparkles size={13} /> Central da Oficina Sinidu+Clima
-                </p>
-                <p className="mt-1 text-xs text-zinc-300">
-                  {diagnostic?.headline || 'Gere um diagnóstico automático, apresente a narrativa guiada e exporte relatório executivo.'}
-                </p>
-              </div>
-              <div className="flex shrink-0 gap-2">
-                <button
-                  onClick={loadDiagnostic}
-                  disabled={diagnosticLoading}
-                  className="rounded-lg border border-indigo-500/40 bg-indigo-500/15 px-3 py-2 text-[10px] font-bold uppercase text-indigo-200 hover:bg-indigo-500/25 disabled:opacity-60"
-                >
-                  {diagnosticLoading ? 'Gerando...' : 'Diagnóstico'}
-                </button>
-                <button
-                  onClick={openPresentation}
-                  className="flex items-center gap-1 rounded-lg border border-emerald-500/40 bg-emerald-500/15 px-3 py-2 text-[10px] font-bold uppercase text-emerald-200 hover:bg-emerald-500/25"
-                >
-                  <PlayCircle size={12} /> Apresentar
-                </button>
-                <button
-                  onClick={exportDiagnosticReport}
-                  className="flex items-center gap-1 rounded-lg border border-zinc-600 bg-zinc-900 px-3 py-2 text-[10px] font-bold uppercase text-zinc-200 hover:bg-zinc-800"
-                >
-                  <FileText size={12} /> Relatório
-                </button>
-                <button
-                  onClick={runComparison}
-                  disabled={comparisonLoading}
-                  className="rounded-lg border border-sky-500/40 bg-sky-500/15 px-3 py-2 text-[10px] font-bold uppercase text-sky-200 hover:bg-sky-500/25 disabled:opacity-60"
-                >
-                  {comparisonLoading ? 'Comparando...' : 'Comparar'}
-                </button>
-              </div>
-            </div>
+          <WorkshopCenter
+            selectedMunicipio={selectedMunicipio}
+            municipioNome={selectedMunicipioInfo?.nome}
+            municipalities={municipalities}
+            diagnostic={diagnostic}
+            setDiagnostic={setDiagnostic}
+            setActiveLayers={setActiveLayers}
+            setMapFocus={setMapFocus}
+            setZoom={setZoom}
+            scoreConfiabilidade={scoreConfiabilidade}
+            onGenerateRapido={() => requestReport('rapido')}
+            onGenerateCompleto={() => requestReport('completo')}
+          />
 
-            {storyStep && (
-              <div className="mt-2 rounded-lg border border-emerald-500/30 bg-emerald-950/40 px-3 py-2 text-xs text-emerald-100">
-                {storyStep}
-              </div>
-            )}
-
-            {diagnostic && (
-              <div className="mt-3 grid grid-cols-3 gap-2">
-                {diagnostic.critical_areas.map((item, idx) => (
-                  <button
-                    key={item.bairro}
-                    onClick={() => {
-                      setMapFocus(item.coordinates);
-                      setZoom(14);
-                      setActiveLayers(['bairros', 'prioridade_planejamento', 'vulnerabilidade', 'inundacao']);
-                    }}
-                    className="rounded-lg border border-zinc-700 bg-zinc-900/80 p-2 text-left hover:border-indigo-400/60"
-                  >
-                    <span className="text-[9px] font-bold uppercase text-zinc-500">Prioridade {idx + 1}</span>
-                    <div className="mt-1 flex items-center justify-between">
-                      <strong className="text-xs text-zinc-100">{item.bairro}</strong>
-                      <span className="flex items-center gap-1">
-                        <span className="rounded-full bg-rose-500/20 px-2 py-0.5 text-[10px] font-extrabold text-rose-200">{item.score_sinidu}</span>
-                        {scoreConfiabilidade && (
-                          <span className="text-[8px] text-amber-300" title={`Confiança: ${scoreConfiabilidade}`}>
-                            {scoreConfiabilidade === 'ALTA' ? '⬤ Alta' : scoreConfiabilidade === 'ESTIMADO' ? '⚠ Estimado' : '⚠ Parcial'}
-                          </span>
-                        )}
-                      </span>
-                    </div>
-                    {item.score_componentes && (
-                      <div className="mt-1 grid grid-cols-3 gap-1 text-[8px] text-zinc-400">
-                        <span>IVC {item.score_componentes.vulnerabilidade_pct}</span>
-                        <span>IRI {item.score_componentes.inundacao_pct}</span>
-                        <span>ADP {item.score_componentes.deficit_adaptacao_pct}</span>
-                      </div>
-                    )}
-                    <p className="mt-1 line-clamp-2 text-[10px] leading-snug text-zinc-400">{item.acao_recomendada}</p>
-                  </button>
-                ))}
-              </div>
-            )}
-
-            {comparison && (
-              <div className="mt-3 rounded-lg border border-sky-500/20 bg-sky-950/20 p-2">
-                <div className="mb-2 flex items-center justify-between">
-                  <span className="text-[10px] font-extrabold uppercase tracking-wider text-sky-200">Comparação municipal</span>
-                  <span className="text-[9px] text-zinc-500">
-                    {selectedMunicipio === '2611606' ? 'RM Recife' : 'Oficial + Estimado + Derivado'}
-                  </span>
-                </div>
-                <div className="grid grid-cols-3 gap-2">
-                  {comparison.municipios.map((row) => (
-                    <button
-                      key={row.codigo_ibge}
-                      onClick={() => handleMunicipioChange(row.codigo_ibge)}
-                      className="rounded-lg border border-zinc-700 bg-zinc-900/80 p-2 text-left hover:border-sky-400/60"
-                    >
-                      <div className="flex items-center justify-between">
-                        <strong className="text-xs text-zinc-100">{row.nome}</strong>
-                        <span className="rounded-full bg-sky-500/20 px-2 py-0.5 text-[10px] font-extrabold text-sky-200">{row.score_sinidu}</span>
-                      </div>
-                      <p className="mt-1 text-[9px] text-zinc-400">Renda: R$ {row.renda_media_setores.toLocaleString('pt-BR', { maximumFractionDigits: 0 })}</p>
-                      <p className="text-[9px] text-zinc-400">Verde: {row.cobertura_vegetal_percent}% | IVC: {row.media_ivc}</p>
-                      <p className="text-[9px] text-zinc-400">Danos: {formatCompact(row.danos_materiais_total)}</p>
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
+          {simulating && (
+            <div className="pointer-events-none absolute inset-0 z-[500] animate-pulse bg-sky-500/5" aria-hidden />
+          )}
           
           {/* Layer Selector Overlay Widget */}
           <div className="absolute top-4 left-4 z-[999] bg-card/85 backdrop-blur-md border border-border p-3 rounded-xl shadow-2xl flex flex-col gap-2 w-64">
@@ -967,6 +758,7 @@ export default function PlatformApp({ initialTab }: PlatformAppProps) {
             simFlowPaths={simFlowPaths}
             simOverlays={simOverlays}
             selectedMunicipio={selectedMunicipio}
+            simulating={simulating}
           />
           ) : (
           <Map3DMapLibreContainer

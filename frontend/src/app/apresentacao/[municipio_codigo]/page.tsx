@@ -3,9 +3,10 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { Bar, BarChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
-import { ChevronLeft, ChevronRight, X } from 'lucide-react';
+import { ChevronLeft, ChevronRight, X, Loader2 } from 'lucide-react';
 
 import { api, getApiBaseUrl, type PresentationPayload } from '@/utils/api';
+import RotatingLoader, { PRESENTATION_MESSAGES } from '@/components/UI/RotatingLoader';
 
 const TOTAL_SLIDES = 8;
 
@@ -88,7 +89,8 @@ export default function ApresentacaoPage() {
   if (loading) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-zinc-950 text-zinc-300">
-        Carregando apresentação…
+        <Loader2 className="h-8 w-8 animate-spin text-indigo-400" />
+        <RotatingLoader messages={PRESENTATION_MESSAGES} className="mt-4 text-zinc-400" showSpinner={false} />
       </div>
     );
   }

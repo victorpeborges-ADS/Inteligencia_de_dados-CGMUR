@@ -6,6 +6,7 @@ from app.db import get_db
 from app.models import PlanoAcaoMunicipal
 from app.security.municipio_access import assert_codigo_ibge_access, get_accessible_municipio
 from app.services.action_plan_engine import action_plan_to_dict, generate_action_plan
+from app.services.audit_service import log_audit, resolve_actor
 
 router = APIRouter()
 
@@ -53,12 +54,24 @@ class ActionPlanResponse(BaseModel):
 
 @router.post("/generate/{codigo_ibge}", response_model=ActionPlanResponse)
 def generate_municipal_action_plan(codigo_ibge: str, request: Request, db: Session = Depends(get_db)):
+    actor = resolve_actor(request)
     get_accessible_municipio(db, codigo_ibge, request=request)
     try:
         record = generate_action_plan(db, codigo_ibge, origem="manual")
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
-    return action_plan_to_dict(record)
+    payload = action_plan_to_dict(record)
+    log_audit(
+        db,
+        user=actor,
+        action="action_plan.generate",
+        resource_type="plano_acao",
+        resource_id=record.id,
+        codigo_ibge=codigo_ibge,
+        metadata={"versao": record.versao, "total_acoes": payload.get("total_acoes")},
+        request=request,
+    )
+    return payload
 
 
 @router.get("/{codigo_ibge}", response_model=ActionPlanResponse)

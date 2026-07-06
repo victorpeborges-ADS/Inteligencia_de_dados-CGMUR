@@ -14,6 +14,11 @@ from app.security.municipio_access import (
 )
 from app.services.maturity_engine import PRATA_MIN_SCORE, compute_maturity
 from app.services.report_generator import MunicipalReportGenerator
+from app.services.report_completo_service import (
+    generate_completo_report,
+    get_report_job_progress,
+    run_completo_report_job,
+)
 from app.services.sei_export import build_municipal_sei_package
 
 router = APIRouter()
@@ -101,6 +106,66 @@ def generate_municipal_report_by_codigo(
     """Gera PDF a partir do código IBGE (alternativa ao id interno)."""
     muni = get_accessible_municipio(db, codigo_ibge, request=request)
     return generate_municipal_report(muni.id, request=request, force=force, db=db)
+
+
+@router.post("/municipal/codigo/{codigo_ibge}/completo")
+def generate_completo_municipal_report(
+    codigo_ibge: str,
+    request: Request,
+    async_mode: bool = Query(default=True, alias="async"),
+    force: bool = Query(default=False),
+    db: Session = Depends(get_db),
+):
+    """Relatório PDF enriquecido (8 páginas, IA, gráficos). async=true enfileira job com progresso."""
+    muni = get_accessible_municipio(db, codigo_ibge, request=request)
+    _assert_pdf_maturity_gate(db, codigo_ibge, force=force)
+    actor = resolve_actor(request)
+
+    if async_mode:
+        job_id = run_completo_report_job(codigo_ibge)
+        log_audit(
+            db,
+            user=actor,
+            action="report.completo_async",
+            resource_type="relatorio_municipal",
+            resource_id=None,
+            codigo_ibge=codigo_ibge,
+            metadata={"job_id": job_id},
+            request=request,
+        )
+        progress = get_report_job_progress(job_id)
+        return {"job_id": job_id, "async": True, **(progress or {})}
+
+    try:
+        record = generate_completo_report(db, codigo_ibge)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Falha ao gerar relatório completo: {exc}") from exc
+
+    log_audit(
+        db,
+        user=actor,
+        action="report.completo",
+        resource_type="relatorio_municipal",
+        resource_id=record.id,
+        codigo_ibge=codigo_ibge,
+        metadata={"nome_arquivo": record.nome_arquivo},
+        request=request,
+    )
+    return _report_response(record)
+
+
+@router.get("/{job_id}/progresso")
+def report_job_progress(job_id: str):
+    """Progresso do job de relatório completo (gráficos → narrativa → HTML → PDF)."""
+    progress = get_report_job_progress(job_id)
+    if not progress:
+        raise HTTPException(status_code=404, detail="Job de relatório não encontrado.")
+    return progress
+
+
+@router.get("/jobs/{job_id}/progresso")
+def report_job_progress_alias(job_id: str):
+    return report_job_progress(job_id)
 
 
 @router.get("/municipal/codigo/{codigo_ibge}/history", response_model=list[MunicipalReportHistoryItem])

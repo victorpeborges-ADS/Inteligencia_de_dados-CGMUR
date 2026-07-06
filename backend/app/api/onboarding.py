@@ -8,7 +8,7 @@ from app.db import get_db
 from app.models import MunicipioSeed
 from app.security.municipio_access import assert_codigo_ibge_access
 from app.security.tenant import can_access_municipio
-from app.services.audit_service import resolve_actor
+from app.services.audit_service import resolve_actor, log_audit
 from app.services.municipio_loader import ensure_municipality_loaded
 from app.security.auth import Role, User, require_role
 from app.services.onboarding_engine import (
@@ -57,13 +57,24 @@ def list_status(
 @router.post("/ensure/{codigo_ibge}")
 def ensure_municipality(codigo_ibge: str, request: Request, db: Session = Depends(get_db)):
     code = _normalize_ibge(codigo_ibge)
+    actor = resolve_actor(request)
     assert_codigo_ibge_access(db, code, request=request)
     try:
-        return ensure_municipality_loaded(db, code)
+        result = ensure_municipality_loaded(db, code)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Falha ao carregar município: {exc}") from exc
+    log_audit(
+        db,
+        user=actor,
+        action="onboarding.ensure",
+        resource_type="municipio",
+        codigo_ibge=code,
+        metadata={"loaded": result.get("loaded"), "nome": result.get("nome")},
+        request=request,
+    )
+    return result
 
 
 @router.get("/{codigo_ibge}")
@@ -87,13 +98,24 @@ def validate_municipality(body: OnboardingValidateRequest):
 @router.post("/run")
 def run_municipality_onboarding(body: OnboardingRunRequest, request: Request, db: Session = Depends(get_db)):
     code = _normalize_ibge(body.codigo_ibge)
+    actor = resolve_actor(request)
     assert_codigo_ibge_access(db, code, request=request)
     try:
-        return run_onboarding(db, code, force=body.force)
+        result = run_onboarding(db, code, force=body.force)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Falha no onboarding: {exc}") from exc
+    log_audit(
+        db,
+        user=actor,
+        action="onboarding.run",
+        resource_type="municipio_seed",
+        codigo_ibge=code,
+        metadata={"status": result.get("onboarding_status"), "force": body.force},
+        request=request,
+    )
+    return result
 
 
 @router.post("/run-batch")

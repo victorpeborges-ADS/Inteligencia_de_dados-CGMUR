@@ -965,6 +965,18 @@ export interface MunicipalReportRecord {
   download_url: string;
 }
 
+export interface ReportJobProgress {
+  job_id: string;
+  status: string;
+  progress: number;
+  stage?: string;
+  stage_label?: string;
+  report_id?: number;
+  download_url?: string;
+  error?: string | null;
+  async?: boolean;
+}
+
 export interface ExecutiveDiagnostic {
   id: number;
   municipio_id: number;
@@ -1829,6 +1841,31 @@ export const api = {
       const detail = await res.json().catch(() => ({}));
       throw new Error(detail.detail || 'Falha ao gerar relatório PDF');
     }
+    return res.json();
+  },
+
+  generateCompletoReport: async (
+    codigoIbge: string,
+    force = false,
+    asyncMode = true,
+  ): Promise<ReportJobProgress | MunicipalReportRecord> => {
+    const params = new URLSearchParams();
+    params.set('async', String(asyncMode));
+    if (force) params.set('force', 'true');
+    const res = await apiFetch(
+      `${getApiBaseUrl()}/api/v1/reports/municipal/codigo/${encodeURIComponent(codigoIbge)}/completo?${params}`,
+      { method: 'POST' },
+    );
+    if (!res.ok) {
+      const detail = await res.json().catch(() => ({}));
+      throw new Error(detail.detail || 'Falha ao gerar relatório completo');
+    }
+    return res.json();
+  },
+
+  getReportJobProgress: async (jobId: string): Promise<ReportJobProgress> => {
+    const res = await apiFetch(`${getApiBaseUrl()}/api/v1/reports/${encodeURIComponent(jobId)}/progresso`);
+    if (!res.ok) throw new Error('Falha ao consultar progresso do relatório');
     return res.json();
   },
 

@@ -6,6 +6,8 @@ import { useAppStore } from '@/stores/useAppStore';
 import ActionPlanPanel from '@/components/Dashboard/ActionPlanPanel';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, LineChart, Line, CartesianGrid, Legend } from 'recharts';
 import { Users, Trees, ShieldAlert, DollarSign, Waves, FileDown, Loader2, Award, ListChecks } from 'lucide-react';
+import RotatingLoader, { PDF_DIAGNOSTIC_MESSAGES } from '@/components/UI/RotatingLoader';
+import TermTooltip from '@/components/UI/TermTooltip';
 
 const TIER_STYLE: Record<string, { bg: string; text: string; border: string }> = {
   Platina: { bg: 'bg-slate-400/15', text: 'text-slate-200', border: 'border-slate-400/40' },
@@ -48,6 +50,10 @@ export default function ExecutiveDashboard({
   const [reportHistory, setReportHistory] = useState<MunicipalReportRecord[]>([]);
   const [reportLoading, setReportLoading] = useState(false);
   const [reportError, setReportError] = useState<string | null>(null);
+  const [completoLoading, setCompletoLoading] = useState(false);
+  const [completoProgress, setCompletoProgress] = useState(0);
+  const [completoStage, setCompletoStage] = useState('');
+  const [completoError, setCompletoError] = useState<string | null>(null);
   const [pdfForceOverride, setPdfForceOverride] = useState(false);
   const [diagnostic, setDiagnostic] = useState<ExecutiveDiagnostic | null>(null);
   const [diagnosticHistory, setDiagnosticHistory] = useState<ExecutiveDiagnosticHistoryItem[]>([]);
@@ -59,6 +65,8 @@ export default function ExecutiveDashboard({
   const [dashboardError, setDashboardError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [mounted, setMounted] = useState(false);
+  const reportRequest = useAppStore((s) => s.reportRequest);
+  const clearReportRequest = useAppStore((s) => s.clearReportRequest);
 
   useEffect(() => {
     setMounted(true);
@@ -199,6 +207,70 @@ export default function ExecutiveDashboard({
     }
   };
 
+  const handleGenerateCompletoReport = async () => {
+    if (!codigoIbge) {
+      setCompletoError('Município não selecionado.');
+      return;
+    }
+    setCompletoLoading(true);
+    setCompletoError(null);
+    setCompletoProgress(0);
+    setCompletoStage('Iniciando…');
+    try {
+      const started = await api.generateCompletoReport(codigoIbge, pdfForceOverride, true);
+      if (!('job_id' in started) || !started.job_id) {
+        const record = started as MunicipalReportRecord;
+        await api.downloadReport(record.download_url, record.nome_arquivo);
+        setReportHistory((prev) => [record, ...prev]);
+        return;
+      }
+      const jobId = started.job_id;
+      for (let i = 0; i < 120; i += 1) {
+        await new Promise((r) => setTimeout(r, 2000));
+        const prog = await api.getReportJobProgress(jobId);
+        setCompletoProgress(prog.progress || 0);
+        setCompletoStage(prog.stage_label || prog.stage || 'Processando…');
+        if (prog.status === 'completed' && prog.download_url) {
+          setCompletoProgress(100);
+          await api.downloadReport(prog.download_url, `relatorio_completo_${codigoIbge}.pdf`);
+          if (prog.report_id) {
+            setReportHistory((prev) => [
+              {
+                id: prog.report_id!,
+                municipio_id: 0,
+                codigo_ibge: codigoIbge,
+                nome_arquivo: `relatorio_completo_${codigoIbge}.pdf`,
+                tamanho_bytes: 0,
+                status: 'concluido',
+                gerado_em: new Date().toISOString(),
+                download_url: prog.download_url!,
+              },
+              ...prev,
+            ]);
+          }
+          break;
+        }
+        if (prog.status === 'failed') {
+          throw new Error(prog.error || 'Geração do relatório completo falhou');
+        }
+      }
+    } catch (err) {
+      setCompletoError(err instanceof Error ? err.message : 'Erro ao gerar relatório completo');
+    } finally {
+      setCompletoLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!reportRequest || !codigoIbge) return;
+    if (reportRequest === 'completo') {
+      handleGenerateCompletoReport().finally(() => clearReportRequest());
+    } else if (reportRequest === 'rapido') {
+      handleGenerateReport().finally(() => clearReportRequest());
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [reportRequest, codigoIbge]);
+
   const handleGenerateDiagnostic = async () => {
     if (!codigoIbge) {
       setDiagnosticError('Município não selecionado.');
@@ -280,9 +352,7 @@ export default function ExecutiveDashboard({
   if (!mounted || municipioEnsuring) {
     return (
       <div className="flex flex-col gap-5 p-1 animate-pulse">
-        <p className="rounded-lg border border-indigo-500/30 bg-indigo-950/20 px-3 py-2 text-[11px] text-indigo-200">
-          Carregando dados de {municipioNome || codigoIbge}…
-        </p>
+        <RotatingLoader messages={['Carregando dados municipais…', 'Sincronizando indicadores…', 'Preparando painel executivo…']} className="text-indigo-200" />
         <div className="grid grid-cols-2 gap-3">
           {[1, 2, 3, 4].map((i) => (
             <div key={i} className="h-24 bg-zinc-900 rounded-xl border border-zinc-800"></div>
@@ -502,14 +572,46 @@ export default function ExecutiveDashboard({
             <button
               type="button"
               onClick={() => handleGenerateReport()}
-              disabled={reportLoading || !codigoIbge || (pdfBlocked && !pdfForceOverride)}
+              disabled={reportLoading || completoLoading || !codigoIbge || (pdfBlocked && !pdfForceOverride)}
               className="inline-flex shrink-0 items-center gap-2 rounded-lg border border-indigo-400/40 bg-indigo-500/15 px-3 py-2 text-[11px] font-bold text-indigo-100 transition hover:bg-indigo-500/25 disabled:cursor-not-allowed disabled:opacity-50"
             >
               {reportLoading ? <Loader2 size={14} className="animate-spin" /> : <FileDown size={14} />}
               {reportLoading ? 'Compilando dados...' : pdfBlocked && pdfForceOverride ? 'Gerar PDF (override)' : 'Gerar Relatório PDF'}
             </button>
+            <button
+              type="button"
+              onClick={handleGenerateCompletoReport}
+              disabled={completoLoading || reportLoading || !codigoIbge || (pdfBlocked && !pdfForceOverride)}
+              className="inline-flex shrink-0 items-center gap-2 rounded-lg border border-emerald-400/40 bg-emerald-500/15 px-3 py-2 text-[11px] font-bold text-emerald-100 transition hover:bg-emerald-500/25 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {completoLoading ? <Loader2 size={14} className="animate-spin" /> : <FileDown size={14} />}
+              {completoLoading ? 'Relatório IA…' : 'PDF Completo (IA + gráficos)'}
+            </button>
           </div>
         </div>
+        {reportLoading && (
+          <div className="mb-3 rounded-lg border border-indigo-800/40 bg-indigo-950/20 p-3">
+            <RotatingLoader messages={PDF_DIAGNOSTIC_MESSAGES} className="text-indigo-200" />
+          </div>
+        )}
+        {completoLoading && (
+          <div className="mb-3 rounded-lg border border-emerald-800/40 bg-emerald-950/20 p-3">
+            <RotatingLoader messages={PDF_DIAGNOSTIC_MESSAGES} className="mb-2 text-emerald-200" />
+            <div className="mb-1 flex justify-between text-[9px] text-emerald-200">
+              <span>{completoStage}</span>
+              <span>{completoProgress}%</span>
+            </div>
+            <div className="h-2 overflow-hidden rounded-full bg-zinc-900">
+              <div
+                className="h-full bg-emerald-500 transition-all duration-500"
+                style={{ width: `${Math.min(completoProgress, 100)}%` }}
+              />
+            </div>
+          </div>
+        )}
+        {completoError && (
+          <p className="mb-2 text-[10px] text-rose-300">{completoError}</p>
+        )}
         {reportError && (
           <p className="mb-2 text-[10px] text-rose-300">{reportError}</p>
         )}
@@ -565,6 +667,11 @@ export default function ExecutiveDashboard({
             {diagnosticLoading ? 'Gerando PDF...' : 'Gerar Diagnóstico PDF'}
           </button>
         </div>
+        {diagnosticLoading && (
+          <div className="mb-3 rounded-lg border border-emerald-800/40 bg-emerald-950/20 p-3">
+            <RotatingLoader messages={PDF_DIAGNOSTIC_MESSAGES} className="text-emerald-200" />
+          </div>
+        )}
         {diagnosticError && <p className="mb-2 text-[10px] text-rose-300">{diagnosticError}</p>}
         {diagnostic ? (
           <div className="space-y-3">
@@ -742,7 +849,7 @@ export default function ExecutiveDashboard({
           </div>
 
           <div className="mb-3 flex items-center gap-3">
-            <span className="text-[10px] text-zinc-500">CAPAG</span>
+            <span className="text-[10px] text-zinc-500"><TermTooltip term="CAPAG" /></span>
             <span className={`inline-flex h-10 w-10 items-center justify-center rounded-xl border text-lg font-black ${
               indicators.nota_capag === 'A' || indicators.nota_capag === 'B'
                 ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300'
@@ -906,7 +1013,7 @@ export default function ExecutiveDashboard({
         <div className="bg-card/40 backdrop-blur-md border border-border p-4.5 rounded-xl flex flex-col">
           <div className="mb-3">
             <h4 className="font-extrabold text-zinc-200 text-xs uppercase tracking-wide">Vulnerabilidade por Bairro</h4>
-            <p className="text-[10px] text-zinc-400 mt-0.5">Comparação entre os índices IVC e IRI (0 a 1.0)</p>
+            <p className="text-[10px] text-zinc-400 mt-0.5">Comparação entre <TermTooltip term="IVC" /> e <TermTooltip term="IRI" /> (0 a 1.0)</p>
           </div>
           <div className="h-56 w-full text-[10px]">
             {chartData.length > 0 ? (

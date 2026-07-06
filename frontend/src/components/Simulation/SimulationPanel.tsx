@@ -4,6 +4,8 @@ import { useState, useEffect } from 'react';
 import { api, MitigationPlan, RainfallComparison, SimulationInterpret, SimulationOutput, SlopeInterpretation } from '@/utils/api';
 import { Play, RotateCcw, AlertTriangle, HelpCircle, Thermometer, Droplet, FileText, Waves, Layers, Mountain, Activity, Sparkles, Copy, ClipboardCheck } from 'lucide-react';
 import PredictiveAnalysis from './PredictiveAnalysis';
+import RotatingLoader, { INTERPRETATION_MESSAGES, SIMULATION_MESSAGES } from '@/components/UI/RotatingLoader';
+import TermTooltip from '@/components/UI/TermTooltip';
 
 export type SimOverlayOptions = {
   showFlood: boolean;
@@ -20,6 +22,7 @@ export const DEFAULT_SIM_OVERLAYS: SimOverlayOptions = {
 interface SimulationProps {
   onSimulate: (payload: SimulationOutput | any) => void;
   onClear: () => void;
+  onSimulatingChange?: (simulating: boolean) => void;
   codigoIbge?: string;
   municipioNome?: string;
   municipioLoaded?: boolean;
@@ -30,6 +33,7 @@ interface SimulationProps {
 export default function SimulationPanel({
   onSimulate,
   onClear,
+  onSimulatingChange,
   codigoIbge,
   municipioNome,
   municipioLoaded,
@@ -58,6 +62,7 @@ export default function SimulationPanel({
   const [copyOk, setCopyOk] = useState(false);
   const [lidarUploading, setLidarUploading] = useState(false);
   const [lidarMessage, setLidarMessage] = useState<string | null>(null);
+  const [simError, setSimError] = useState<string | null>(null);
 
   useEffect(() => {
     if (analysisLoading) {
@@ -139,6 +144,8 @@ export default function SimulationPanel({
 
   const handleSimulate = async () => {
     setLoading(true);
+    onSimulatingChange?.(true);
+    setSimError(null);
     setMitigationPlan(null);
     setSimInterpret(null);
     setSlopeInterpret(null);
@@ -165,8 +172,10 @@ export default function SimulationPanel({
       void runInterpret(data, compareRainfall && activeTab === 'rainfall' ? comparison : null);
     } catch (err) {
       console.error('Error running simulation:', err);
+      setSimError(err instanceof Error ? err.message : 'Falha na simulação pluvial.');
     } finally {
       setLoading(false);
+      onSimulatingChange?.(false);
     }
   };
 
@@ -353,7 +362,7 @@ export default function SimulationPanel({
                     <Droplet size={16} className="text-accent-sky" /> Modelo Pluvial Territorial
                   </h4>
                   <p className="text-[10px] text-sky-200/70 mt-1 uppercase tracking-wider font-bold">
-                    DEM SRTM · Curvas de nível · Manchas por profundidade
+                    <TermTooltip term="SRTM" label="DEM SRTM" /> · Curvas de nível · Manchas por profundidade
                   </p>
                 </div>
                 <span className="shrink-0 rounded-md border border-sky-500/30 bg-sky-500/10 px-2 py-1 text-[9px] font-bold text-sky-200">
@@ -392,6 +401,12 @@ export default function SimulationPanel({
                 step="10"
                 value={rainfallMm}
                 onChange={(e) => setRainfallMm(Number(e.target.value))}
+                onPointerDown={() => {}}
+                onPointerUp={() => {
+                  if (activeTab === 'rainfall' && codigoIbge && municipioLoaded !== false) {
+                    void handleSimulate();
+                  }
+                }}
                 className="w-full h-1.5 bg-zinc-800 rounded-lg appearance-none cursor-pointer accent-sky-500"
               />
               <div className="flex justify-between text-[8px] text-zinc-600 font-mono">
@@ -585,6 +600,15 @@ export default function SimulationPanel({
           </div>
         )}
 
+        {activeTab !== 'predictive' && loading && activeTab === 'rainfall' && (
+          <div className="mt-4 rounded-lg border border-sky-500/30 bg-sky-950/20 p-3">
+            <RotatingLoader messages={SIMULATION_MESSAGES(rainfallMm)} className="text-sky-200" />
+          </div>
+        )}
+        {simError && (
+          <p className="mt-2 rounded-lg border border-rose-800/50 bg-rose-950/30 px-3 py-2 text-[10px] text-rose-200">{simError}</p>
+        )}
+
         {/* Action buttons — ocultos na aba preditiva (tem botão próprio) */}
         {activeTab !== 'predictive' && (
         <div className="flex gap-2 mt-5 border-t border-zinc-800 pt-4">
@@ -691,9 +715,9 @@ export default function SimulationPanel({
 
               {analysisLoading && (
                 <div className="space-y-2">
+                  <RotatingLoader messages={INTERPRETATION_MESSAGES} className="text-teal-200" />
                   <div className="h-3 w-full animate-pulse rounded bg-zinc-800/80" />
                   <div className="h-3 w-5/6 animate-pulse rounded bg-zinc-800/60" />
-                  <p className="text-[10px] text-zinc-500">Analisando resultado da simulação… pode levar até 1 minuto.</p>
                 </div>
               )}
 

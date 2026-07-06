@@ -12,7 +12,7 @@ from app.db import get_db
 from app.models import ContingencyPlan, MonitoringAlert, Municipio, WeatherForecastCache
 from app.services.contingency_planner import plan_to_dict
 from app.security.municipio_access import assert_codigo_ibge_access, filter_municipio_query, get_accessible_municipio
-from app.services.audit_service import resolve_actor
+from app.services.audit_service import resolve_actor, log_audit
 from app.services.scenario_analysis_service import (
     alert_icon_and_category,
     analyze_scenario,
@@ -166,9 +166,20 @@ def compare_monitoring_municipalities(
     request: Request,
     db: Session = Depends(get_db),
 ):
+    actor = resolve_actor(request)
     get_accessible_municipio(db, codigo_a, request=request)
     get_accessible_municipio(db, codigo_b, request=request)
-    return compare_municipalities(db, codigo_a, codigo_b)
+    result = compare_municipalities(db, codigo_a, codigo_b)
+    log_audit(
+        db,
+        user=actor,
+        action="compare.monitoring",
+        resource_type="comparacao",
+        codigo_ibge=codigo_a,
+        metadata={"codigo_b": codigo_b, "mais_critico": result.get("mais_critico_ibge")},
+        request=request,
+    )
+    return result
 
 
 @router.get("/map-overview")

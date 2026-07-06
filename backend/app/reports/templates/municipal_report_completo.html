@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <title>Diagnóstico Territorial Integrado — {{ municipio.nome }}/{{ municipio.uf }}</title>
+  <style>
+    @page {
+      size: A4;
+      margin: 1.2cm 1.3cm 1.8cm 1.3cm;
+      @bottom-center {
+        content: "Sinidu+Clima · MCID/CGMUR · {{ footer_date }} · Página " counter(page) " de " counter(pages) " · Uso interno";
+        font-size: 7pt;
+        color: #64748b;
+      }
+    }
+    body { font-family: "DejaVu Sans", sans-serif; font-size: 9pt; color: #1e293b; line-height: 1.45; margin: 0; }
+    h1 { font-size: 16pt; color: #0f172a; margin: 0 0 8px; }
+    h2 { font-size: 11pt; color: #0f766e; margin: 0 0 10px; border-bottom: 2px solid #14b8a6; padding-bottom: 4px; page-break-after: avoid; }
+    p { margin: 0 0 8px; }
+    table { width: 100%; border-collapse: collapse; margin: 8px 0 12px; font-size: 8.5pt; }
+    th, td { border: 1px solid #cbd5e1; padding: 4px 6px; text-align: left; vertical-align: top; }
+    th { background: #ecfdf5; color: #065f46; font-weight: 700; }
+    .page { page-break-after: always; }
+    .page:last-child { page-break-after: auto; }
+
+    /* CAPA */
+    .cover {
+      min-height: 24cm;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      background: linear-gradient(165deg, #052e16 0%, #064e3b 45%, #0f766e 100%);
+      color: #ecfdf5;
+      padding: 1.5cm;
+      border-radius: 6px;
+    }
+    .cover-header { display: flex; align-items: center; gap: 12px; }
+    .cover-logo-img { height: 48px; }
+    .cover-logo-text { font-size: 14pt; font-weight: 800; letter-spacing: 0.04em; }
+    .cover-center { text-align: center; flex: 1; display: flex; flex-direction: column; justify-content: center; }
+    .cover-title { font-size: 20pt; font-weight: 800; letter-spacing: 0.06em; text-transform: uppercase; margin-bottom: 16px; }
+    .cover-muni { font-size: 22pt; font-weight: 700; margin-bottom: 8px; }
+    .cover-meta { font-size: 9pt; color: #a7f3d0; }
+    .score-circle {
+      width: 100px; height: 100px; border-radius: 50%;
+      background: {{ score_circle_color }};
+      color: #fff; font-size: 28pt; font-weight: 800;
+      display: flex; align-items: center; justify-content: center;
+      margin: 16px auto; border: 4px solid rgba(255,255,255,0.3);
+    }
+    .cover-footer { font-size: 8pt; color: #a7f3d0; text-align: center; }
+
+    .highlight-box {
+      border: 2px solid #14b8a6; background: #ecfdf5; border-radius: 8px;
+      padding: 10px 14px; margin: 12px 0; font-size: 9pt; font-weight: 600; color: #065f46;
+    }
+    .chart-img { width: 100%; max-height: 280px; object-fit: contain; margin: 8px 0; }
+    .map-img { width: 100%; border: 1px solid #334155; border-radius: 4px; }
+    .caption { font-size: 7.5pt; color: #64748b; font-style: italic; margin-top: 4px; }
+    .badge { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 8pt; font-weight: 700; }
+    .badge-ouro { background: #fef3c7; color: #92400e; }
+    .badge-prata { background: #e2e8f0; color: #334155; }
+    .badge-bronze { background: #fed7aa; color: #9a3412; }
+    .badge-platina { background: #e0e7ff; color: #3730a3; }
+    .action-block { margin-bottom: 10px; padding: 8px; border-left: 3px solid #14b8a6; background: #f8fafc; }
+    .action-ref { font-size: 7.5pt; color: #4338ca; margin-top: 4px; }
+    .two-col { display: flex; gap: 12px; align-items: flex-start; }
+    .two-col > div { flex: 1; }
+    .radar-img { max-width: 220px; }
+    .disclaimer { font-size: 7.5pt; color: #64748b; border-top: 1px solid #cbd5e1; padding-top: 8px; margin-top: 12px; }
+    .legend { display: flex; gap: 12px; font-size: 7.5pt; margin-top: 6px; }
+    .legend span { display: inline-flex; align-items: center; gap: 4px; }
+    .dot { width: 10px; height: 10px; border-radius: 2px; display: inline-block; }
+  </style>
+</head>
+<body>
+
+  <!-- PÁG 1 CAPA -->
+  <section class="page cover">
+    <div class="cover-header">
+      {% if logo_uri %}<img src="{{ logo_uri }}" class="cover-logo-img" alt="Sinidu+Clima" />{% endif %}
+      <span class="cover-logo-text">Sinidu+Clima</span>
+    </div>
+    <div class="cover-center">
+      <p class="cover-title">{{ capa_titulo }}</p>
+      <p class="cover-muni">{{ municipio.nome }} / {{ municipio.uf }}</p>
+      <p class="cover-meta">IBGE {{ municipio.codigo_ibge }} · {{ generated_at }}</p>
+      <div class="score-circle">{{ score.valor or '—' }}</div>
+      <p class="cover-meta">Score Sinidu+Clima · Severidade {{ severidade }}</p>
+    </div>
+    <p class="cover-footer">{{ capa_subtitulo }}<br/>Versão do diagnóstico: v{{ diagnostico_versao }}</p>
+  </section>
+
+  <!-- PÁG 2 NARRATIVA -->
+  <section class="page">
+    <h2>Narrativa Executiva</h2>
+    <div class="highlight-box">
+      Score {{ score.valor or '—' }} · Severidade {{ severidade }} · {{ n_bairros_prioritarios }} bairros prioritários
+    </div>
+    {% if narrativa_paragrafos %}
+      {% for p in narrativa_paragrafos %}
+      <p style="text-align:justify;margin-bottom:10px;">{{ p }}</p>
+      {% endfor %}
+    {% elif narrativa_ia %}
+      {% for p in narrativa_ia.split('\n\n') %}
+      {% if p.strip() %}<p style="text-align:justify;">{{ p.strip() }}</p>{% endif %}
+      {% endfor %}
+    {% else %}
+      <p>O município apresenta score territorial {{ score.valor or '—' }}, com prioridades definidas pelo ranking de bairros Sinidu+Clima. Recomenda-se validação técnica local antes de decisões de investimento.</p>
+    {% endif %}
+    <p class="disclaimer">Análise gerada por Sinidu+Clima IA ({{ narrativa_ia_meta.ai_provider or 'Mistral' }}) · Revisar com especialista · {{ narrativa_ia_meta.disclaimer or 'Não substitui estudos oficiais.' }}</p>
+  </section>
+
+  <!-- PÁG 3 MAPA -->
+  <section class="page">
+    <h2>Mapa do Município — Vulnerabilidade</h2>
+    {% if charts.mapa %}
+    <img class="map-img" src="data:image/png;base64,{{ charts.mapa }}" alt="Mapa vulnerabilidade" />
+    {% endif %}
+    <div class="legend">
+      <span><i class="dot" style="background:#6366f1"></i> Baixo</span>
+      <span><i class="dot" style="background:#f97316"></i> Médio</span>
+      <span><i class="dot" style="background:#ef4444"></i> Alto/Crítico</span>
+    </div>
+    <p class="caption">Distribuição de vulnerabilidade por bairro · Fonte: Sinidu+Clima · Malha IBGE + índices IVC/IRI</p>
+  </section>
+
+  <!-- PÁG 4 BAIRROS + RADAR -->
+  <section class="page">
+    <h2>Bairros Prioritários</h2>
+    <div class="two-col">
+      <div>
+        <table>
+          <tr><th>Bairro</th><th>Score</th><th>IVC</th><th>IRI</th><th>Risco</th></tr>
+          {% for row in ranking_top10 %}
+          <tr>
+            <td>{{ row.bairro }}</td>
+            <td><strong>{{ row.score_sinidu }}</strong></td>
+            <td>{{ row.ivc }}</td>
+            <td>{{ row.iri }}</td>
+            <td>{{ row.risco_principal }}</td>
+          </tr>
+          {% endfor %}
+        </table>
+      </div>
+      <div style="text-align:center;">
+        {% if charts.radar %}
+        <img class="radar-img" src="data:image/png;base64,{{ charts.radar }}" alt="Radar score" />
+        {% endif %}
+        <p class="caption">Município vs média dos 61 municípios monitorados</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- PÁG 5 HISTÓRICO E CLIMA -->
+  <section class="page">
+    <h2>Histórico e Clima</h2>
+    {% if charts.desastres %}
+    <img class="chart-img" src="data:image/png;base64,{{ charts.desastres }}" alt="Desastres S2ID" />
+    {% endif %}
+    {% if charts.precipitacao %}
+    <img class="chart-img" src="data:image/png;base64,{{ charts.precipitacao }}" alt="Precipitação" />
+    {% endif %}
+    <div class="highlight-box">
+      Total de desastres {{ disaster_stats.periodo }}: {{ disaster_stats.total_10_anos }} ·
+      Maior dano registrado: {{ disaster_stats.maior_dano_fmt }}
+    </div>
+  </section>
+
+  <!-- PÁG 6 CAPACIDADE -->
+  <section class="page">
+    <h2>Capacidade de Resposta</h2>
+    {% if infra_summary %}
+    <table>
+      <tr><th>Equipamento / infraestrutura</th><th>Quantidade</th></tr>
+      {% for item in infra_summary %}
+      <tr><td>{{ item.tipo }}</td><td>{{ item.quantidade }}</td></tr>
+      {% endfor %}
+    </table>
+    {% endif %}
+    <p>
+      Maturidade de dados:
+      {% set cls = maturity.classificacao if maturity else capacidade.classificacao %}
+      <span class="badge badge-{{ cls|lower if cls else 'prata' }}">{{ cls or '—' }} ({{ maturity.score if maturity else capacidade.maturidade_percentual }}%)</span>
+    </p>
+    {% if capacidade.lacunas %}
+    <table>
+      <tr><th>Lacuna</th><th>Impacto</th></tr>
+      {% for lac in capacidade.lacunas[:8] %}
+      <tr><td>{{ lac.nome if lac.nome is defined else lac }}</td><td>{{ lac.impacto if lac.impacto is defined else 'Score e plano' }}</td></tr>
+      {% endfor %}
+    </table>
+    {% endif %}
+  </section>
+
+  <!-- PÁG 7 PLANO DE AÇÃO -->
+  <section class="page">
+    <h2>Plano de Ação Recomendado</h2>
+    {% for titulo, acoes in [('CURTO PRAZO', acoes_curto), ('MÉDIO PRAZO', acoes_medio), ('LONGO PRAZO', acoes_longo)] %}
+    {% if acoes %}
+    <h3 style="font-size:10pt;color:#334155;margin:12px 0 6px;">{{ titulo }}</h3>
+    {% for ac in acoes[:4] %}
+    <div class="action-block">
+      <strong>{{ ac.titulo }}</strong> · {{ ac.custo }} · {{ ac.prioridade }}<br/>
+      <span style="font-size:8.5pt;">{{ ac.descricao[:200] }}{% if ac.descricao|length > 200 %}…{% endif %}</span>
+      {% if ac.casos_referencia %}
+      {% for ref in ac.casos_referencia[:1] %}
+      <p class="action-ref">📌 Referência: {{ ref.referencia_texto or ref.titulo }}</p>
+      {% endfor %}
+      {% endif %}
+    </div>
+    {% endfor %}
+    {% endif %}
+    {% endfor %}
+  </section>
+
+  <!-- PÁG 8 FONTES -->
+  <section class="page">
+    <h2>Fontes e Metodologia</h2>
+    <table>
+      <tr><th>Fonte</th><th>Extração</th><th>Tipo</th></tr>
+      {% for f in fontes_tabela %}
+      <tr><td>{{ f.fonte }}</td><td>{{ f.data }}</td><td>{{ f.tipo }}</td></tr>
+      {% endfor %}
+    </table>
+    <p><strong>Metodologia Score:</strong> {{ metodologia.formula_municipal }}</p>
+    <p>{{ metodologia.limitacoes }}</p>
+    <p class="disclaimer">
+      Documento gerado automaticamente pelo Sinidu+Clima (MCID/CGMUR). Os índices IVC/IRI são derivados de dados
+      integrados e não substituem estudos hidrológicos, geológicos ou planos municipais oficiais. Validar CAPAG, S2ID
+      e malha territorial antes de uso conclusivo em processos licitatórios ou emergenciais.
+    </p>
+  </section>
+
+</body>
+</html>

@@ -61,6 +61,9 @@ type AppStore = {
     prioridade?: string;
     riscos?: string[];
   }) => void;
+  reportRequest: 'rapido' | 'completo' | null;
+  requestReport: (type: 'rapido' | 'completo') => void;
+  clearReportRequest: () => void;
 };
 
 let msgCounter = 0;
@@ -169,4 +172,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
       set({ agenteAberto: true, agenteNaoLidas: 0 });
     }
   },
+  reportRequest: null,
+  requestReport: (type) => set({ reportRequest: type, activeTab: 'dashboard' }),
+  clearReportRequest: () => set({ reportRequest: null }),
 }));

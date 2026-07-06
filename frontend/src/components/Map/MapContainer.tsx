@@ -23,6 +23,7 @@ interface MapProps {
   simFlowPaths?: any;
   simOverlays?: { showFlood: boolean; showContours: boolean; showFlow: boolean };
   selectedMunicipio: string;
+  simulating?: boolean;
 }
 
 type LegendItem = {

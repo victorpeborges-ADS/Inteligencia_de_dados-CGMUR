@@ -8,6 +8,7 @@ from app.services.analytical_engine import AnalyticalEngine
 from app.services.official_climate import OfficialClimateService
 from app.data_connectors.mapbiomas_collector import vegetation_coverage_percent
 from app.security.municipio_access import get_accessible_municipio
+from app.services.audit_service import log_audit, resolve_actor
 from etl.etl_sentinel import query_sentinel_stac
 from typing import List, Dict, Any
 import json
@@ -225,13 +226,14 @@ def get_workshop_diagnostic(
 
 @router.get("/compare")
 def compare_municipalities(codigos: str = Query(...), request: Request = ..., db: Session = Depends(get_db)):
+    actor = resolve_actor(request)
     codes = [code.strip() for code in codigos.split(",") if code.strip()]
     if len(codes) < 2:
         raise HTTPException(status_code=400, detail="Provide at least two municipality codes.")
     if len(codes) > 5:
         raise HTTPException(status_code=400, detail="Compare up to five municipalities at once.")
 
-    return {
+    payload = {
         "codigos": codes,
         "metricas": [
             "populacao",
@@ -249,6 +251,16 @@ def compare_municipalities(codigos: str = Query(...), request: Request = ..., db
             for code in codes
         ]
     }
+    log_audit(
+        db,
+        user=actor,
+        action="compare.analytics",
+        resource_type="comparacao",
+        codigo_ibge=codes[0],
+        metadata={"codigos": codes},
+        request=request,
+    )
+    return payload
 
 
 @router.get("/socioeconomic-ranking")

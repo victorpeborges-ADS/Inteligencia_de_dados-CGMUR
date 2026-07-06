@@ -6,9 +6,22 @@ import { ClipboardList, Loader2, RefreshCw, ShieldAlert } from 'lucide-react';
 
 const ACTION_LABELS: Record<string, string> = {
   'report.generate': 'Gerar PDF municipal',
+  'report.completo': 'Relatório completo (sync)',
+  'report.completo_async': 'Relatório completo (async)',
   'report.download': 'Download PDF',
   'report.sei_export': 'Export SEI',
+  'diagnostic.generate': 'Gerar diagnóstico PDF',
+  'diagnostic.download_pdf': 'Download diagnóstico PDF',
+  'presentation.view': 'Abrir apresentação',
+  'action_plan.generate': 'Gerar plano de ação',
+  'onboarding.ensure': 'Recarregar município',
+  'onboarding.run': 'Executar onboarding',
+  'compare.analytics': 'Comparar municípios (analytics)',
+  'compare.monitoring': 'Comparar municípios (monitor)',
+  'simulation.export_geojson': 'Export GeoJSON simulação',
+  'simulation.export_pdf': 'Export PDF simulação',
   'contingency.activate': 'Ativar contingência',
+  'contingency.export_pdf': 'Export PDF contingência',
   'contingency.sei_export': 'Export SEI contingência',
 };
 
@@ -27,12 +40,17 @@ function formatDate(iso: string): string {
   }
 }
 
-export default function AuditPanel() {
+export default function AuditPanel({ codigoIbge }: { codigoIbge?: string }) {
   const [entries, setEntries] = useState<AuditLogEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [actionFilter, setActionFilter] = useState('');
   const [usernameFilter, setUsernameFilter] = useState('');
+  const [ibgeFilter, setIbgeFilter] = useState(codigoIbge || '');
+
+  useEffect(() => {
+    if (codigoIbge) setIbgeFilter(codigoIbge);
+  }, [codigoIbge]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -42,6 +60,7 @@ export default function AuditPanel() {
         limit: 100,
         action: actionFilter || undefined,
         username: usernameFilter || undefined,
+        codigo_ibge: ibgeFilter || undefined,
       });
       setEntries(rows);
     } catch (e) {
@@ -50,7 +69,7 @@ export default function AuditPanel() {
     } finally {
       setLoading(false);
     }
-  }, [actionFilter, usernameFilter]);
+  }, [actionFilter, usernameFilter, ibgeFilter]);
 
   useEffect(() => {
     load();
@@ -65,7 +84,7 @@ export default function AuditPanel() {
             Trilha de auditoria
           </h2>
           <p className="mt-1 text-xs text-zinc-500">
-            Registro institucional de PDFs, exports SEI e ativações de contingência.
+            PDFs, diagnósticos, comparações, onboarding, simulações e contingência.
           </p>
         </div>
         <button
@@ -79,7 +98,7 @@ export default function AuditPanel() {
         </button>
       </div>
 
-      <div className="grid grid-cols-2 gap-2">
+      <div className="grid grid-cols-3 gap-2">
         <div>
           <label className="mb-1 block text-[10px] uppercase tracking-wider text-zinc-500">Ação</label>
           <select
@@ -96,11 +115,20 @@ export default function AuditPanel() {
           </select>
         </div>
         <div>
+          <label className="mb-1 block text-[10px] uppercase tracking-wider text-zinc-500">IBGE</label>
+          <input
+            value={ibgeFilter}
+            onChange={(e) => setIbgeFilter(e.target.value)}
+            placeholder="2611606"
+            className="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-2 py-1.5 text-xs text-zinc-200"
+          />
+        </div>
+        <div>
           <label className="mb-1 block text-[10px] uppercase tracking-wider text-zinc-500">Usuário</label>
           <input
             value={usernameFilter}
             onChange={(e) => setUsernameFilter(e.target.value)}
-            placeholder="admin, gestor…"
+            placeholder="dev, admin…"
             className="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-2 py-1.5 text-xs text-zinc-200"
           />
         </div>
@@ -114,9 +142,9 @@ export default function AuditPanel() {
       )}
 
       {loading && entries.length === 0 ? (
-        <p className="text-sm text-zinc-400">Carregando registros…</p>
+        <Loader2 className="mx-auto h-6 w-6 animate-spin text-zinc-400" />
       ) : entries.length === 0 ? (
-        <p className="text-sm text-zinc-500">Nenhum registro encontrado.</p>
+        <p className="text-sm text-zinc-500">Nenhum registro encontrado. Execute uma ação (PDF, diagnóstico, comparação) e atualize.</p>
       ) : (
         <div className="space-y-2">
           {entries.map((row) => (
@@ -139,12 +167,8 @@ export default function AuditPanel() {
                   </>
                 )}
               </p>
-              {(row.resource_type || row.resource_id) && (
-                <p className="mt-0.5 text-[10px] text-zinc-500">
-                  {row.resource_type}
-                  {row.resource_id ? ` #${row.resource_id}` : ''}
-                  {row.ip_address ? ` · ${row.ip_address}` : ''}
-                </p>
+              {row.metadata && Object.keys(row.metadata).length > 0 && (
+                <p className="mt-0.5 text-[10px] text-zinc-500">{JSON.stringify(row.metadata)}</p>
               )}
             </article>
           ))}
