@@ -73,6 +73,15 @@ function ActionCard({ item }: { item: ActionPlanItem}) {
         </div>
       </div>
       <p className="text-[10px] leading-relaxed text-zinc-400">{item.descricao}</p>
+      {item.casos_referencia && item.casos_referencia.length > 0 && (
+        <div className="mt-2 space-y-1 rounded-lg border border-indigo-800/30 bg-indigo-950/15 p-2">
+          {item.casos_referencia.slice(0, 2).map((ref) => (
+            <p key={ref.id} className="text-[9px] text-indigo-200/90 leading-relaxed">
+              📌 Referência: {ref.referencia_texto}
+            </p>
+          ))}
+        </div>
+      )}
       {item.bairros_alvo?.length > 0 && (
         <div className="mt-2 flex flex-wrap gap-1">
           {item.bairros_alvo.slice(0, 3).map((b) => (

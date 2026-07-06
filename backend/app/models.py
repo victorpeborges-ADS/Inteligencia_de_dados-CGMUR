@@ -1,4 +1,5 @@
-from sqlalchemy import Column, Integer, String, Numeric, Date, DateTime, ForeignKey, Text, Index, JSON, Boolean
+from sqlalchemy import Column, Integer, String, Numeric, Date, DateTime, ForeignKey, Text, Index, JSON, Boolean, BigInteger
+from sqlalchemy.dialects.postgresql import ARRAY, UUID
 from sqlalchemy.orm import relationship
 from geoalchemy2 import Geometry
 from app.db import Base
@@ -227,11 +228,30 @@ class CasoSucesso(Base):
     __tablename__ = "casos_sucesso"
 
     id = Column(Integer, primary_key=True, index=True)
-    municipio = Column(String(100), nullable=False)
-    uf = Column(String(2), nullable=False)
-    problema = Column(Text, nullable=False)
-    solucao = Column(Text, nullable=False)
-    resultado = Column(Text, nullable=False)
+    uuid = Column(UUID(as_uuid=True), nullable=True, index=True)
+    titulo = Column(String(255), nullable=False, default="")
+    municipio_nome = Column(String(100), nullable=False)
+    municipio_uf = Column(String(2), nullable=False)
+    # colunas legadas (compatibilidade)
+    municipio = Column(String(100), nullable=True)
+    uf = Column(String(2), nullable=True)
+    populacao_aprox = Column(Integer, nullable=True)
+    regiao = Column(String(20), nullable=True, index=True)
+    tipo_intervencao = Column(String(100), nullable=True, index=True)
+    problema_original = Column(Text, nullable=False)
+    solucao_implementada = Column(Text, nullable=False)
+    resultado_mensuravel = Column(Text, nullable=True)
+    # legado
+    problema = Column(Text, nullable=True)
+    solucao = Column(Text, nullable=True)
+    resultado = Column(Text, nullable=True)
+    custo_estimado_reais = Column(BigInteger, nullable=True)
+    programa_financiador = Column(String(100), nullable=True)
+    ano_implementacao = Column(Integer, nullable=True)
+    fonte_referencia = Column(Text, nullable=True)
+    tags = Column(ARRAY(String), nullable=True)
+    imagem_url = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow, nullable=True)
 
 
 class RelatorioMunicipal(Base):

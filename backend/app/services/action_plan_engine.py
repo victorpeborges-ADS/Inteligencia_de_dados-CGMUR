@@ -71,6 +71,7 @@ def _action(
         "fonte": fonte,
         "orgao": orgao,
         "bairros_alvo": bairros_alvo or [],
+        "casos_referencia": [],
     }
 
 
@@ -260,6 +261,15 @@ def build_action_plan_payload(
     mitigation = _actions_from_mitigation(db, muni, top_bairros)
     all_actions = territorial + mitigation
     grouped = _group_by_horizon(all_actions)
+
+    try:
+        from app.services.casos_sucesso_service import enrich_all_actions
+
+        grouped[HORIZON_SHORT] = enrich_all_actions(db, grouped[HORIZON_SHORT], muni)
+        grouped[HORIZON_MED] = enrich_all_actions(db, grouped[HORIZON_MED], muni)
+        grouped[HORIZON_LONG] = enrich_all_actions(db, grouped[HORIZON_LONG], muni)
+    except Exception as exc:
+        logger.warning("Enriquecimento com casos de sucesso falhou: %s", exc)
 
     programas = suggest_programs(severidade=severity, nota_capag=nota_capag, media_ivc=media_ivc)
 

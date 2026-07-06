@@ -30,6 +30,7 @@ MIGRATIONS = (
     "013_rag_mistral_embeddings.sql",
     "014_municipio_data_honesty.sql",
     "015_diagnostic_narrativa_ia.sql",
+    "016_casos_sucesso_semantic.sql",
 )
 
 
@@ -132,9 +133,12 @@ def initialize_database() -> None:
     try:
         ensure_demo_municipalities(db)
         boot_status.demo_municipalities_ok = True
+        from app.services.casos_sucesso_service import seed_casos_sucesso
+
+        seed_casos_sucesso(db, force=False, embed=True)
     except Exception as exc:
         boot_status.errors.append(f"demo_municipalities: {exc}")
-        logger.warning("Demo municipalities falhou: %s", exc)
+        logger.warning("Demo municipalities / casos seed falhou: %s", exc)
     finally:
         db.close()
 

@@ -95,6 +95,16 @@ const PAGE_CONTEXTS: Record<string, PageContext> = {
       'O que diz a legislação sobre PDDU?',
     ],
   },
+  '/casos': {
+    pagina: 'Casos de Sucesso',
+    descricao: 'Base de conhecimento com busca semântica de intervenções urbanas verificáveis',
+    dados_disponiveis: ['casos_sucesso', 'busca_semantica', 'adaptacao_ia'],
+    perguntas_sugeridas: [
+      'Quais casos de drenagem são similares ao meu município?',
+      'Como adaptar piscinões para cidade menor?',
+      'Quais programas financiaram encostas no Sudeste?',
+    ],
+  },
 };
 
 const DEFAULT_CONTEXT: PageContext = {
@@ -197,6 +207,27 @@ export function useAgenteContexto() {
               'Encostas com inclinação elevada e suscetibilidade a movimentos de massa sob chuva intensa (COBRADE).',
           },
         });
+      } else if (routeKey === '/casos' || activeTab === 'cases') {
+        const search = await api
+          .searchCasesSemantic({
+            query: municipioMeta
+              ? `adaptação climática ${municipioMeta.nome} ${municipioMeta.uf}`
+              : 'drenagem encosta habitação',
+            municipio_codigo: selectedMunicipio,
+            top_k: 5,
+          })
+          .catch(() => null);
+        setDadosPagina({
+          ...base,
+          casos_encontrados: search?.items?.length || 0,
+          casos_top: search?.items?.slice(0, 3).map((c) => ({
+            id: c.id,
+            titulo: c.titulo,
+            municipio: `${c.municipio_nome}/${c.municipio_uf}`,
+            tipo: c.tipo_intervencao,
+          })),
+          search_mode: search?.search_mode,
+        });
       } else {
         setDadosPagina(base);
       }
@@ -205,7 +236,7 @@ export function useAgenteContexto() {
     } finally {
       setLoadingDados(false);
     }
-  }, [activeTab, activeLayers, alertNivel, routeKey, selectedMunicipio]);
+  }, [activeTab, activeLayers, alertNivel, routeKey, selectedMunicipio, municipioMeta]);
 
   useEffect(() => {
     refreshDadosPagina();

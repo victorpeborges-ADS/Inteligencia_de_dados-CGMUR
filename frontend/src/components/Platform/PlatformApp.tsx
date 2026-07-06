@@ -654,7 +654,12 @@ export default function PlatformApp({ initialTab }: PlatformAppProps) {
                 onFocusMap={handleAssistantFocusMap}
               />
             )}
-            {activeTab === 'cases' && <CaseStudiesPanel municipioNome={selectedMunicipioInfo?.nome} />}
+            {activeTab === 'cases' && (
+              <CaseStudiesPanel
+                municipioNome={selectedMunicipioInfo?.nome}
+                municipioCodigo={selectedMunicipio}
+              />
+            )}
             {activeTab === 'monitoring' && (
               <MonitoringPanel
                 key={selectedMunicipio}

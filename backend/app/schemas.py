@@ -382,15 +382,43 @@ class ChatResponse(BaseModel):
 
 # Success Case Schemas
 class CasoSucessoBase(BaseModel):
+    titulo: Optional[str] = None
+    municipio_nome: Optional[str] = None
+    municipio_uf: Optional[str] = None
     municipio: str
     uf: str
+    populacao_aprox: Optional[int] = None
+    regiao: Optional[str] = None
+    tipo_intervencao: Optional[str] = None
+    problema_original: Optional[str] = None
+    solucao_implementada: Optional[str] = None
+    resultado_mensuravel: Optional[str] = None
     problema: str
     solucao: str
-    resultado: str
+    resultado: Optional[str] = None
+    custo_estimado_reais: Optional[int] = None
+    programa_financiador: Optional[str] = None
+    ano_implementacao: Optional[int] = None
+    fonte_referencia: Optional[str] = None
+    tags: Optional[List[str]] = None
+    imagem_url: Optional[str] = None
+
+
+class CasoReferenciaOut(BaseModel):
+    id: int
+    titulo: Optional[str] = None
+    municipio_nome: Optional[str] = None
+    municipio_uf: Optional[str] = None
+    referencia_texto: str
+    similarity: Optional[float] = None
+
 
 class CasoSucessoOut(CasoSucessoBase):
     id: int
+    uuid: Optional[str] = None
     relevance_score: Optional[float] = None
+    similarity: Optional[float] = None
+    created_at: Optional[str] = None
 
     class Config:
         from_attributes = True

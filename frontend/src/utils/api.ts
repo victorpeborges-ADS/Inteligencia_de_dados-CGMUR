@@ -645,14 +645,73 @@ export interface ContextualChatPayload {
   stream?: boolean;
 }
 
+export interface SuccessCaseReference {
+  id: number;
+  titulo?: string;
+  municipio_nome?: string;
+  municipio_uf?: string;
+  referencia_texto: string;
+  similarity?: number;
+}
+
 export interface SuccessCase {
   id: number;
+  uuid?: string | null;
+  titulo?: string;
+  municipio_nome?: string;
+  municipio_uf?: string;
   municipio: string;
   uf: string;
+  populacao_aprox?: number | null;
+  regiao?: string | null;
+  tipo_intervencao?: string | null;
+  problema_original?: string;
+  solucao_implementada?: string;
+  resultado_mensuravel?: string | null;
   problema: string;
   solucao: string;
-  resultado: string;
+  resultado?: string | null;
+  custo_estimado_reais?: number | null;
+  programa_financiador?: string | null;
+  ano_implementacao?: number | null;
+  fonte_referencia?: string | null;
+  tags?: string[];
+  imagem_url?: string | null;
   relevance_score?: number;
+  similarity?: number;
+  created_at?: string | null;
+}
+
+export interface CaseSearchFilters {
+  query: string;
+  municipio_codigo?: string;
+  top_k?: number;
+  regiao?: string;
+  tipo_intervencao?: string;
+  faixa_populacao?: string;
+  programa_financiador?: string;
+}
+
+export interface CaseSearchResponse {
+  items: SuccessCase[];
+  total: number;
+  search_mode: string;
+}
+
+export interface CaseAdaptationResult {
+  caso: SuccessCase;
+  municipio: { codigo_ibge: string; nome: string; uf: string; populacao?: number; regiao?: string };
+  adaptacao_ia: string;
+  custo_estimado_adaptado_reais?: number;
+  ai_provider: string;
+  pergunta_sugerida: string;
+}
+
+export interface CaseFilterOptions {
+  regioes: string[];
+  tipos_intervencao: string[];
+  programas_financiadores: string[];
+  faixas_populacao: string[];
 }
 
 export interface DiagnosticArea {
@@ -1000,6 +1059,7 @@ export interface ActionPlanItem {
   fonte: string;
   orgao: string;
   bairros_alvo: string[];
+  casos_referencia?: SuccessCaseReference[];
 }
 
 export interface FederalProgramSuggestion {
@@ -1726,8 +1786,39 @@ export const api = {
   },
 
   searchCases: async (query: string): Promise<SuccessCase[]> => {
-    const res = await apiFetch(`${getApiBaseUrl()}/api/v1/assistant/cases/search?q=${encodeURIComponent(query)}`);
+    const res = await api.searchCasesSemantic({ query, top_k: 10 });
+    return res.items;
+  },
+
+  searchCasesSemantic: async (filters: CaseSearchFilters): Promise<CaseSearchResponse> => {
+    const res = await apiFetch(`${getApiBaseUrl()}/api/v1/cases/search`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        top_k: 5,
+        ...filters,
+      }),
+    });
     if (!res.ok) throw new Error('Cases search failed');
+    return res.json();
+  },
+
+  getCaseFilters: async (): Promise<CaseFilterOptions> => {
+    const res = await apiFetch(`${getApiBaseUrl()}/api/v1/cases/filters`);
+    if (!res.ok) throw new Error('Case filters failed');
+    return res.json();
+  },
+
+  getCaseDetail: async (caseId: number): Promise<SuccessCase> => {
+    const res = await apiFetch(`${getApiBaseUrl()}/api/v1/cases/${caseId}`);
+    if (!res.ok) throw new Error('Case detail failed');
+    return res.json();
+  },
+
+  adaptCaseForMunicipio: async (caseId: number, codigoIbge: string): Promise<CaseAdaptationResult> => {
+    const qs = `?codigo_ibge=${encodeURIComponent(codigoIbge)}`;
+    const res = await apiFetch(`${getApiBaseUrl()}/api/v1/cases/${caseId}/adapt${qs}`, { method: 'POST' });
+    if (!res.ok) throw new Error('Case adaptation failed');
     return res.json();
   },
 

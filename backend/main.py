@@ -90,6 +90,7 @@ from app.api.onboarding import router as onboarding_router
 from app.api.maturity import router as maturity_router
 from app.api.diagnostic import router as diagnostic_router
 from app.api.action_plan import router as action_plan_router
+from app.api.cases import router as cases_router
 from app.api.audit import router as audit_router
 from app.api.system import router as system_router
 from app.api.municipios import router as municipios_router
@@ -114,6 +115,7 @@ app.include_router(onboarding_router, prefix=f"{settings.API_V1_STR}/onboarding"
 app.include_router(maturity_router, prefix=f"{settings.API_V1_STR}/maturity", tags=["maturity"])
 app.include_router(diagnostic_router, prefix=f"{settings.API_V1_STR}/diagnostic", tags=["diagnostic"])
 app.include_router(action_plan_router, prefix=f"{settings.API_V1_STR}/action-plan", tags=["action-plan"])
+app.include_router(cases_router, prefix=f"{settings.API_V1_STR}/cases", tags=["cases"])
 app.include_router(audit_router, prefix=f"{settings.API_V1_STR}/audit", tags=["audit"])
 app.include_router(system_router, prefix=f"{settings.API_V1_STR}/system", tags=["system"])
 app.include_router(municipios_router, prefix=f"{settings.API_V1_STR}/municipios", tags=["municipios"])

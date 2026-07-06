@@ -67,41 +67,55 @@ class SuccessCaseSearchService:
         query_tokens = clean_and_tokenize(query)
         
         if not query_tokens:
-            # If query is empty or only stopwords, return cases with 0 score
             return [
                 {
                     "id": c.id,
-                    "municipio": c.municipio,
-                    "uf": c.uf,
-                    "problema": c.problema,
-                    "solucao": c.solucao,
-                    "resultado": c.resultado,
-                    "relevance_score": 0.0
-                } for c in cases[:limit]
+                    "municipio": c.municipio_nome or c.municipio,
+                    "uf": c.municipio_uf or c.uf,
+                    "problema": c.problema_original or c.problema,
+                    "solucao": c.solucao_implementada or c.solucao,
+                    "resultado": c.resultado_mensuravel or c.resultado,
+                    "relevance_score": 0.0,
+                }
+                for c in cases[:limit]
             ]
-            
+
         ranked_cases = []
         for c in cases:
-            # Cross search in problem, solution, and results
-            combined_text = f"{c.municipio} {c.uf} {c.problema} {c.solucao} {c.resultado}"
+            muni_name = c.municipio_nome or c.municipio or ""
+            combined_text = " ".join(
+                filter(
+                    None,
+                    [
+                        muni_name,
+                        c.municipio_uf or c.uf,
+                        c.titulo,
+                        c.problema_original or c.problema,
+                        c.solucao_implementada or c.solucao,
+                        c.resultado_mensuravel or c.resultado,
+                        c.tipo_intervencao,
+                    ],
+                )
+            )
             score = calculate_relevance(query_tokens, combined_text)
-            
-            # Boost score if the query specifically mentions the municipality
-            muni_tokens = clean_and_tokenize(c.municipio)
+
+            muni_tokens = clean_and_tokenize(muni_name)
             for mt in muni_tokens:
                 if mt in query_tokens:
                     score += 1.5
-                    
+
             if score > 0.0:
-                ranked_cases.append({
-                    "id": c.id,
-                    "municipio": c.municipio,
-                    "uf": c.uf,
-                    "problema": c.problema,
-                    "solucao": c.solucao,
-                    "resultado": c.resultado,
-                    "relevance_score": round(score, 3)
-                })
+                ranked_cases.append(
+                    {
+                        "id": c.id,
+                        "municipio": muni_name,
+                        "uf": c.municipio_uf or c.uf,
+                        "problema": c.problema_original or c.problema,
+                        "solucao": c.solucao_implementada or c.solucao,
+                        "resultado": c.resultado_mensuravel or c.resultado,
+                        "relevance_score": round(score, 3),
+                    }
+                )
                 
         # Sort by score descending
         ranked_cases.sort(key=lambda x: x["relevance_score"], reverse=True)

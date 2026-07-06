@@ -19,7 +19,6 @@ from app.schemas import (
 )
 from app.services.municipal_assistant_context import build_municipal_assistant_context
 from app.services.contextual_agent_service import contextual_chat_stream, contextual_chat_sync
-from app.services.semantic_search import SuccessCaseSearchService
 from rag.chat import rag_assistant
 from rag.providers.registry import (
     default_chat_provider_id,
@@ -172,6 +171,7 @@ def rag_retrieval_eval(db: Session = Depends(get_db)):
 
 @router.get("/cases/search", response_model=List[CasoSucessoOut])
 def search_success_cases(q: str = Query(..., min_length=2), db: Session = Depends(get_db)):
-    """Busca semântica de casos de sucesso em adaptação municipal."""
-    results = SuccessCaseSearchService.search(db, q)
-    return results
+    """Busca semântica de casos de sucesso (compatibilidade GET — preferir POST /cases/search)."""
+    from app.services.casos_sucesso_service import search_casos
+
+    return search_casos(db, query=q, top_k=10)
