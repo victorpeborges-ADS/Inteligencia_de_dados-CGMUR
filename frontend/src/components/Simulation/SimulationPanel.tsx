@@ -95,7 +95,8 @@ export default function SimulationPanel({
     return 'chuva';
   };
 
-  const interpretForPdf = (interpret: SimulationInterpret) => ({
+  const interpretForPdf = (interpret: SimulationInterpret): SimulationInterpret => ({
+    ...interpret,
     findings: interpret.findings?.length
       ? interpret.findings
       : [
@@ -104,9 +105,7 @@ export default function SimulationPanel({
           ...interpret.equipamentos_em_risco,
           interpret.comparacao_historica,
           ...interpret.recomendacoes_imediatas,
-        ].filter(Boolean),
-    resumo_executivo: interpret.resumo_executivo,
-    interpretacao_diferencial: interpret.interpretacao_diferencial,
+        ].filter(Boolean) as string[],
   });
 
   const runInterpret = async (data: SimulationOutput, comparison: RainfallComparison | null) => {
@@ -321,7 +320,7 @@ export default function SimulationPanel({
         {(['rainfall', 'predictive', 'waterproofing', 'veg_loss', 'drainage'] as const).map((tab) => (
           <button
             key={tab}
-            onClick={() => { setActiveTab(tab); setResult(null); setMitigationPlan(null); setAiAnalysis(null); if (tab !== 'predictive') onClear(); }}
+            onClick={() => { setActiveTab(tab); setResult(null); setMitigationPlan(null); setSimInterpret(null); setInterpretError(null); if (tab !== 'predictive') onClear(); }}
             className={`py-1.5 px-1 rounded text-[9px] font-bold uppercase tracking-wider transition-all ${
               activeTab === tab 
                 ? 'bg-card text-indigo-400 border border-zinc-800' 

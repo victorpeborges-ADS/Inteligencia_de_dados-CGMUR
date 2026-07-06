@@ -123,7 +123,7 @@ export function getLayerStyle(layerName: string, feature: any): LayerStyle {
       return { fillColor: '#3b82f6', fillOpacity: 0.85, color: '#bfdbfe', weight: 2, radius: 6 };
     }
     if (tipo === 'via') {
-      return { fillColor: 'transparent', fillOpacity: 0, color: '#c4b5fd', weight: 3, opacity: 0.9 };
+      return { fillColor: 'transparent', fillOpacity: 0, color: '#c4b5fd', weight: 3 };
     }
     return { fillColor: '#a78bfa', fillOpacity: 0.55, color: '#ddd6fe', weight: 1.5, radius: 5 };
   }

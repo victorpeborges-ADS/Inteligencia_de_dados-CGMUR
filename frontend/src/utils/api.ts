@@ -1090,7 +1090,41 @@ export interface MonitoringDashboard {
   weather_updated_at: string | null;
   weather_disponivel?: boolean;
   timeline: MonitoringAlertItem[];
+  timeline_grouped?: MonitoringTimelineGroupItem[];
   plano_ativo: ContingencyPlan | null;
+}
+
+export interface MonitoringTimelineGroupItem extends MonitoringAlertItem {
+  count?: number;
+  grouped?: boolean;
+  titulo_display?: string;
+  alert_icon?: string;
+  alert_category?: string;
+  latest_at?: string;
+}
+
+export interface ScenarioAnalysis {
+  codigo_ibge: string;
+  municipio_nome: string;
+  uf?: string | null;
+  interpretacao: string;
+  tendencia: string;
+  recomendacoes: string[];
+  recomendacao_nivel: string;
+  referencia_historica: string;
+  proxima_revisao: string;
+  updated_at: string;
+  cached: boolean;
+  ai_provider: string;
+  inputs: Record<string, unknown>;
+}
+
+export interface MonitoringCompareResult {
+  municipio_a: Record<string, unknown>;
+  municipio_b: Record<string, unknown>;
+  mais_critico_ibge: string;
+  comparacao_ia: string;
+  ai_provider: string;
 }
 
 export interface MonitoringAlertItem {
@@ -1101,6 +1135,8 @@ export interface MonitoringAlertItem {
   mensagem?: string;
   created_at: string;
   payload?: Record<string, unknown>;
+  alert_icon?: string;
+  alert_category?: string;
 }
 
 export interface OnboardingStep {
@@ -1178,6 +1214,8 @@ export interface MonitoringMapItem {
   nome: string;
   uf: string;
   nivel: string;
+  cemaden_ativos?: number;
+  precip_72h_mm?: number | null;
   risk_probability: number;
   lat?: number | null;
   lng?: number | null;
@@ -1910,6 +1948,31 @@ export const api = {
   getMonitoringAlerts: async (codigoIbge: string, hours = 24): Promise<MonitoringAlertItem[]> => {
     const res = await apiFetch(`${getApiBaseUrl()}/api/v1/monitoring/alerts/${encodeURIComponent(codigoIbge)}?hours=${hours}`);
     if (!res.ok) throw new Error('Falha ao carregar alertas');
+    return res.json();
+  },
+
+  getScenarioAnalysis: async (codigoIbge: string, force = false): Promise<ScenarioAnalysis> => {
+    const qs = force ? '?force=true' : '';
+    const res = await apiFetch(
+      `${getApiBaseUrl()}/api/v1/monitoring/scenario-analysis/${encodeURIComponent(codigoIbge)}${qs}`,
+    );
+    if (!res.ok) throw new Error('Falha na análise de cenário');
+    return res.json();
+  },
+
+  getAlertInterpretation: async (codigoIbge: string, alertId: number): Promise<{ interpretacao: string }> => {
+    const res = await apiFetch(
+      `${getApiBaseUrl()}/api/v1/monitoring/alert-interpretation/${encodeURIComponent(codigoIbge)}/${alertId}`,
+    );
+    if (!res.ok) throw new Error('Falha ao interpretar alerta');
+    return res.json();
+  },
+
+  compareMonitoringMunicipalities: async (codigoA: string, codigoB: string): Promise<MonitoringCompareResult> => {
+    const res = await apiFetch(
+      `${getApiBaseUrl()}/api/v1/monitoring/compare/${encodeURIComponent(codigoA)}/${encodeURIComponent(codigoB)}`,
+    );
+    if (!res.ok) throw new Error('Falha na comparação');
     return res.json();
   },
 

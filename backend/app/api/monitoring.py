@@ -13,6 +13,13 @@ from app.models import ContingencyPlan, MonitoringAlert, Municipio, WeatherForec
 from app.services.contingency_planner import plan_to_dict
 from app.security.municipio_access import assert_codigo_ibge_access, filter_municipio_query, get_accessible_municipio
 from app.services.audit_service import resolve_actor
+from app.services.scenario_analysis_service import (
+    alert_icon_and_category,
+    analyze_scenario,
+    compare_municipalities,
+    group_timeline_entries,
+    interpret_alert,
+)
 
 router = APIRouter()
 
@@ -91,6 +98,20 @@ def monitoring_dashboard(codigo_ibge: str, request: Request, db: Session = Depen
         if plan:
             active_plan = plan_to_dict(plan, muni)
 
+    timeline_raw = [
+        {
+            "id": a.id,
+            "tipo": a.tipo,
+            "nivel": a.nivel,
+            "titulo": a.titulo,
+            "mensagem": a.mensagem,
+            "created_at": a.created_at.isoformat(),
+            "alert_icon": alert_icon_and_category(a.tipo, a.titulo, a.mensagem or "")[0],
+            "alert_category": alert_icon_and_category(a.tipo, a.titulo, a.mensagem or "")[1],
+        }
+        for a in alerts
+    ]
+
     return {
         "codigo_ibge": codigo_ibge,
         "nome_municipio": muni.nome if muni else None,
@@ -103,19 +124,51 @@ def monitoring_dashboard(codigo_ibge: str, request: Request, db: Session = Depen
         "risk_probability": float(weather.risk_probability) if weather else None,
         "weather_updated_at": weather.fetched_at.isoformat() if weather else None,
         "weather_disponivel": weather is not None,
-        "timeline": [
-            {
-                "id": a.id,
-                "tipo": a.tipo,
-                "nivel": a.nivel,
-                "titulo": a.titulo,
-                "mensagem": a.mensagem,
-                "created_at": a.created_at.isoformat(),
-            }
-            for a in alerts
-        ],
+        "timeline": timeline_raw,
+        "timeline_grouped": group_timeline_entries(timeline_raw),
         "plano_ativo": active_plan,
     }
+
+
+@router.get("/scenario-analysis/{codigo_ibge}")
+def get_scenario_analysis(
+    codigo_ibge: str,
+    request: Request,
+    force: bool = Query(default=False),
+    db: Session = Depends(get_db),
+):
+    get_accessible_municipio(db, codigo_ibge, request=request)
+    return analyze_scenario(db, codigo_ibge, force=force)
+
+
+@router.get("/alert-interpretation/{codigo_ibge}/{alert_id}")
+def get_alert_interpretation(
+    codigo_ibge: str,
+    alert_id: int,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    get_accessible_municipio(db, codigo_ibge, request=request)
+    alert = (
+        db.query(MonitoringAlert)
+        .filter(MonitoringAlert.id == alert_id, MonitoringAlert.codigo_ibge == codigo_ibge)
+        .first()
+    )
+    if not alert:
+        raise HTTPException(status_code=404, detail="Alerta não encontrado.")
+    return interpret_alert(alert.tipo, alert.nivel, alert.titulo or "")
+
+
+@router.get("/compare/{codigo_a}/{codigo_b}")
+def compare_monitoring_municipalities(
+    codigo_a: str,
+    codigo_b: str,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    get_accessible_municipio(db, codigo_a, request=request)
+    get_accessible_municipio(db, codigo_b, request=request)
+    return compare_municipalities(db, codigo_a, codigo_b)
 
 
 @router.get("/map-overview")
@@ -131,12 +184,12 @@ def map_overview(request: Request, db: Session = Depends(get_db)):
     for m in municipios:
         if m.geom is not None:
             com_geometria += 1
-        latest = (
+        muni_alerts = (
             db.query(MonitoringAlert)
             .filter(MonitoringAlert.codigo_ibge == m.codigo_ibge, MonitoringAlert.created_at >= since)
-            .order_by(MonitoringAlert.created_at.desc())
-            .first()
+            .all()
         )
+        latest = max(muni_alerts, key=lambda a: a.created_at) if muni_alerts else None
         weather = (
             db.query(WeatherForecastCache)
             .filter(WeatherForecastCache.codigo_ibge == m.codigo_ibge)
@@ -144,6 +197,7 @@ def map_overview(request: Request, db: Session = Depends(get_db)):
             .first()
         )
         nivel = latest.nivel if latest else "VERDE"
+        cemaden_count = sum(1 for a in muni_alerts if a.tipo == "CEMADEN_ALERT")
         lat, lng = _muni_centroid(m)
         if lat is not None and lng is not None:
             com_coordenadas += 1
@@ -152,6 +206,8 @@ def map_overview(request: Request, db: Session = Depends(get_db)):
             "nome": m.nome,
             "uf": m.uf,
             "nivel": nivel,
+            "cemaden_ativos": cemaden_count,
+            "precip_72h_mm": float(weather.precip_72h_mm) if weather else None,
             "risk_probability": float(weather.risk_probability) if weather else 0,
             "lat": lat,
             "lng": lng,

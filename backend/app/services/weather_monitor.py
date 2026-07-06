@@ -58,6 +58,36 @@ def _risk_probability(precip_24h: float) -> float:
     return min(0.95, 0.75 + (precip_24h - 100) / 200)
 
 
+async def _emit_proactive_risk_events(
+    muni: Municipio,
+    prev_risk: float,
+    risk: float,
+    p24: float,
+    p72: float,
+) -> None:
+    """Dispara eventos proativos quando probabilidade cruza limiares 30/50/75%."""
+    tiers = [
+        (0.30, "WARN", "Probabilidade de evento crítico acima de 30% — reforçar monitoramento."),
+        (0.50, "ORANGE", "Probabilidade acima de 50% — considere abrir o módulo de Contingência."),
+        (0.75, "CRITICAL", "Probabilidade acima de 75% — ative protocolo de resposta imediata."),
+    ]
+    for threshold, tier, msg in tiers:
+        if prev_risk < threshold <= risk:
+            await alert_manager.broadcast(muni.codigo_ibge, {
+                "type": "PROACTIVE_RISK",
+                "data": {
+                    "codigo_ibge": muni.codigo_ibge,
+                    "tier": tier,
+                    "threshold": threshold,
+                    "risk_probability": round(risk, 3),
+                    "precip_24h_mm": round(p24, 1),
+                    "precip_72h_mm": round(p72, 1),
+                    "mensagem": msg,
+                    "nivel_sugerido": "LARANJA" if tier in ("ORANGE", "CRITICAL") else "AMARELO",
+                },
+            })
+
+
 async def sync_weather_for_municipalities(db: Session, codigos: list[str] | None = None) -> dict:
     query = db.query(Municipio)
     if codigos:
@@ -77,6 +107,14 @@ async def sync_weather_for_municipalities(db: Session, codigos: list[str] | None
 
         p24, p72 = _precip_sums(raw)
         risk = _risk_probability(p24)
+
+        prev = (
+            db.query(WeatherForecastCache)
+            .filter(WeatherForecastCache.codigo_ibge == muni.codigo_ibge)
+            .order_by(WeatherForecastCache.fetched_at.desc())
+            .first()
+        )
+        prev_risk = float(prev.risk_probability) if prev else 0.0
 
         db.add(WeatherForecastCache(
             codigo_ibge=muni.codigo_ibge,
@@ -98,6 +136,8 @@ async def sync_weather_for_municipalities(db: Session, codigos: list[str] | None
                 "risk_probability": round(risk, 3),
             },
         })
+
+        await _emit_proactive_risk_events(muni, prev_risk, risk, p24, p72)
 
         if risk >= RISK_THRESHOLD or p24 >= PRECIP_ALERT_MM:
             nivel = "VERMELHO" if risk >= 0.85 else "LARANJA"

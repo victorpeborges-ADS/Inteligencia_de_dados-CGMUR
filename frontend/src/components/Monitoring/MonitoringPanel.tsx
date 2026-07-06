@@ -2,17 +2,51 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import dynamic from 'next/dynamic';
-import { api, type ContingencyPlan, type MonitoringDashboard } from '@/utils/api';
+import {
+  api,
+  type ContingencyPlan,
+  type MonitoringDashboard,
+  type MonitoringMapItem,
+  type MonitoringTimelineGroupItem,
+  type ScenarioAnalysis,
+  type MonitoringCompareResult,
+} from '@/utils/api';
 import { useAlertWebSocket } from '@/hooks/useAlertWebSocket';
-import { Activity, CloudRain, AlertTriangle, Radio, Map, RefreshCw, Loader2 } from 'lucide-react';
+import { useAppStore } from '@/stores/useAppStore';
+import {
+  Activity,
+  CloudRain,
+  AlertTriangle,
+  Radio,
+  Map,
+  RefreshCw,
+  Loader2,
+  Sparkles,
+  TrendingUp,
+  History,
+  CheckCircle2,
+  Wind,
+  Mountain,
+  ChevronDown,
+  ChevronUp,
+  X,
+  GitCompare,
+} from 'lucide-react';
 
 const MonitoringMiniMap = dynamic(() => import('./MonitoringMiniMap'), { ssr: false });
 
 const NIVEL_COLOR: Record<string, string> = {
   VERDE: 'bg-emerald-500',
   AMARELO: 'bg-yellow-500',
-  LARANJA: 'bg-orange-500',
+  LARANJA: 'bg-orange-500 animate-pulse',
   VERMELHO: 'bg-red-500 animate-pulse',
+};
+
+const ALERT_ICONS: Record<string, typeof CloudRain> = {
+  rain: CloudRain,
+  wind: Wind,
+  landslide: Mountain,
+  alert: AlertTriangle,
 };
 
 interface Props {
@@ -24,22 +58,52 @@ interface Props {
 
 export default function MonitoringPanel({ codigoIbge, municipioNome, onActivateContingency, onToast }: Props) {
   const [data, setData] = useState<MonitoringDashboard | null>(null);
+  const [scenario, setScenario] = useState<ScenarioAnalysis | null>(null);
+  const [scenarioLoading, setScenarioLoading] = useState(false);
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
   const [wsConnected, setWsConnected] = useState(false);
   const [lastUpdate, setLastUpdate] = useState<Date | null>(null);
+  const [pulseOrange, setPulseOrange] = useState(false);
+  const [criticalPopup, setCriticalPopup] = useState<{ mensagem: string } | null>(null);
+  const [expandedAlert, setExpandedAlert] = useState<number | null>(null);
+  const [alertInterpret, setAlertInterpret] = useState<Record<number, string>>({});
+  const [mapSelection, setMapSelection] = useState<MonitoringMapItem | null>(null);
+  const [compareOpen, setCompareOpen] = useState(false);
+  const [compareResult, setCompareResult] = useState<MonitoringCompareResult | null>(null);
+  const [compareLoading, setCompareLoading] = useState(false);
+
+  const pushAgenteProativo = useAppStore((s) => s.pushAgenteProativo);
+  const setAgenteAberto = useAppStore((s) => s.setAgenteAberto);
+  const setAlertNivel = useAppStore((s) => s.setAlertNivel);
 
   const load = useCallback(async () => {
     try {
       const dash = await api.getMonitoringDashboard(codigoIbge);
       setData(dash);
+      setAlertNivel(dash.nivel_risco_atual);
       setLastUpdate(new Date());
     } catch (e) {
       console.error(e);
     } finally {
       setLoading(false);
     }
-  }, [codigoIbge]);
+  }, [codigoIbge, setAlertNivel]);
+
+  const loadScenario = useCallback(
+    async (force = false) => {
+      setScenarioLoading(true);
+      try {
+        const analysis = await api.getScenarioAnalysis(codigoIbge, force);
+        setScenario(analysis);
+      } catch (e) {
+        console.error(e);
+      } finally {
+        setScenarioLoading(false);
+      }
+    },
+    [codigoIbge],
+  );
 
   const handleSync = async () => {
     setSyncing(true);
@@ -47,6 +111,7 @@ export default function MonitoringPanel({ codigoIbge, municipioNome, onActivateC
       await api.syncMonitoring(codigoIbge);
       onToast?.('Monitoramento', 'OpenMeteo e CEMADEN sincronizados.');
       await load();
+      await loadScenario(true);
     } catch (e) {
       onToast?.('Erro de sync', e instanceof Error ? e.message : 'Falha na sincronização');
     } finally {
@@ -61,12 +126,67 @@ export default function MonitoringPanel({ codigoIbge, municipioNome, onActivateC
     return () => clearInterval(id);
   }, [load]);
 
+  useEffect(() => {
+    if (!data) return;
+    loadScenario(false);
+  }, [data?.cemaden_ativos, data?.risk_probability, data?.precip_24h_mm, data?.precip_72h_mm, data?.nivel_risco_atual, loadScenario]);
+
   useAlertWebSocket(codigoIbge, (event) => {
     setWsConnected(true);
-    const d = event.data as { titulo?: string; mensagem?: string; nivel?: string };
-    onToast?.(d.titulo || event.type, String(d.mensagem || JSON.stringify(d)));
+    const d = event.data as Record<string, unknown>;
+
+    if (event.type === 'PROACTIVE_RISK') {
+      const tier = String(d.tier || '');
+      const msg = String(d.mensagem || 'Risco elevado detectado.');
+      if (tier === 'WARN') {
+        pushAgenteProativo(`⚠️ ${msg}`);
+        setAgenteAberto(true);
+      } else if (tier === 'ORANGE') {
+        setPulseOrange(true);
+        pushAgenteProativo(`🟠 ${msg} Recomendo abrir o módulo de Contingência.`);
+        setAgenteAberto(true);
+      } else if (tier === 'CRITICAL') {
+        setCriticalPopup({ mensagem: msg });
+        pushAgenteProativo(`🔴 ${msg}`);
+        setAgenteAberto(true);
+      }
+    } else {
+      const titulo = String(d.titulo || event.type);
+      onToast?.(titulo, String(d.mensagem || JSON.stringify(d)));
+    }
     load();
+    loadScenario(true);
   });
+
+  const toggleAlertExpand = async (item: MonitoringTimelineGroupItem) => {
+    if (expandedAlert === item.id) {
+      setExpandedAlert(null);
+      return;
+    }
+    setExpandedAlert(item.id);
+    if (!alertInterpret[item.id]) {
+      try {
+        const res = await api.getAlertInterpretation(codigoIbge, item.id);
+        setAlertInterpret((prev) => ({ ...prev, [item.id]: res.interpretacao }));
+      } catch {
+        setAlertInterpret((prev) => ({ ...prev, [item.id]: 'Interpretação indisponível.' }));
+      }
+    }
+  };
+
+  const handleCompare = async () => {
+    if (!mapSelection) return;
+    setCompareLoading(true);
+    setCompareOpen(true);
+    try {
+      const result = await api.compareMonitoringMunicipalities(codigoIbge, mapSelection.codigo_ibge);
+      setCompareResult(result);
+    } catch (e) {
+      onToast?.('Comparação', e instanceof Error ? e.message : 'Falha');
+    } finally {
+      setCompareLoading(false);
+    }
+  };
 
   if (loading && !data) {
     return <p className="text-sm text-zinc-400">Carregando monitoramento…</p>;
@@ -75,9 +195,39 @@ export default function MonitoringPanel({ codigoIbge, municipioNome, onActivateC
   const nivel = data?.nivel_risco_atual || 'VERDE';
   const nome = data?.nome_municipio || municipioNome || codigoIbge;
   const weatherMissing = !data?.weather_disponivel && data?.precip_24h_mm == null;
+  const timeline = data?.timeline_grouped?.length ? data.timeline_grouped : data?.timeline || [];
+  const riskBadgeClass = pulseOrange && nivel !== 'VERMELHO' ? NIVEL_COLOR.LARANJA : NIVEL_COLOR[nivel];
 
   return (
     <div className="flex h-full flex-col gap-4 overflow-y-auto pr-1">
+      {criticalPopup && (
+        <div className="fixed inset-0 z-[2000] flex items-center justify-center bg-black/70 p-4">
+          <div className="max-w-md rounded-2xl border border-red-500/50 bg-zinc-950 p-6 shadow-2xl">
+            <h3 className="text-lg font-bold text-red-300">Alerta crítico — probabilidade &gt; 75%</h3>
+            <p className="mt-3 text-sm text-zinc-300">{criticalPopup.mensagem}</p>
+            <div className="mt-5 flex gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setCriticalPopup(null);
+                  onActivateContingency?.('VERMELHO', data?.plano_ativo ?? null);
+                }}
+                className="flex-1 rounded-xl bg-red-600 py-2 text-xs font-bold uppercase text-white hover:bg-red-500"
+              >
+                Ativar plano de contingência
+              </button>
+              <button
+                type="button"
+                onClick={() => setCriticalPopup(null)}
+                className="rounded-xl border border-zinc-700 px-4 py-2 text-xs text-zinc-400"
+              >
+                Fechar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="flex items-start justify-between gap-2">
         <div>
           <h3 className="flex items-center gap-2 text-sm font-extrabold text-zinc-100">
@@ -87,63 +237,29 @@ export default function MonitoringPanel({ codigoIbge, municipioNome, onActivateC
           <p className="mt-0.5 text-[10px] text-zinc-500">
             Escopo: <strong className="text-zinc-300">{nome}</strong>
             {data?.uf ? ` — ${data.uf}` : ''}
-            <span className="ml-1 font-mono text-zinc-600">IBGE {codigoIbge}</span>
           </p>
         </div>
-        <div className="flex shrink-0 flex-col items-end gap-1">
-          {lastUpdate && (
-            <span className="text-[9px] text-zinc-500">Atualizado {lastUpdate.toLocaleTimeString('pt-BR')}</span>
-          )}
-          <button
-            type="button"
-            onClick={handleSync}
-            disabled={syncing}
-            className="inline-flex items-center gap-1 rounded-lg border border-zinc-700 bg-zinc-900/80 px-2 py-1 text-[9px] font-bold uppercase tracking-wide text-zinc-300 hover:bg-zinc-800 disabled:opacity-50"
-          >
-            {syncing ? <Loader2 size={11} className="animate-spin" /> : <RefreshCw size={11} />}
-            Sincronizar agora
-          </button>
-        </div>
+        <button
+          type="button"
+          onClick={handleSync}
+          disabled={syncing}
+          className="inline-flex items-center gap-1 rounded-lg border border-zinc-700 bg-zinc-900/80 px-2 py-1 text-[9px] font-bold uppercase text-zinc-300"
+        >
+          {syncing ? <Loader2 size={11} className="animate-spin" /> : <RefreshCw size={11} />}
+          Sincronizar
+        </button>
       </div>
 
-      <p className="rounded-lg border border-zinc-800 bg-zinc-950/50 px-3 py-2 text-[10px] leading-relaxed text-zinc-400">
-        KPIs abaixo referem-se ao <strong className="text-zinc-200">município selecionado</strong>.
-        O mapa nacional mostra a rede de municípios integrados (alertas CEMADEN + previsão OpenMeteo).
-      </p>
-
       <div className="grid grid-cols-3 gap-2">
-        <Card
-          icon={<AlertTriangle size={14} />}
-          label="CEMADEN ativos"
-          value={String(data?.cemaden_ativos ?? 0)}
-          accent="rose"
-          hint="Alertas CEMADEN nas últimas 24h neste município"
-        />
+        <Card icon={<AlertTriangle size={14} />} label="CEMADEN ativos" value={String(data?.cemaden_ativos ?? 0)} accent="rose" />
         <Card
           icon={<CloudRain size={14} />}
           label="Precip. 24h"
           value={data?.precip_24h_mm != null ? `${data.precip_24h_mm} mm` : '—'}
           accent="sky"
-          hint={
-            weatherMissing
-              ? 'Sem previsão ainda — clique em Sincronizar agora'
-              : data?.weather_updated_at
-                ? `OpenMeteo · ${new Date(data.weather_updated_at).toLocaleString('pt-BR')}`
-                : undefined
-          }
+          hint={weatherMissing ? 'Sincronize OpenMeteo' : undefined}
         />
-        <Card
-          icon={<Activity size={14} />}
-          label="Risco atual"
-          value={nivel}
-          accent="amber"
-          badgeClass={NIVEL_COLOR[nivel]}
-          hint={
-            data?.alertas_risco
-              ? `${data.alertas_risco} alerta(s) de limiar hidrológico`
-              : 'Derivado de precipitação prevista e alertas'
-          }
-        />
+        <Card icon={<Activity size={14} />} label="Risco atual" value={nivel} accent="amber" badgeClass={riskBadgeClass} />
       </div>
 
       {data?.risk_probability != null && (
@@ -156,41 +272,132 @@ export default function MonitoringPanel({ codigoIbge, municipioNome, onActivateC
         </p>
       )}
 
-      {weatherMissing && (
-        <p className="rounded-lg border border-amber-500/30 bg-amber-950/20 px-3 py-2 text-[10px] text-amber-200/90">
-          Previsão meteorológica indisponível para este município. A sincronização OpenMeteo roda automaticamente
-          a cada ~55 min ou manualmente pelo botão acima.
-        </p>
-      )}
+      {/* Card Análise de Cenário */}
+      <div className="rounded-xl border border-indigo-500/30 bg-indigo-950/20 p-4">
+        <div className="mb-2 flex items-center justify-between gap-2">
+          <p className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-indigo-300">
+            <Sparkles size={12} /> Análise de cenário
+            {scenario?.updated_at && (
+              <span className="font-normal normal-case text-zinc-500">
+                · Atualizado {new Date(scenario.updated_at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
+              </span>
+            )}
+          </p>
+          <button
+            type="button"
+            onClick={() => loadScenario(true)}
+            disabled={scenarioLoading}
+            className="text-[9px] font-bold uppercase text-indigo-400 hover:text-indigo-200"
+          >
+            {scenarioLoading ? '…' : 'Recalcular'}
+          </button>
+        </div>
+        {scenarioLoading && !scenario ? (
+          <p className="text-xs text-zinc-500">Gerando análise…</p>
+        ) : scenario ? (
+          <div className="space-y-3 text-xs text-zinc-300">
+            <p className="leading-relaxed">{scenario.interpretacao}</p>
+            <p className="flex items-start gap-1.5 text-sky-300/90">
+              <TrendingUp size={13} className="mt-0.5 shrink-0" />
+              <span>
+                <strong>Tendência:</strong> {scenario.tendencia}
+              </span>
+            </p>
+            <div>
+              <p className="mb-1 flex items-center gap-1 font-bold text-emerald-400/90">
+                <CheckCircle2 size={13} /> Recomendações (Nível {scenario.recomendacao_nivel})
+              </p>
+              <ul className="list-inside list-disc space-y-0.5 text-zinc-400">
+                {scenario.recomendacoes.map((r, i) => (
+                  <li key={i}>{r}</li>
+                ))}
+              </ul>
+            </div>
+            <p className="flex items-start gap-1.5 text-zinc-500">
+              <History size={13} className="mt-0.5 shrink-0" />
+              <span>{scenario.referencia_historica}</span>
+            </p>
+          </div>
+        ) : (
+          <p className="text-xs text-zinc-500">Análise indisponível.</p>
+        )}
+      </div>
 
-      <div>
+      <div className="relative">
         <h4 className="mb-2 flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider text-zinc-500">
           <Map size={12} /> Rede nacional de alertas
         </h4>
-        <MonitoringMiniMap highlightIbge={codigoIbge} />
+        <MonitoringMiniMap highlightIbge={codigoIbge} onSelect={setMapSelection} />
+        {mapSelection && mapSelection.codigo_ibge !== codigoIbge && (
+          <div className="absolute bottom-8 left-2 right-2 z-[500] rounded-lg border border-zinc-600 bg-zinc-950/95 p-3 shadow-xl backdrop-blur">
+            <p className="text-xs font-bold text-zinc-100">
+              {mapSelection.nome} · {mapSelection.uf}
+            </p>
+            <p className="mt-0.5 text-[10px] text-zinc-400">
+              Risco {mapSelection.nivel} · {mapSelection.cemaden_ativos ?? 0} alertas · Precip 72h:{' '}
+              {mapSelection.precip_72h_mm != null ? `${mapSelection.precip_72h_mm} mm` : '—'}
+            </p>
+            <button
+              type="button"
+              onClick={handleCompare}
+              className="mt-2 inline-flex items-center gap-1 rounded-lg border border-sky-500/40 bg-sky-950/40 px-2 py-1 text-[9px] font-bold uppercase text-sky-200"
+            >
+              <GitCompare size={11} /> Comparar com {nome.split('/')[0]}
+            </button>
+          </div>
+        )}
       </div>
+
+      {compareOpen && (
+        <div className="rounded-xl border border-sky-500/30 bg-zinc-900/80 p-4">
+          <div className="mb-2 flex items-center justify-between">
+            <p className="text-[10px] font-bold uppercase text-sky-300">Comparação municipal</p>
+            <button type="button" onClick={() => setCompareOpen(false)} className="text-zinc-500 hover:text-zinc-300">
+              <X size={14} />
+            </button>
+          </div>
+          {compareLoading ? (
+            <p className="text-xs text-zinc-500">Comparando…</p>
+          ) : compareResult ? (
+            <p className="text-xs leading-relaxed text-zinc-300">{compareResult.comparacao_ia}</p>
+          ) : null}
+        </div>
+      )}
 
       <div>
         <h4 className="mb-2 text-[10px] font-bold uppercase tracking-wider text-zinc-500">
           Timeline — {nome} · últimas 24h
         </h4>
-        <ul className="max-h-48 space-y-2 overflow-y-auto">
-          {(data?.timeline || []).map((a) => (
-            <li key={a.id} className="rounded-lg border border-zinc-800 bg-zinc-900/60 px-3 py-2 text-xs">
-              <div className="flex items-center gap-2">
-                <span className={`h-2 w-2 rounded-full ${NIVEL_COLOR[a.nivel] || 'bg-zinc-500'}`} />
-                <span className="font-bold text-zinc-200">{a.titulo}</span>
-                <span className="ml-auto text-[9px] uppercase text-zinc-600">{a.tipo.replace(/_/g, ' ')}</span>
-                <span className="text-[9px] text-zinc-600">{new Date(a.created_at).toLocaleTimeString('pt-BR')}</span>
-              </div>
-              {a.mensagem && <p className="mt-1 text-zinc-500">{a.mensagem}</p>}
-            </li>
-          ))}
-          {!data?.timeline?.length && (
+        <ul className="max-h-56 space-y-2 overflow-y-auto">
+          {(timeline as MonitoringTimelineGroupItem[]).map((a) => {
+            const Icon = ALERT_ICONS[a.alert_icon || 'alert'] || AlertTriangle;
+            const open = expandedAlert === a.id;
+            return (
+              <li key={`${a.id}-${a.titulo}`} className="rounded-lg border border-zinc-800 bg-zinc-900/60">
+                <button
+                  type="button"
+                  onClick={() => toggleAlertExpand(a)}
+                  className="flex w-full items-start gap-2 px-3 py-2 text-left text-xs"
+                >
+                  <Icon size={14} className="mt-0.5 shrink-0 text-zinc-400" />
+                  <span className={`mt-1 h-2 w-2 shrink-0 rounded-full ${NIVEL_COLOR[a.nivel] || 'bg-zinc-500'}`} />
+                  <span className="flex-1 font-bold text-zinc-200">{a.titulo_display || a.titulo}</span>
+                  <span className="text-[9px] text-zinc-600">{new Date(a.created_at).toLocaleTimeString('pt-BR')}</span>
+                  {open ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+                </button>
+                {a.mensagem && !open && <p className="px-3 pb-2 text-[10px] text-zinc-500">{a.mensagem}</p>}
+                {open && (
+                  <div className="border-t border-zinc-800 px-3 py-2 text-[10px] text-zinc-400">
+                    <p className="mb-1 font-bold text-zinc-500">O que este alerta significa?</p>
+                    <p>{alertInterpret[a.id] || 'Carregando…'}</p>
+                  </div>
+                )}
+              </li>
+            );
+          })}
+          {!timeline.length && (
             <li className="rounded-lg border border-dashed border-zinc-800 px-3 py-4 text-center text-xs text-zinc-500">
-              Nenhum alerta nas últimas 24h para {nome}.
-              <br />
-              <span className="text-[10px] text-zinc-600">Sincronize para buscar alertas CEMADEN e atualizar previsão.</span>
+              Nenhum alerta nas últimas 24h.
             </li>
           )}
         </ul>
@@ -235,7 +442,7 @@ function Card({
           value
         )}
       </div>
-      {hint && <p className="mt-1 text-[8px] leading-snug text-zinc-600">{hint}</p>}
+      {hint && <p className="mt-1 text-[8px] text-zinc-600">{hint}</p>}
     </div>
   );
 }
