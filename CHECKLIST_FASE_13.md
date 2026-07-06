@@ -37,14 +37,42 @@
 - [x] Ícones por grupo (Base, Clima, Planejamento, Saúde…)
 - [x] Preset `LAYER_PRESETS.cruzarRiscos` documentado
 
-## Prompts 05–10 (pendentes)
+## Prompt 05 — Estados vazios e skeletons
 
-- [ ] 05 — Estados vazios e skeletons
-- [ ] 06 — Wizard pós-simulação (ir ao 3D, exportar)
-- [ ] 07 — Narrativa executiva no painel
+- [x] `EmptyState` e `Skeleton` / `SkeletonKpiGrid` / `SkeletonChart`
+- [x] `SimulationPanel` — estado vazio antes da 1ª simulação
+- [x] `ExecutiveDashboard` — skeletons no carregamento
+- [x] `MonitoringPanel` — timeline sem alertas
+
+## Prompt 06 — Wizard pós-simulação
+
+- [x] `SimulationNextSteps` — 3D, Modo Focus, Cruzar riscos, PDF
+- [x] Integração em `PlatformApp` + `SimulationPanel`
+- [x] Detecção automática de cenário volumétrico (água/calor)
+
+## Prompt 07 — Narrativa executiva
+
+- [x] `buildExecutiveNarrative()` — IA salva ou síntese automática
+- [x] `ExecutiveNarrative` no painel (antes dos KPIs)
+- [x] Bullets de próximas ações sugeridas
+
+## Prompt 09 — Onboarding contextual por aba
+
+- [x] `TAB_CONTEXT_HINTS` em `tabContextHints.ts`
+- [x] `TabContextHint` dismissível (`localStorage` por aba)
+- [x] CTAs entre abas (ex.: Simulações → Contingência)
+
+## Prompt 10 — Comparador territorial
+
+- [x] `compareMunicipalities.ts` — presets, deltas, bullets
+- [x] Pares sugeridos (mesma UF, porte similar, referência regional)
+- [x] Coluna Δ / melhor na tabela
+- [x] Veredicto `mais_critico_ibge` + síntese em bullets
+- [x] População no seletor e na tabela
+
+## Adiado / pendente
+
 - [ ] 08 — Motor de recomendações *(adiado)*
-- [ ] 09 — Onboarding contextual por aba
-- [ ] 10 — Comparador territorial enriquecido
 
 ## Já implementado (marcar como referência)
 

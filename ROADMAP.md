@@ -247,12 +247,12 @@ Roteiro incremental **frontend-only** (sem alterar API), derivado do plano de me
 | 13.1 | **Modo Focus** (tecla F) | ✅ | Sidebar/camadas recolhidas; mapa + WorkshopCenter |
 | 13.2 | Hierarquia visual painéis | ✅ | KPIs primários vs secundários no painel executivo |
 | 13.3 | Sidebar camadas agrupada | ✅ | `LayerPanel` colapsável + ícones por grupo |
-| 13.4 | Estados vazios e loading | ⬜ | Prompt 05 |
-| 13.5 | Fluxo simulação guiado | ⬜ | Prompt 06 — complementa Fase A 3D |
-| 13.6 | Painel executivo narrativo | ⬜ | Prompt 07 — enriquecer `ExecutiveDashboard` |
+| 13.4 | Estados vazios e loading | ✅ | `EmptyState`, `Skeleton*` + painéis chave |
+| 13.5 | Fluxo simulação guiado | ✅ | `SimulationNextSteps` pós-cenário |
+| 13.6 | Painel executivo narrativo | ✅ | `ExecutiveNarrative` + `executiveNarrative.ts` |
 | 13.7 | Motor de recomendações | ➖ | Prompt 08 — adiar até explicabilidade IA |
-| 13.8 | Onboarding contextual | ⬜ | Prompt 09 — `OnboardingBanner` parcial |
-| 13.9 | Comparador territorial | ⬜ | Prompt 10 — `CompareModal` base existe |
+| 13.8 | Onboarding contextual | ✅ | `TabContextHint` por aba (dismissível) |
+| 13.9 | Comparador territorial | ✅ | Pares sugeridos, deltas, veredicto, bullets |
 | 13.10 | Apresentação executiva | ✅ | Prompt 11 — `/apresentacao/{ibge}` 8 slides |
 | 13.11 | Auditoria legível | ✅ | Prompt 12 — `AuditPanel` |
 | 13.12 | Agente proativo | ✅ | Prompt 13 — `AgenteSinidu` + `useAgenteProativo` |

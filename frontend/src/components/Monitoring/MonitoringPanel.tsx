@@ -13,6 +13,7 @@ import {
 } from '@/utils/api';
 import { useAlertWebSocket } from '@/hooks/useAlertWebSocket';
 import { useAppStore } from '@/stores/useAppStore';
+import { EmptyState } from '@/design-system';
 import {
   Activity,
   CloudRain,
@@ -396,8 +397,13 @@ export default function MonitoringPanel({ codigoIbge, municipioNome, onActivateC
             );
           })}
           {!timeline.length && (
-            <li className="rounded-lg border border-dashed border-zinc-800 px-3 py-4 text-center text-xs text-zinc-500">
-              Nenhum alerta nas últimas 24h.
+            <li className="list-none">
+              <EmptyState
+                icon={Radio}
+                compact
+                title="Nenhum alerta nas últimas 24h"
+                description="O monitor CEMADEN está ativo. Novos eventos aparecerão aqui e no mapa."
+              />
             </li>
           )}
         </ul>

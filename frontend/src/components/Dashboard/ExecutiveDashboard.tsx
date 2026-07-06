@@ -8,7 +8,8 @@ import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, LineChart, L
 import { Users, Trees, ShieldAlert, DollarSign, Waves, FileDown, Loader2, Award, ListChecks } from 'lucide-react';
 import RotatingLoader, { PDF_DIAGNOSTIC_MESSAGES } from '@/components/UI/RotatingLoader';
 import TermTooltip from '@/components/UI/TermTooltip';
-import { KpiCard, PanelSection } from '@/design-system';
+import { KpiCard, PanelSection, SkeletonKpiGrid, SkeletonChart } from '@/design-system';
+import ExecutiveNarrative from '@/components/Dashboard/ExecutiveNarrative';
 
 const TIER_STYLE: Record<string, { bg: string; text: string; border: string }> = {
   Platina: { bg: 'bg-slate-400/15', text: 'text-slate-200', border: 'border-slate-400/40' },
@@ -352,29 +353,19 @@ export default function ExecutiveDashboard({
 
   if (!mounted || municipioEnsuring) {
     return (
-      <div className="flex flex-col gap-5 p-1 animate-pulse">
+      <div className="flex flex-col gap-5 p-1">
         <RotatingLoader messages={['Carregando dados municipais…', 'Sincronizando indicadores…', 'Preparando painel executivo…']} className="text-indigo-200" />
-        <div className="grid grid-cols-2 gap-3">
-          {[1, 2, 3, 4].map((i) => (
-            <div key={i} className="h-24 bg-zinc-900 rounded-xl border border-zinc-800"></div>
-          ))}
-          <div className="h-24 col-span-2 bg-zinc-900 rounded-xl border border-zinc-800"></div>
-        </div>
-        <div className="h-64 bg-zinc-900 rounded-xl border border-zinc-800"></div>
+        <SkeletonKpiGrid count={4} />
+        <SkeletonChart />
       </div>
     );
   }
 
   if (loading) {
     return (
-      <div className="flex flex-col gap-5 p-1 animate-pulse">
-        <div className="grid grid-cols-2 gap-3">
-          {[1, 2, 3, 4].map((i) => (
-            <div key={i} className="h-24 bg-zinc-900 rounded-xl border border-zinc-800"></div>
-          ))}
-          <div className="h-24 col-span-2 bg-zinc-900 rounded-xl border border-zinc-800"></div>
-        </div>
-        <div className="h-64 bg-zinc-900 rounded-xl border border-zinc-800"></div>
+      <div className="flex flex-col gap-5 p-1">
+        <SkeletonKpiGrid count={4} />
+        <SkeletonChart />
       </div>
     );
   }
@@ -559,6 +550,18 @@ export default function ExecutiveDashboard({
           </p>
         </div>
       )}
+
+      <ExecutiveNarrative
+        municipioNome={municipioNome}
+        uf={indicators?.uf}
+        codigoIbge={codigoIbge}
+        indicators={indicators}
+        indices={indices}
+        maturity={maturity}
+        diagnostic={diagnostic}
+        avgIvc={avgIvc}
+        avgIri={avgIri}
+      />
 
       <PanelSection
         title="Indicadores prioritários"

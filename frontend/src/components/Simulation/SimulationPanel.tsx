@@ -2,10 +2,12 @@
 
 import { useState, useEffect } from 'react';
 import { api, MitigationPlan, RainfallComparison, SimulationInterpret, SimulationOutput, SlopeInterpretation } from '@/utils/api';
-import { Play, RotateCcw, AlertTriangle, HelpCircle, Thermometer, Droplet, FileText, Waves, Layers, Mountain, Activity, Sparkles, Copy, ClipboardCheck } from 'lucide-react';
+import { Play, RotateCcw, AlertTriangle, HelpCircle, Thermometer, Droplet, FileText, Waves, Layers, Mountain, Activity, Sparkles, Copy, ClipboardCheck, Droplets } from 'lucide-react';
 import PredictiveAnalysis from './PredictiveAnalysis';
 import RotatingLoader, { INTERPRETATION_MESSAGES, SIMULATION_MESSAGES } from '@/components/UI/RotatingLoader';
 import TermTooltip from '@/components/UI/TermTooltip';
+import SimulationNextSteps from './SimulationNextSteps';
+import { EmptyState } from '@/design-system';
 
 export type SimOverlayOptions = {
   showFlood: boolean;
@@ -19,6 +21,17 @@ export const DEFAULT_SIM_OVERLAYS: SimOverlayOptions = {
   showFlow: true,
 };
 
+function isVolumeSimulation(geojson: unknown): boolean {
+  const features = (geojson as { features?: Array<{ properties?: Record<string, unknown> }> })?.features;
+  if (!features?.length) return false;
+  return features.some(
+    (f) =>
+      f.properties?.layer_type === 'flood_band'
+      || f.properties?.depth_band
+      || f.properties?.temp_increase_celsius != null,
+  );
+}
+
 interface SimulationProps {
   onSimulate: (payload: SimulationOutput | any) => void;
   onClear: () => void;
@@ -28,6 +41,10 @@ interface SimulationProps {
   municipioLoaded?: boolean;
   overlayOptions: SimOverlayOptions;
   onOverlayChange: (options: SimOverlayOptions) => void;
+  onView3D?: () => void;
+  onFocusWorkshop?: () => void;
+  onCrossRiskLayers?: () => void;
+  mapMode3dActive?: boolean;
 }
 
 export default function SimulationPanel({
@@ -39,6 +56,10 @@ export default function SimulationPanel({
   municipioLoaded,
   overlayOptions,
   onOverlayChange,
+  onView3D,
+  onFocusWorkshop,
+  onCrossRiskLayers,
+  mapMode3dActive = false,
 }: SimulationProps) {
   const [activeTab, setActiveTab] = useState<'waterproofing' | 'veg_loss' | 'rainfall' | 'drainage' | 'predictive'>('rainfall');
   const [waterproofingPct, setWaterproofingPct] = useState(25);
@@ -635,6 +656,20 @@ export default function SimulationPanel({
           <p className="mt-2 rounded-lg border border-rose-800/50 bg-rose-950/30 px-3 py-2 text-[10px] text-rose-200">{simError}</p>
         )}
 
+        {activeTab !== 'predictive' && !result && !loading && (
+          <EmptyState
+            icon={Droplets}
+            compact
+            className="mt-4"
+            title={municipioLoaded === false ? 'Município não integrado' : 'Nenhuma simulação rodada'}
+            description={
+              municipioLoaded === false
+                ? 'Execute o onboarding na aba Municípios para habilitar DEM e simulações hidrológicas.'
+                : 'Defina o cenário (mm de chuva, impermeabilização, etc.) e clique em Rodar Simulação. O mapa e o terreno 3D serão atualizados automaticamente.'
+            }
+          />
+        )}
+
         {/* Action buttons — ocultos na aba preditiva (tem botão próprio) */}
         {activeTab !== 'predictive' && (
         <div className="flex gap-2 mt-5 border-t border-zinc-800 pt-4">
@@ -679,6 +714,24 @@ export default function SimulationPanel({
       </div>
 
       {/* Simulator Results */}
+      {result && onView3D && onFocusWorkshop && onCrossRiskLayers && (
+        <SimulationNextSteps
+          scenarioLabel={
+            activeTab === 'rainfall'
+              ? `${rainfallMm} mm${compareRainfall ? ` vs ${baselineRainfallMm} mm` : ''}`
+              : result.scenario_type || 'Simulação'
+          }
+          isVolumeSim={isVolumeSimulation(result.geometry)}
+          auto3dApplied={mapMode3dActive && isVolumeSimulation(result.geometry)}
+          fromCache={result.from_cache}
+          onView3D={onView3D}
+          onFocusWorkshop={onFocusWorkshop}
+          onCrossRiskLayers={onCrossRiskLayers}
+          onExportPdf={handleExportPdf}
+          exportPdfLoading={exportLoading === 'pdf'}
+        />
+      )}
+
       {result && (
         <div className="bg-card/40 border border-border p-4 rounded-xl flex flex-col gap-4 animate-fadeIn">
           <div className="flex items-start justify-between gap-2">

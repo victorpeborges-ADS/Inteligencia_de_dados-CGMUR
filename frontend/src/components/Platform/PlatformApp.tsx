@@ -36,7 +36,9 @@ import { useAgenteProativo } from '@/hooks/useAgenteContexto';
 import WorkshopCenter from '@/components/Workshop/WorkshopCenter';
 import MunicipioLoadProgress from '@/components/Platform/MunicipioLoadProgress';
 import OnboardingBanner from '@/components/Onboarding/OnboardingBanner';
+import TabContextHint from '@/components/Platform/TabContextHint';
 import LayerPanel from '@/components/Map/LayerPanel';
+import { LAYER_PRESETS } from '@/components/Map/LayerPanel';
 
 const MapContainer = dynamic(
   () => import('@/components/Map/MapContainer'),
@@ -563,6 +565,7 @@ export default function PlatformApp({ initialTab }: PlatformAppProps) {
 
           {/* Active Tab Panel Content */}
           <div className="flex-1 min-h-0 overflow-y-auto p-5">
+            <TabContextHint tab={activeTab} onNavigateTab={navigateTab} />
             {activeTab === 'dashboard' && (
               <div className="flex flex-col gap-4">
                 <OnboardingBanner codigoIbge={selectedMunicipio} municipioNome={selectedMunicipioInfo?.nome} />
@@ -617,6 +620,13 @@ export default function PlatformApp({ initialTab }: PlatformAppProps) {
                 municipioLoaded={selectedMunicipioInfo?.loaded === true}
                 overlayOptions={simOverlays}
                 onOverlayChange={setSimOverlays}
+                mapMode3dActive={mapMode === '3d'}
+                onView3D={() => setMapMode('3d')}
+                onFocusWorkshop={() => {
+                  setMapMode('3d');
+                  setFocusMode(true);
+                }}
+                onCrossRiskLayers={() => setActiveLayers([...LAYER_PRESETS.cruzarRiscos.layers])}
               />
             )}
             {activeTab === 'assistant' && (
