@@ -85,6 +85,32 @@ export default function SimulationPanel({
   const [lidarMessage, setLidarMessage] = useState<string | null>(null);
   const [simError, setSimError] = useState<string | null>(null);
   const [simProgress, setSimProgress] = useState<{ progress: number; stage_label?: string } | null>(null);
+  const [demStatus, setDemStatus] = useState<'idle' | 'warming' | 'ready' | 'error'>('idle');
+
+  useEffect(() => {
+    if (!codigoIbge) {
+      setDemStatus('idle');
+      return;
+    }
+    let cancelled = false;
+    setDemStatus('warming');
+    api.getTerrainConfig(codigoIbge)
+      .then(() => {
+        if (!cancelled) setDemStatus('ready');
+      })
+      .catch(() =>
+        api.processTerrainDem(codigoIbge)
+          .then(() => {
+            if (!cancelled) setDemStatus('ready');
+          })
+          .catch(() => {
+            if (!cancelled) setDemStatus('error');
+          }),
+      );
+    return () => {
+      cancelled = true;
+    };
+  }, [codigoIbge]);
 
   useEffect(() => {
     if (analysisLoading) {
@@ -336,7 +362,18 @@ export default function SimulationPanel({
                 {!isPilot && ' · piloto refinado: Recife (2611606)'}
               </p>
             </div>
-            <label
+            <div className="flex flex-wrap items-center gap-2">
+              {demStatus === 'ready' && (
+                <span className="rounded-full border border-lime-500/40 bg-lime-950/40 px-2 py-0.5 text-[9px] font-bold uppercase text-lime-200">
+                  DEM aquecido
+                </span>
+              )}
+              {demStatus === 'warming' && (
+                <span className="rounded-full border border-sky-500/30 bg-sky-950/40 px-2 py-0.5 text-[9px] font-bold uppercase text-sky-200 animate-pulse">
+                  Preparando DEM…
+                </span>
+              )}
+              <label
               className={`inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-sky-700 bg-sky-900/40 px-3 py-1.5 text-xs font-medium text-sky-100 hover:bg-sky-800/50 ${lidarUploading ? 'opacity-50' : ''}`}
             >
               <Mountain className="h-3.5 w-3.5" />
@@ -353,6 +390,7 @@ export default function SimulationPanel({
                 }}
               />
             </label>
+            </div>
           </div>
           {lidarMessage && <p className="mt-2 text-[10px] text-sky-100">{lidarMessage}</p>}
         </div>
@@ -789,9 +827,16 @@ export default function SimulationPanel({
                   Interpretação Sinidu·IA
                 </h4>
                 {simInterpret && (
-                  <span className="rounded border border-teal-500/30 bg-teal-950/30 px-2 py-0.5 text-[8px] font-bold uppercase text-teal-200">
-                    Modelo: {simInterpret.ai_provider === 'deterministic' ? 'Regras' : simInterpret.ai_provider || 'Mistral'}
-                  </span>
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    {simInterpret.from_cache && (
+                      <span className="rounded border border-sky-500/30 bg-sky-950/30 px-2 py-0.5 text-[8px] font-bold uppercase text-sky-200">
+                        cache
+                      </span>
+                    )}
+                    <span className="rounded border border-teal-500/30 bg-teal-950/30 px-2 py-0.5 text-[8px] font-bold uppercase text-teal-200">
+                      Modelo: {simInterpret.ai_provider === 'deterministic' ? 'Regras' : simInterpret.ai_provider || 'Mistral'}
+                    </span>
+                  </div>
                 )}
               </div>
 

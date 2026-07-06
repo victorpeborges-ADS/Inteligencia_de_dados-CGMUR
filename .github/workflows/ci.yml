@@ -77,6 +77,14 @@ jobs:
         run: |
           pytest tests/test_osrm_router.py tests/test_batch_export.py tests/test_external_sources_collector.py -q --tb=short --no-cov
 
+      - name: Testes Fase 12 (cache simulação e interpretação)
+        working-directory: backend
+        env:
+          DATABASE_URL: postgresql://sinidu_user:sinidu_pass@localhost:5432/sinidu_db
+          AUTH_ENABLED: "false"
+        run: |
+          pytest tests/test_simulation_cache.py tests/test_simulation_interpret_cache.py -q --tb=short --no-cov
+
       - name: Smoke health + metrics
         working-directory: backend
         env:
@@ -112,3 +120,7 @@ jobs:
           npm ci
           npm run build
           test -f .next/standalone/server.js
+
+      - name: Testes floodInspect (Fase 12b)
+        working-directory: frontend
+        run: npm run test:floodInspect

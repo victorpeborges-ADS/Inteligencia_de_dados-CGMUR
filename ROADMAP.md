@@ -237,9 +237,20 @@ Ver `CHECKLIST_FASE_12.md`.
 
 ---
 
+## Fase 12b — Operacional oficina ✅
+
+| # | Item | Status | Notas |
+|---|------|--------|-------|
+| 12b.1 | **Banner OSRM** contingência | ✅ | Status Nordeste + setup script |
+| 12b.2 | **Cache interpretação IA** | ✅ | `simulation_interpret_cache.py`, TTL 6 h |
+| 12b.3 | **Pré-aquecimento DEM** | ✅ | Badge "DEM aquecido" na aba Simulações |
+| 12b.4 | **Testes floodInspect** | ✅ | `npm run test:floodInspect` |
+
+---
+
 ## Fase 13 — Experiência institucional (UX/UI, plano 06/07)
 
-Roteiro incremental **frontend-only** (sem alterar API), derivado do plano de melhoria Sinidu 06/07. Executar **após** estabilizar Fase 12b (OSRM, homolog auth/TLS).
+Roteiro incremental **frontend-only** (sem alterar API), derivado do plano de melhoria Sinidu 06/07.
 
 | # | Prompt / item | Status | Notas |
 |---|---------------|--------|-------|

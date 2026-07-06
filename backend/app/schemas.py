@@ -229,6 +229,7 @@ class SimulationInterpretResponse(BaseModel):
     ai_provider: str = "deterministic"
     ai_model: Optional[str] = None
     confidence: str = "media"
+    from_cache: bool = False
 
 class SlopeInterpretationResponse(BaseModel):
     codigo_ibge: str

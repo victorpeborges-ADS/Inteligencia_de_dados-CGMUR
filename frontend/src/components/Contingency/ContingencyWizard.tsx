@@ -2,8 +2,8 @@
 
 import { useEffect, useState } from 'react';
 import dynamic from 'next/dynamic';
-import { api, type ContingencyPlan } from '@/utils/api';
-import { Save, ChevronRight, ChevronLeft, FileDown, Shield } from 'lucide-react';
+import { api, type ContingencyPlan, type RoutingStatus } from '@/utils/api';
+import { Save, ChevronRight, ChevronLeft, FileDown, Shield, Route, CheckCircle2 } from 'lucide-react';
 
 const ContingencyDrawMap = dynamic(() => import('./ContingencyDrawMap'), { ssr: false });
 
@@ -45,10 +45,12 @@ export default function ContingencyWizard({
   ]);
   const [acoes, setAcoes] = useState<Record<string, string[]>>({});
   const [drawMode, setDrawMode] = useState<'zone' | 'support' | 'view'>('zone');
-  const [osrmCoveredUfs, setOsrmCoveredUfs] = useState<string[]>(DEFAULT_OSRM_UFS);
+  const [routingStatus, setRoutingStatus] = useState<RoutingStatus | null>(null);
 
   useEffect(() => {
-    api.getRoutingStatus().then((s) => setOsrmCoveredUfs(s.covered_ufs)).catch(() => {});
+    api.getRoutingStatus()
+      .then(setRoutingStatus)
+      .catch(() => setRoutingStatus(null));
   }, []);
 
   useEffect(() => {
@@ -59,10 +61,15 @@ export default function ContingencyWizard({
     if (initialNivel) setNivel(initialNivel);
   }, [initialNivel]);
 
+  const osrmCoveredUfs = routingStatus?.covered_ufs ?? DEFAULT_OSRM_UFS;
   const coveredSet = new Set(osrmCoveredUfs.map((uf) => uf.toUpperCase()));
+  const ufCovered = municipioUf ? coveredSet.has(municipioUf.toUpperCase()) : true;
+  const osrmOnline = routingStatus?.available === true;
+  const osrmReady = osrmOnline && ufCovered;
   const rotasAproximadas =
-    (municipioUf && !coveredSet.has(municipioUf.toUpperCase())) ||
-    rotas.some((r) => r.aproximada || r.malha_viaria === false || r.fonte_rota === 'fallback');
+    rotas.length > 0 &&
+    (!osrmReady ||
+      rotas.some((r) => r.aproximada || r.malha_viaria === false || r.fonte_rota === 'fallback'));
 
   const generateFromSimulation = async () => {
     if (!simGeoJSON) {
@@ -175,6 +182,34 @@ export default function ContingencyWizard({
 
       {step === 1 && (
         <div className="space-y-3">
+          <div
+            className={`rounded-lg border px-3 py-2.5 ${
+              osrmReady
+                ? 'border-emerald-500/35 bg-emerald-950/20'
+                : 'border-amber-500/35 bg-amber-950/20'
+            }`}
+          >
+            <div className="flex items-start gap-2">
+              {osrmReady ? (
+                <CheckCircle2 size={16} className="mt-0.5 shrink-0 text-emerald-400" />
+              ) : (
+                <Route size={16} className="mt-0.5 shrink-0 text-amber-300" />
+              )}
+              <div>
+                <p className="text-[10px] font-extrabold uppercase tracking-wide text-zinc-200">
+                  Malha viária OSRM — {routingStatus?.region || 'nordeste'}
+                </p>
+                <p className="mt-1 text-[10px] leading-relaxed text-zinc-400">
+                  {osrmReady
+                    ? `Rotas de evacuação usarão malha real (${osrmCoveredUfs.join(', ')}). Ideal para demo Recife/PE.`
+                    : osrmOnline && !ufCovered
+                      ? `OSRM online, mas ${municipioUf || 'esta UF'} não está na cobertura (${osrmCoveredUfs.join(', ')}). Rotas serão geodésicas.`
+                      : 'OSRM offline — rotas aproximadas (linha reta). Suba o container: OSRM_REGION=nordeste bash docker/osrm/setup-osrm.sh && docker compose up -d osrm'}
+                </p>
+              </div>
+            </div>
+          </div>
+
           <p className="text-xs text-zinc-400">
             Município: <strong className="text-zinc-100">{municipioNome || codigoIbge}</strong>
           </p>

@@ -63,7 +63,9 @@ Frontend: Simulações → Chuva 120 mm → barra de progresso → 2ª rodada in
 
 ## Pendente (Fase 12b)
 
-- [ ] OSRM Nordeste na demo de contingência
-- [ ] Testes unitários frontend (`floodInspect.ts`)
-- [ ] Cache interpretação IA pós-simulação
-- [ ] Pré-aquecimento DEM ao abrir aba Simulações
+- [x] OSRM Nordeste na demo de contingência — banner status + instruções setup
+- [x] Testes unitários frontend (`floodInspect.ts`) — `npm run test:floodInspect`
+- [x] Cache interpretação IA pós-simulação — `simulation_interpret_cache.py`
+- [x] Pré-aquecimento DEM ao abrir aba Simulações — badge "DEM aquecido"
+- [x] CI: `test_simulation_interpret_cache` + `npm run test:floodInspect`
+- [x] Env cache no `docker-compose.yml`

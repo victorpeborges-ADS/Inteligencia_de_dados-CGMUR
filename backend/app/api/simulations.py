@@ -32,7 +32,8 @@ from app.services.simulation_job_service import (
 )
 from app.services.mitigation_planner import MitigationPlanner
 from app.services.simulation_analyzer import analyze_simulation
-from app.services.simulation_interpreter import interpret_simulation, interpret_slope_zones
+from app.services.simulation_interpret_cache import interpret_simulation_cached
+from app.services.simulation_interpreter import interpret_slope_zones
 from app.services.simulation_export import (
     export_download_meta,
     generate_simulation_pdf,
@@ -129,7 +130,7 @@ def interpret_simulation_result(payload: SimulationInterpretRequest, request: Re
     tipo = payload.tipo_simulacao.strip().lower()
     if tipo not in {"chuva", "asfalto", "vegetacao", "drenagem"}:
         raise HTTPException(status_code=400, detail="tipo_simulacao inválido.")
-    return interpret_simulation(
+    return interpret_simulation_cached(
         db,
         muni,
         tipo_simulacao=tipo,  # type: ignore[arg-type]

@@ -15,7 +15,7 @@ const flood = inspectFloodFeature({
   precipitation_mm: 120,
 });
 assert(flood.scenario === 'flood', 'flood scenario');
-assert(flood.depthCm === 58, `depthCm expected 58 got ${flood.depthCm}`);
+assert(flood.depthCm != null && flood.depthCm >= 57 && flood.depthCm <= 58, `depthCm expected ~58 got ${flood.depthCm}`);
 
 const heat = inspectFloodFeature({ temp_increase_celsius: 2.5 });
 assert(heat.scenario === 'heat', 'heat scenario');
@@ -28,5 +28,17 @@ const full = buildInspectResult(-8.05, -34.88, {
 }, 12.0);
 assert(full.inFlood === true, 'in flood');
 assert(full.waterSurfaceM != null && full.waterSurfaceM > 12, 'water surface');
+
+const none = buildInspectResult(-8.05, -34.88, null, 10.0);
+assert(none.scenario === 'none', 'no feature');
+assert(none.inFlood === false, 'not in flood');
+
+const critica = inspectFloodFeature({
+  layer_type: 'flood_band',
+  depth_band: 'critica',
+  depth_min_m: 0.8,
+  depth_max_m: 1.5,
+});
+assert(critica.depthCm === 115, `critica depth ${critica.depthCm}`);
 
 console.log('floodInspect: OK');

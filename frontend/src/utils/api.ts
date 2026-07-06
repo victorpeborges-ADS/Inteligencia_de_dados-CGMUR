@@ -484,6 +484,7 @@ export interface SimulationInterpret {
   ai_provider: string;
   ai_model?: string | null;
   confidence?: string;
+  from_cache?: boolean;
 }
 
 export interface SlopeInterpretation {

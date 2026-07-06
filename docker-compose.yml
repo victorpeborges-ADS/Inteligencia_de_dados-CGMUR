@@ -77,6 +77,10 @@ services:
       - BACKUP_DIR=/data/backups
       - BACKUP_RETENTION_DAYS=7
       - LOG_FORMAT=json
+      - SIMULATION_CACHE_ENABLED=true
+      - SIMULATION_CACHE_TTL=86400
+      - SIMULATION_INTERPRET_CACHE_ENABLED=true
+      - SIMULATION_INTERPRET_CACHE_TTL=21600
       # Produção: docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
       # Mapa satélite Google no PDF (Static Maps API — opcional):
       # - GOOGLE_MAPS_API_KEY=
