@@ -60,8 +60,8 @@ services:
       - JOB_STORE_REDIS=true
       - OPENTOPOGRAPHY_API_KEY=${OPENTOPOGRAPHY_API_KEY:-}
       - OSRM_URL=http://osrm:5000
-      - OSRM_REGION=nordeste
-      - OSRM_COVERED_UFS=PE,AL,SE,PB,RN,CE,PI,MA
+      - OSRM_REGION=${OSRM_REGION:-nordeste}
+      - OSRM_COVERED_UFS=${OSRM_COVERED_UFS:-PE,AL,SE,PB,RN,CE,PI,MA}
       - GOTIFY_URL=http://gotify:80
       - GOTIFY_TOKEN=
       - AI_CHAT_PROVIDER=${AI_CHAT_PROVIDER:-mistral}
@@ -131,7 +131,7 @@ services:
     ports:
       - "5000:5000"
     environment:
-      - OSRM_REGION=nordeste
+      - OSRM_REGION=${OSRM_REGION:-nordeste}
     volumes:
       - ./docker/osrm:/data
       - ./docker/osrm/docker-entrypoint.sh:/entrypoint.sh:ro

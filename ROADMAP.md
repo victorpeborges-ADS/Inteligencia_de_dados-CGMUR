@@ -180,8 +180,12 @@ curl -X POST "http://localhost:8000/api/v1/system/jobs/diagnostics-batch?limit=6
 # LiDAR Recife — upload GeoTIFF
 curl -X POST "http://localhost:8000/api/v1/terrain/2611606/import-local-dem" -F "file=@recife_lidar.tif"
 
-# OSRM — somente para demo com rotas reais
+# OSRM — somente para demo com rotas reais (~414 MB nordeste)
 OSRM_REGION=nordeste bash docker/osrm/setup-osrm.sh && docker compose up -d osrm
+
+# Checklist demo / oficina MCID
+./scripts/demo-smoke.sh
+# Ver CHECKLIST_DEMO_MCID.md
 ```
 
 ---
@@ -261,14 +265,14 @@ Roteiro incremental **frontend-only** (sem alterar API), derivado do plano de me
 | 13.4 | Estados vazios e loading | ✅ | `EmptyState`, `Skeleton*` + painéis chave |
 | 13.5 | Fluxo simulação guiado | ✅ | `SimulationNextSteps` pós-cenário |
 | 13.6 | Painel executivo narrativo | ✅ | `ExecutiveNarrative` + `executiveNarrative.ts` |
-| 13.7 | Motor de recomendações | ➖ | Prompt 08 — adiar até explicabilidade IA |
+| 13.7 | Motor de recomendações | ✅ | `territorialRecommendations.ts` + painel no `/painel` |
 | 13.8 | Onboarding contextual | ✅ | `TabContextHint` por aba (dismissível) |
 | 13.9 | Comparador territorial | ✅ | Pares sugeridos, deltas, veredicto, bullets |
 | 13.10 | Apresentação executiva | ✅ | Prompt 11 — `/apresentacao/{ibge}` 8 slides |
 | 13.11 | Auditoria legível | ✅ | Prompt 12 — `AuditPanel` |
 | 13.12 | Agente proativo | ✅ | Prompt 13 — `AgenteSinidu` + `useAgenteProativo` |
 | 13.13 | Glossário inline | ✅ | Prompt 14 — `TermTooltip` |
-| 13.14 | Remover rótulos MVP | ➖ | Prompt 15 — adiar pós-homologação |
+| 13.14 | Remover rótulos MVP | ✅ | `NEXT_PUBLIC_INSTITUTIONAL_MODE=true` em prod/homolog |
 
 **Já existente (não refazer):** `WorkshopCenter`, `/apresentacao/{ibge}`, `ExecutiveDashboard`, `AgenteSinidu`, `AuditPanel`, `TermTooltip`.
 

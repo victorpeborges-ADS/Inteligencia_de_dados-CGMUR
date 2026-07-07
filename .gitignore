@@ -36,5 +36,7 @@ ollama_data/
 
 # OSRM / DEM / volumes Docker locais
 docker/osrm/data/
+docker/osrm/*.osm.pbf
+docker/osrm/*.osm.pbf.partial
 *.osrm
 *.osrm.*

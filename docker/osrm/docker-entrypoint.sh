@@ -1,6 +1,6 @@
 #!/bin/sh
 set -e
-REGION="${OSRM_REGION:-pernambuco}"
+REGION="${OSRM_REGION:-nordeste}"
 BASE="/data/${REGION}-latest.osrm"
 
 if [ ! -f "${BASE}" ] && [ ! -f "${BASE}.cells" ]; then

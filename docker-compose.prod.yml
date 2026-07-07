@@ -33,6 +33,9 @@ services:
     build:
       context: ./frontend
       dockerfile: Dockerfile.prod
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-https://localhost}
+        NEXT_PUBLIC_INSTITUTIONAL_MODE: ${NEXT_PUBLIC_INSTITUTIONAL_MODE:-true}
     environment:
       - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-https://localhost}
     ports:

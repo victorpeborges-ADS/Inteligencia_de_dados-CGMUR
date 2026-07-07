@@ -1,30 +1,35 @@
 # OSRM — roteamento local
 
-Região padrão no `docker-compose.yml`: **Nordeste** (PE, AL, SE, PB, RN, CE, PI, MA).
+Região padrão no `docker-compose.yml`: **Nordeste** (~414 MB PBF; PE, AL, SE, PB, RN, CE, PI, MA).
 
-Para apenas Pernambuco (~50 MB):
-
-```bash
-OSRM_REGION=pernambuco bash docker/osrm/setup-osrm.sh
-```
-
-Para municípios em **SE, AL, PB, RN, CE, PI, MA** (ex.: São Cristóvão), use o Nordeste:
+Geofabrik disponibiliza apenas **regiões macro** do Brasil (não há extract estadual de Pernambuco).
 
 ```bash
 OSRM_REGION=nordeste bash docker/osrm/setup-osrm.sh
+docker compose up -d osrm
 ```
 
-Configure no backend: `OSRM_COVERED_UFS=PE,AL,SE,PB,RN,CE,PI,MA` (padrão Nordeste) ou deixe derivar de `OSRM_REGION`.
+**Memória:** configure Docker Desktop ≥ 8 GB. Se o processo morrer com exit **137** (OOM), aumente RAM ou use `OSRM_DOCKER_MEMORY=10g`. O script remove artefatos parciais e retoma do PBF.
 
-### Multi-região (Fase 9)
+Para outras regiões:
 
-| Região | UFs típicas |
-|--------|-------------|
-| `nordeste` | PE, AL, SE, PB, RN, CE, PI, MA |
-| `sudeste` | SP, RJ, MG, ES |
-| `sul` | PR, RS, SC |
-| `centro-oeste` | GO, MT, MS, DF |
-| `norte` | AM, PA, RO, … |
+| Região | Tamanho PBF (aprox.) | UFs típicas |
+|--------|----------------------|-------------|
+| `nordeste` | ~414 MB | PE, AL, SE, PB, RN, CE, PI, MA |
+| `sudeste` | ~811 MB | SP, RJ, MG, ES |
+| `sul` | ~399 MB | PR, RS, SC |
+| `centro-oeste` | ~190 MB | GO, MT, MS, DF |
+| `norte` | ~150 MB | AM, PA, RO, … |
+| `brazil` | ~1,9 GB | nacional |
+
+Configure no backend: `OSRM_COVERED_UFS` (opcional; padrão derivado de `OSRM_REGION`).
+
+Override via `.env`:
+
+```bash
+OSRM_REGION=nordeste
+OSRM_COVERED_UFS=PE,AL,SE,PB,RN,CE,PI,MA
+```
 
 Status: `GET /api/v1/routing/status` — painel **Sistema** → bloco OSRM.
 
@@ -36,13 +41,9 @@ bash docker/osrm/setup-osrm.sh
 docker compose up -d osrm
 ```
 
-Nordeste completo (maior, ~200 MB+):
-
-```bash
-OSRM_REGION=nordeste bash docker/osrm/setup-osrm.sh
-```
-
 Sem dados processados, o container fica em espera e o backend usa **fallback geodésico**.
+
+Checklist demo MCID: [`CHECKLIST_DEMO_MCID.md`](../CHECKLIST_DEMO_MCID.md)
 
 ## Gotify — notificações push
 

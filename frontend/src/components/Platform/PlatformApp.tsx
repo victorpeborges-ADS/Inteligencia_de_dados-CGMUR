@@ -37,6 +37,7 @@ import WorkshopCenter from '@/components/Workshop/WorkshopCenter';
 import MunicipioLoadProgress from '@/components/Platform/MunicipioLoadProgress';
 import OnboardingBanner from '@/components/Onboarding/OnboardingBanner';
 import TabContextHint from '@/components/Platform/TabContextHint';
+import { isInstitutionalMode } from '@/config/branding';
 import LayerPanel from '@/components/Map/LayerPanel';
 import { LAYER_PRESETS } from '@/components/Map/LayerPanel';
 
@@ -449,7 +450,10 @@ export default function PlatformApp({ initialTab }: PlatformAppProps) {
                 focusMode ? 'text-lg' : 'text-2xl'
               }`}
             >
-              Sinidu+Clima <span className="text-indigo-400 font-medium">INTERNO</span>
+              Sinidu+Clima
+              {!isInstitutionalMode() && (
+                <span className="text-indigo-400 font-medium"> INTERNO</span>
+              )}
             </h1>
             {!focusMode && (
               <span className="text-[11px] text-zinc-500 uppercase tracking-[0.22em] font-semibold block">

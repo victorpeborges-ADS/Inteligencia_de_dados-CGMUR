@@ -6,6 +6,7 @@ import { Bar, BarChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recha
 import { ChevronLeft, ChevronRight, X, Loader2 } from 'lucide-react';
 
 import { api, getApiBaseUrl, type PresentationPayload } from '@/utils/api';
+import { presentationDisclaimer } from '@/config/branding';
 import RotatingLoader, { PRESENTATION_MESSAGES } from '@/components/UI/RotatingLoader';
 
 const TOTAL_SLIDES = 8;
@@ -296,7 +297,7 @@ export default function ApresentacaoPage() {
           </div>
         )}
         <p className="max-w-lg text-sm text-zinc-500">
-          Este diagnóstico é para uso interno. Não substitui estudos técnicos oficiais.
+          {presentationDisclaimer()}
         </p>
       </div>
     ),

@@ -124,3 +124,11 @@ jobs:
       - name: Testes floodInspect (Fase 12b)
         working-directory: frontend
         run: npm run test:floodInspect
+
+      - name: Testes motor recomendações (Fase 13.7)
+        working-directory: frontend
+        run: npm run test:territorialRecommendations
+
+      - name: Testes branding institucional (Fase 13.14)
+        working-directory: frontend
+        run: npm run test:branding

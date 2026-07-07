@@ -7,7 +7,9 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "test:floodInspect": "npx tsx scripts/test-floodInspect.ts"
+    "test:floodInspect": "npx tsx scripts/test-floodInspect.ts",
+    "test:territorialRecommendations": "npx tsx scripts/test-territorialRecommendations.ts",
+    "test:branding": "npx tsx scripts/test-branding.ts"
   },
   "dependencies": {
     "autoprefixer": "^10.4.15",

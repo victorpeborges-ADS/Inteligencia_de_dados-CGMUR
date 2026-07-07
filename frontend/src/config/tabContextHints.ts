@@ -8,6 +8,12 @@ export type TabContextHintConfig = {
 };
 
 export const TAB_CONTEXT_HINTS: Partial<Record<ActiveTab, TabContextHintConfig>> = {
+  dashboard: {
+    title: 'Painel executivo',
+    body: 'Leia a narrativa, siga as recomendações territoriais (prioridade + evidências) e exporte PDF quando a maturidade for Prata ou superior.',
+    ctaTab: 'simulation',
+    ctaLabel: 'Simular cenário',
+  },
   onboarding: {
     title: 'Integração municipal',
     body: 'Valide o município e execute o onboarding para liberar malha de bairros, MapBiomas e score Sinidu+Clima.',

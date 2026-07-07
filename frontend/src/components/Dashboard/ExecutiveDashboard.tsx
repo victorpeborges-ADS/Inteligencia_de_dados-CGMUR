@@ -10,6 +10,7 @@ import RotatingLoader, { PDF_DIAGNOSTIC_MESSAGES } from '@/components/UI/Rotatin
 import TermTooltip from '@/components/UI/TermTooltip';
 import { KpiCard, PanelSection, SkeletonKpiGrid, SkeletonChart } from '@/design-system';
 import ExecutiveNarrative from '@/components/Dashboard/ExecutiveNarrative';
+import TerritorialRecommendations from '@/components/Dashboard/TerritorialRecommendations';
 
 const TIER_STYLE: Record<string, { bg: string; text: string; border: string }> = {
   Platina: { bg: 'bg-slate-400/15', text: 'text-slate-200', border: 'border-slate-400/40' },
@@ -555,6 +556,15 @@ export default function ExecutiveDashboard({
         municipioNome={municipioNome}
         uf={indicators?.uf}
         codigoIbge={codigoIbge}
+        indicators={indicators}
+        indices={indices}
+        maturity={maturity}
+        diagnostic={diagnostic}
+        avgIvc={avgIvc}
+        avgIri={avgIri}
+      />
+
+      <TerritorialRecommendations
         indicators={indicators}
         indices={indices}
         maturity={maturity}

@@ -70,9 +70,16 @@
 - [x] Veredicto `mais_critico_ibge` + síntese em bullets
 - [x] População no seletor e na tabela
 
+## Prompt 08 — Motor de recomendações
+
+- [x] `territorialRecommendations.ts` — regras explicáveis (IVC, IRI, CEMADEN, maturidade, CAPAG…)
+- [x] `TerritorialRecommendations` no painel executivo (top 5, prioridade, evidências)
+- [x] CTAs entre abas (simulações, monitor, contingência, catálogo…)
+- [x] `npm run test:territorialRecommendations`
+
 ## Adiado / pendente
 
-- [ ] 08 — Motor de recomendações *(adiado)*
+- [ ] *(nenhum item crítico da Fase 13)*
 
 ## Já implementado (marcar como referência)
 
@@ -83,7 +90,7 @@
 
 ## Adiado
 
-- [ ] 15 — Remover rótulos "MVP" / "INTERNO" — pós-homologação MCID
+- [x] 15 — Rótulos "INTERNO" — `NEXT_PUBLIC_INSTITUTIONAL_MODE=true` (homolog/prod); dev mantém badge
 
 ## Smoke test Modo Focus
 
