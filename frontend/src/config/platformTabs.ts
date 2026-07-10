@@ -1,4 +1,5 @@
 import type { MunicipalityOption } from '@/utils/api';
+import { BOOT_PRIORITY_IBGE_CODES } from '@/data/municipalities_seed';
 
 export type ActiveTab =
   | 'dashboard'
@@ -81,5 +82,13 @@ export function mergeMunicipalities(
       loaded: true,
     });
   });
-  return Array.from(byCode.values()).sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR'));
+  const priorityRank = new Map(
+    BOOT_PRIORITY_IBGE_CODES.map((code, index) => [code, index]),
+  );
+  return Array.from(byCode.values()).sort((a, b) => {
+    const pa = priorityRank.has(a.codigo_ibge) ? priorityRank.get(a.codigo_ibge)! : 999;
+    const pb = priorityRank.has(b.codigo_ibge) ? priorityRank.get(b.codigo_ibge)! : 999;
+    if (pa !== pb) return pa - pb;
+    return a.nome.localeCompare(b.nome, 'pt-BR');
+  });
 }

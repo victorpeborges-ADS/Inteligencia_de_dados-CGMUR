@@ -25,6 +25,8 @@ def test_osrm_status_when_unreachable():
     assert status["available"] is False
     assert "covered_ufs" in status
     assert status["region"]
+    assert status.get("setup_hint")
+    assert status.get("fallback_active") is True
 
 
 def test_route_uses_fallback_outside_covered_uf(monkeypatch):
@@ -32,6 +34,20 @@ def test_route_uses_fallback_outside_covered_uf(monkeypatch):
     feat = osrm_router.route((-46.6, -23.5), (-46.61, -23.51), uf="SP")
     assert feat is not None
     assert feat["properties"]["fonte"] == "fallback"
+
+
+def test_osrm_pe_se_region_defaults():
+    with patch.dict("os.environ", {"OSRM_REGION": "pe-se", "OSRM_COVERED_UFS": ""}, clear=False):
+        import importlib
+        from app.services import osrm_router as mod
+
+        importlib.reload(mod)
+        assert mod.OSRM_REGION == "pe-se"
+        assert mod.OSRM_COVERED_UFS == {"PE", "SE"}
+    import importlib
+    from app.services import osrm_router as mod
+
+    importlib.reload(mod)
 
 
 def test_routes_from_zones_empty():

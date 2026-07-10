@@ -41,12 +41,22 @@ function authHeaders(): Record<string, string> {
   return { Authorization: `Bearer ${token}` };
 }
 
-async function apiFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+async function apiFetch(
+  input: RequestInfo | URL,
+  init?: RequestInit & { priority?: 'high' | 'low' | 'auto' },
+): Promise<Response> {
   const headers = {
     ...authHeaders(),
     ...(init?.headers as Record<string, string> | undefined),
   };
-  const res = await fetch(input, { ...init, headers });
+  const { priority, ...rest } = init || {};
+  const res = await fetch(input, {
+    cache: 'no-store',
+    ...rest,
+    headers,
+    // Chromium: prioriza malha do mapa sobre o painel executivo.
+    ...(priority ? { priority } : {}),
+  } as RequestInit);
   if (res.status === 401 && typeof window !== 'undefined') {
     window.dispatchEvent(new CustomEvent(AUTH_REQUIRED_EVENT));
   }
@@ -188,6 +198,17 @@ export interface SystemOverview {
     supported_regions: string[];
     url: string;
     detail?: string;
+    setup_hint?: string | null;
+    fallback_active?: boolean;
+  };
+  batch_coverage?: {
+    municipios_total: number;
+    com_diagnostico: number;
+    com_relatorio: number;
+    sem_diagnostico: { codigo_ibge: string; nome: string; uf: string }[];
+    sem_relatorio: { codigo_ibge: string; nome: string; uf: string }[];
+    diagnosticos_ok: boolean;
+    relatorios_ok: boolean;
   };
 }
 
@@ -1456,7 +1477,9 @@ export const api = {
       });
     }
     const qs = params.toString() ? `?${params.toString()}` : '';
-    const res = await apiFetch(`${getApiBaseUrl()}/api/v1/indicators/layers/${layerName}${qs}`);
+    const res = await apiFetch(`${getApiBaseUrl()}/api/v1/indicators/layers/${layerName}${qs}`, {
+      priority: 'high',
+    });
     if (!res.ok) throw new Error(`Failed to load layer: ${layerName}`);
     return res.json();
   },
@@ -1890,6 +1913,18 @@ export const api = {
     const finished = await api.pollSimulationJob(job_id, onProgress);
     if (!finished.result) throw new Error('Job concluído sem resultado');
     return finished.result;
+  },
+
+  /** Pré-aquece cache da simulação pluvial em background (não bloqueia UI). */
+  prewarmExtremeRainfall: async (mm = 120, codigoIbge?: string): Promise<{ codigo_ibge: string; scheduled: unknown[] }> => {
+    const res = await apiFetch(`${getApiBaseUrl()}/api/v1/simulations/extreme-rainfall/prewarm`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ precipitacao_mm: mm, codigo_ibge: codigoIbge }),
+      priority: 'low',
+    });
+    if (!res.ok) throw new Error('Falha ao agendar pré-aquecimento da simulação');
+    return res.json();
   },
 
   compareRainfallScenariosAsync: async (
@@ -2558,7 +2593,13 @@ export const api = {
 
   registerGeoportalApi: async (
     codigoIbge: string,
-    payload: { tipo: 'geojson_url' | 'arcgis_rest'; url: string; titulo?: string; arcgis_where?: string },
+    payload: {
+      tipo: 'geojson_url' | 'arcgis_rest' | 'geoserver_wfs';
+      url: string;
+      titulo?: string;
+      arcgis_where?: string;
+      geoserver_type_name?: string;
+    },
   ): Promise<{ publicacao: GeoportalPublicacao }> => {
     const code = codigoIbge.replace(/\D/g, '').padStart(7, '0').slice(-7);
     const res = await apiFetch(`${getApiBaseUrl()}/api/v1/geoportal/${code}/register-api`, {
@@ -2761,10 +2802,24 @@ export const api = {
     return res.json();
   },
 
-  startReportsBatchJob: async (limit = 61, force = false): Promise<{ job_id: string; job: BackgroundJob }> => {
+  startReportsBatchJob: async (
+    limit = 61,
+    force = false,
+    codigos?: string[],
+  ): Promise<{ job_id: string; job: BackgroundJob; reused?: boolean }> => {
     const qs = new URLSearchParams({ limit: String(limit), force: String(force) });
+    if (codigos?.length) qs.set('codigos', codigos.join(','));
     const res = await apiFetch(`${getApiBaseUrl()}/api/v1/system/jobs/reports-batch?${qs}`, { method: 'POST' });
     if (!res.ok) throw await httpError(res, 'Falha ao iniciar PDFs em lote');
+    return res.json();
+  },
+
+  prewarmAgentContext: async (codigoIbge: string): Promise<{ codigo_ibge: string; status: string }> => {
+    const res = await apiFetch(
+      `${getApiBaseUrl()}/api/v1/assistant/municipal/${encodeURIComponent(codigoIbge)}/prewarm`,
+      { method: 'POST', priority: 'low' },
+    );
+    if (!res.ok) throw new Error('Falha ao pré-aquecer agente');
     return res.json();
   },
 

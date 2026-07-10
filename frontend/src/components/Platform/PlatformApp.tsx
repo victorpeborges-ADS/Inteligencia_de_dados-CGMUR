@@ -93,6 +93,7 @@ export default function PlatformApp({ initialTab }: PlatformAppProps) {
   const setMunicipioEnsuring = useAppStore((s) => s.setMunicipioEnsuring);
   const municipioEnsureError = useAppStore((s) => s.municipioEnsureError);
   const setMunicipioEnsureError = useAppStore((s) => s.setMunicipioEnsureError);
+  const mapSpatialReady = useAppStore((s) => s.mapSpatialReady);
   const layerOptions = useAppStore((s) => s.layerOptions);
   const setLayerOptions = useAppStore((s) => s.setLayerOptions);
   const temporalOptions = useAppStore((s) => s.temporalOptions);
@@ -367,12 +368,20 @@ export default function PlatformApp({ initialTab }: PlatformAppProps) {
   }, [activeTab, selectedMunicipio]);
 
   useEffect(() => {
+    if (!mapSpatialReady || !selectedMunicipio) return;
+    api.prewarmExtremeRainfall(120, selectedMunicipio).catch(() => {});
+    api.prewarmAgentContext(selectedMunicipio).catch(() => {});
+  }, [selectedMunicipio, mapSpatialReady]);
+
+  useEffect(() => {
+    if (!mapSpatialReady) return;
     api.getMonitoringDashboard(selectedMunicipio)
       .then((d) => setAlertNivel(d.nivel_risco_atual))
       .catch(() => {});
-  }, [selectedMunicipio]);
+  }, [selectedMunicipio, mapSpatialReady]);
 
   useEffect(() => {
+    if (!mapSpatialReady) return;
     api.getLayersMeta(selectedMunicipio)
       .then((meta) => {
         const layersMeta = meta.layers || {};
@@ -414,16 +423,17 @@ export default function PlatformApp({ initialTab }: PlatformAppProps) {
         }
       })
       .catch(() => {});
-  }, [selectedMunicipio, setLayerOptions, setActiveLayers]);
+  }, [selectedMunicipio, setLayerOptions, setActiveLayers, mapSpatialReady]);
 
   useEffect(() => {
+    if (!mapSpatialReady) return;
     api.getLayersTemporalOptions(selectedMunicipio)
       .then((payload) => {
         setTemporalOptions(payload);
         initLayerAnoFromTemporal(payload.temas || {});
       })
       .catch(() => setTemporalOptions(null));
-  }, [selectedMunicipio, setTemporalOptions, initLayerAnoFromTemporal]);
+  }, [selectedMunicipio, setTemporalOptions, initLayerAnoFromTemporal, mapSpatialReady]);
 
   const temporalActiveTemas = useMemo(
     () => resolveActiveTemporalTemas(activeLayers, temporalOptions),

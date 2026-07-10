@@ -167,7 +167,7 @@
 | 10.4 | **Pipeline completo 61** em execução | ✅ | `POST /system/jobs/homologation-full` — onboarding + ETL + MapBiomas + DEM + diagnósticos |
 | 10.5 | **Batch diagnósticos/PDFs** pós-onboarding | ✅ | `ensure_dem=true` + jobs `diagnostics-batch` / `reports-batch` |
 | 10.6 | **DEM LiDAR local + batch** | ✅ | `LOCAL_DEM_DIR`, upload `POST /terrain/{ibge}/import-local-dem`, job `dem-batch` |
-| 10.7 | **OSRM malha real** para demo | ➖ | Adiar — fallback Haversine ativo; subir com `setup-osrm.sh` quando necessário |
+| 10.7 | **OSRM malha real** para demo | ✅ | Perfil `pe-se` — rotas OSRM validadas em Recife (contingência) |
 
 **Comandos operacionais:**
 
@@ -187,8 +187,10 @@ curl -X POST "http://localhost:8000/api/v1/system/jobs/diagnostics-batch?limit=6
 # LiDAR Recife — upload GeoTIFF
 curl -X POST "http://localhost:8000/api/v1/terrain/2611606/import-local-dem" -F "file=@recife_lidar.tif"
 
-# OSRM — somente para demo com rotas reais (~414 MB nordeste)
-OSRM_REGION=nordeste bash docker/osrm/setup-osrm.sh && docker compose up -d osrm
+# OSRM — demo Recife/Aracaju (pe-se, ~80 MB) ou nordeste completo
+OSRM_REGION=pe-se bash scripts/osrm-enable.sh
+# Nordeste macro (~414 MB):
+# OSRM_REGION=nordeste bash scripts/osrm-enable.sh && docker compose up -d osrm
 
 # Checklist demo / oficina MCID
 ./scripts/demo-smoke.sh
@@ -408,19 +410,19 @@ Consolidação do que **ainda falta**, cruzando roadmap, `PLANO_LACUNAS_INSTITUC
 ### B. Itens técnicos adiados por decisão (➖ ativáveis) — P2
 | # | Item | Situação | O que falta |
 |---|------|----------|-------------|
-| B.1 | **OSRM malha viária real** | Fallback Haversine (40 km/h) ativo | Rodar `docker/osrm/setup-osrm.sh` (~414 MB nordeste) quando houver demo com rotas reais |
+| B.1 | **OSRM malha viária real** | ✅ jul/2026 | Perfil `pe-se` ativo; `scripts/osrm-enable.sh` + `scripts/validacao_osrm.py` |
 | B.2 | **Google Street View 3D** | `Map3DGoogleContainer.tsx` existe, fora do fluxo | Decisão de custo de API para ativar |
 
 ### C. Performance (metas não atingidas) — P1
 | # | Item | Atual | Meta |
 |---|------|-------|------|
-| C.1 | **Simulação pluvial 120 mm** | ~160 s (DEM/hidro pesado) | < 10 s — otimizar/pré-aquecer ou aceitar como job assíncrono |
-| C.2 | **Agente contextual** | até ~90 s (Mistral local) | < 8 s — cache/modelo menor ou fallback Gemini mais agressivo |
+| C.1 | **Simulação pluvial 120 mm** | ~4s com cache (prewarm boot/UI) | < 10s 1ª execução — DEM/hidro ainda pesado sem cache |
+| C.2 | **Agente contextual** | ✅ ~3s pergunta simples; contexto municipal <0.1s com cache | < 8s — bundle leve + fast-path sem tools |
 
 ### D. Operação e homologação — P1/P3
 | # | Item | Situação | O que falta |
 |---|------|----------|-------------|
-| D.1 | **Batch diagnósticos + PDFs (61)** | Reiniciado (Passo 2) | Concluir `diagnostics-batch` → `reports-batch` e conferir 61/61 |
+| D.1 | **Batch diagnósticos + PDFs (61)** | ✅ jul/2026 | 62/62 diagnóstico + PDF; painel Homologação em Sistema |
 | D.2 | **gov.br REAL** | OIDC homologado local (Keycloak) | Trocar issuer/client para gov.br + certificado MCID em produção |
 
 ### E. Metas de maturidade Fase 3 (dimensões abaixo da meta) — P2/P3
@@ -436,7 +438,7 @@ Consolidação do que **ainda falta**, cruzando roadmap, `PLANO_LACUNAS_INSTITUC
 | Infraestrutura | 88% | 95% |
 
 ### F. Documentação — P2
-- [ ] Registrar metodologia da **ilha de calor** e das novas fontes em `DOCUMENTACAO_TECNICA_COMPLETA.md`
+- [x] Registrar metodologia da **ilha de calor** e das novas fontes em `DOCUMENTACAO_TECNICA_COMPLETA.md` (§19–§20)
 - [ ] Commit do trabalho da Fase 15 (hoje não versionado)
 - [x] Documentar integração GeoReDUS (posicionamento, deep links, limites LST vs simulação) — ver **Fase 16** / `DOCUMENTACAO_TECNICA_COMPLETA.md` §20
 

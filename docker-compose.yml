@@ -57,11 +57,13 @@ services:
       - LOCAL_DEM_DIR=/data/dem/local
       - MAPBIOMAS_STATS_DIR=/data/mapbiomas
       - REFINE_PILOT_DEM=true
+      - BOOT_PRIORITY_IBGE_CODES=2611606,2800308
+      - SEED_DEMO_MUNICIPALITIES=false
       - JOB_STORE_REDIS=true
       - OPENTOPOGRAPHY_API_KEY=${OPENTOPOGRAPHY_API_KEY:-}
       - OSRM_URL=http://osrm:5000
-      - OSRM_REGION=${OSRM_REGION:-nordeste}
-      - OSRM_COVERED_UFS=${OSRM_COVERED_UFS:-PE,AL,SE,PB,RN,CE,PI,MA}
+      - OSRM_REGION=${OSRM_REGION:-pe-se}
+      - OSRM_COVERED_UFS=${OSRM_COVERED_UFS:-PE,SE}
       - GOTIFY_URL=http://gotify:80
       - GOTIFY_TOKEN=
       - AI_CHAT_PROVIDER=${AI_CHAT_PROVIDER:-mistral}
@@ -131,11 +133,17 @@ services:
     ports:
       - "5000:5000"
     environment:
-      - OSRM_REGION=${OSRM_REGION:-nordeste}
+      - OSRM_REGION=${OSRM_REGION:-pe-se}
     volumes:
       - ./docker/osrm:/data
       - ./docker/osrm/docker-entrypoint.sh:/entrypoint.sh:ro
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- 'http://127.0.0.1:5000/route/v1/driving/-34.88,-8.05;-34.87,-8.06?overview=false' | grep -q Ok || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 45s
 
   gotify:
     image: gotify/server:latest

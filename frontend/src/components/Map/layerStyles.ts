@@ -148,10 +148,16 @@ export function getLayerStyle(
     for (let i = 0; i < nome.length; i += 1) {
       hash = (hash * 31 + nome.charCodeAt(i)) >>> 0;
     }
+    // Tons distintos por bairro, mas com contraste alto no basemap escuro
     const hue = hash % 360;
-    const fill = `hsl(${hue}, 62%, 42%)`;
-    const stroke = `hsl(${hue}, 72%, 68%)`;
-    return { fillColor: fill, fillOpacity: 0.28, color: stroke, weight: 1.2 };
+    const fill = `hsl(${hue}, 58%, 48%)`;
+    return {
+      fillColor: fill,
+      fillOpacity: 0.42,
+      color: '#c7d2fe',
+      weight: 1.8,
+      opacity: 0.95,
+    };
   }
 
   if (layerName === 'desastres') {

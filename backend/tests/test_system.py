@@ -30,6 +30,8 @@ def test_system_overview_auth_off(client: TestClient):
     assert body["platform"]
     assert "checks" in body
     assert "integrations" in body
+    assert "batch_coverage" in body
+    assert "com_relatorio" in body["batch_coverage"]
     assert body["auth"]["enabled"] is False
 
 

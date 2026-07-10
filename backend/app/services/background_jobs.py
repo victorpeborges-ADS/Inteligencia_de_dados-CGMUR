@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import threading
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import Any, Callable
 
 from app.db import SessionLocal
@@ -18,10 +18,66 @@ logger = logging.getLogger(__name__)
 
 _jobs: dict[str, dict[str, Any]] = {}
 _lock = threading.Lock()
+STALE_JOB_HOURS = int(getattr(settings, "STALE_JOB_HOURS", 6) or 6)
 
 
 def _utcnow() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _parse_ts(raw: str | None) -> datetime | None:
+    if not raw:
+        return None
+    try:
+        return datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+    except Exception:
+        return None
+
+
+def _is_stale_running(job: dict[str, Any]) -> bool:
+    if job.get("status") != "running":
+        return False
+    anchor = _parse_ts(job.get("started_at")) or _parse_ts(job.get("created_at"))
+    if not anchor:
+        return False
+    if anchor.tzinfo is None:
+        anchor = anchor.replace(tzinfo=timezone.utc)
+    age = datetime.now(timezone.utc) - anchor
+    return age > timedelta(hours=STALE_JOB_HOURS)
+
+
+def _mark_stale(job_id: str, job: dict[str, Any]) -> dict[str, Any]:
+    updated = {
+        **job,
+        "status": "failed",
+        "finished_at": _utcnow(),
+        "error": "Job expirado (processo reiniciado ou interrompido)",
+    }
+    with _lock:
+        _jobs[job_id] = updated
+        persist_job(updated)
+    logger.warning("Job %s (%s) marcado como expirado", job_id, job.get("type"))
+    return updated
+
+
+def recover_stale_jobs() -> int:
+    """Marca jobs 'running' antigos como falhos após restart."""
+    recovered = 0
+    rows = list_persisted_jobs(limit=100)
+    with _lock:
+        rows.extend(_jobs.values())
+    seen: set[str] = set()
+    for job in rows:
+        job_id = str(job.get("id") or "")
+        if not job_id or job_id in seen:
+            continue
+        seen.add(job_id)
+        if _is_stale_running(job):
+            _mark_stale(job_id, job)
+            recovered += 1
+    if recovered:
+        logger.info("Recuperados %s job(s) expirado(s)", recovered)
+    return recovered
 
 
 def create_job(job_type: str, *, label: str = "") -> str:
@@ -47,9 +103,13 @@ def get_job(job_id: str) -> dict[str, Any] | None:
     with _lock:
         job = _jobs.get(job_id)
         if job:
+            if _is_stale_running(job):
+                job = _mark_stale(job_id, job)
             return dict(job)
     persisted = load_persisted_job(job_id)
     if persisted:
+        if _is_stale_running(persisted):
+            persisted = _mark_stale(job_id, persisted)
         with _lock:
             _jobs[job_id] = persisted
         return dict(persisted)
@@ -57,11 +117,19 @@ def get_job(job_id: str) -> dict[str, Any] | None:
 
 
 def list_jobs(limit: int = 20) -> list[dict[str, Any]]:
+    recover_stale_jobs()
     with _lock:
         memory_rows = sorted(_jobs.values(), key=lambda item: item["created_at"], reverse=True)
     if memory_rows:
         return [dict(row) for row in memory_rows[:limit]]
-    return list_persisted_jobs(limit)[:limit]
+    rows = list_persisted_jobs(limit)[:limit]
+    cleaned: list[dict[str, Any]] = []
+    for row in rows:
+        job_id = str(row.get("id") or "")
+        if job_id and _is_stale_running(row):
+            row = _mark_stale(job_id, row)
+        cleaned.append(dict(row))
+    return cleaned
 
 
 def _update(job_id: str, **fields: Any) -> None:
@@ -172,15 +240,29 @@ def run_scheduled_pipeline() -> str | None:
     return run_pipeline_job(onboarding_limit=limit)
 
 
-def run_diagnostics_batch_job(limit: int = 61) -> str:
-    job_id = create_job("diagnostics_batch", label=f"Diagnósticos executivos ({limit})")
+def find_active_job(job_type: str) -> dict[str, Any] | None:
+    """Retorna job ativo do tipo, após recuperar expirados."""
+    recover_stale_jobs()
+    for job in list_jobs(limit=50):
+        if job.get("type") == job_type and job.get("status") in {"queued", "running"}:
+            return job
+    return None
+
+
+def run_diagnostics_batch_job(limit: int = 61, *, codigos: list[str] | None = None) -> str:
+    existing = find_active_job("diagnostics_batch")
+    if existing:
+        return str(existing["id"])
+
+    label = f"Diagnósticos executivos ({limit})"
+    job_id = create_job("diagnostics_batch", label=label)
 
     def _task() -> dict[str, Any]:
         from app.services.batch_export_service import run_batch_diagnostics
 
         db = SessionLocal()
         try:
-            return run_batch_diagnostics(db, limit=limit)
+            return run_batch_diagnostics(db, limit=limit, codigos=codigos)
         finally:
             db.close()
 
@@ -188,7 +270,16 @@ def run_diagnostics_batch_job(limit: int = 61) -> str:
     return job_id
 
 
-def run_reports_batch_job(limit: int = 61, force: bool = False) -> str:
+def run_reports_batch_job(
+    limit: int = 61,
+    force: bool = False,
+    *,
+    codigos: list[str] | None = None,
+) -> str:
+    existing = find_active_job("reports_batch")
+    if existing:
+        return str(existing["id"])
+
     job_id = create_job("reports_batch", label=f"Relatórios PDF ({limit})")
 
     def _task() -> dict[str, Any]:
@@ -196,7 +287,7 @@ def run_reports_batch_job(limit: int = 61, force: bool = False) -> str:
 
         db = SessionLocal()
         try:
-            return run_batch_reports(db, limit=limit, force=force)
+            return run_batch_reports(db, limit=limit, force=force, codigos=codigos)
         finally:
             db.close()
 

@@ -70,13 +70,20 @@ export default function ExecutiveDashboard({
   const [mounted, setMounted] = useState(false);
   const reportRequest = useAppStore((s) => s.reportRequest);
   const clearReportRequest = useAppStore((s) => s.clearReportRequest);
+  const mapSpatialReady = useAppStore((s) => s.mapSpatialReady);
 
   useEffect(() => {
     setMounted(true);
+  }, []);
+
+  useEffect(() => {
     const parseError = (err: unknown): string => {
       if (err instanceof Error) return err.message;
       return 'Erro desconhecido ao carregar dados';
     };
+
+    let cancelled = false;
+    let readyTimer: ReturnType<typeof setTimeout> | null = null;
 
     const loadDashboardData = async () => {
       setLoading(true);
@@ -110,12 +117,25 @@ export default function ExecutiveDashboard({
           ? 'Este município ainda não foi integrado ao banco. Abra a aba Municípios e execute o onboarding.'
           : null;
 
-      const results = await Promise.allSettled([
-        api.getExecutiveIndicators(codigoIbge),
-        api.getRiskIndices(codigoIbge),
-        api.getDataCoverage(codigoIbge),
-        api.getMunicipalMaturity(codigoIbge),
-      ]);
+      // Sequencial: evita saturar o worker único do uvicorn e bloquear a malha do mapa.
+      const settled: PromiseSettledResult<unknown>[] = [];
+      for (const task of [
+        () => api.getExecutiveIndicators(codigoIbge),
+        () => api.getRiskIndices(codigoIbge),
+        () => api.getDataCoverage(codigoIbge),
+        () => api.getMunicipalMaturity(codigoIbge),
+      ]) {
+        if (cancelled) return;
+        settled.push(await Promise.allSettled([task()]).then((r) => r[0]));
+      }
+      if (cancelled) return;
+
+      const results = settled as [
+        PromiseSettledResult<ExecutiveIndicators>,
+        PromiseSettledResult<IndicesResponse>,
+        PromiseSettledResult<DataCoverage>,
+        PromiseSettledResult<MunicipalMaturity>,
+      ];
 
       const labels = ['indicadores', 'índices IVC/IRI', 'cobertura de dados', 'maturidade'];
       const failures: string[] = [];
@@ -156,12 +176,29 @@ export default function ExecutiveDashboard({
         api.getOfficialUrbanClimate(codigoIbge),
         api.getIntegrationStatus(),
       ]).then((secondary) => {
+        if (cancelled) return;
         if (secondary[0].status === 'fulfilled') setOfficialClimate(secondary[0].value);
         if (secondary[1].status === 'fulfilled') setIntegrationStatus(secondary[1].value);
       });
     };
-    loadDashboardData();
-  }, [codigoIbge, municipioLoaded, municipioEnsuring]);
+
+    const start = () => {
+      if (cancelled) return;
+      void loadDashboardData();
+    };
+
+    // Espera a malha espacial (ou timeout longo) antes de competir pelo backend.
+    if (mapSpatialReady) {
+      start();
+    } else {
+      readyTimer = setTimeout(start, 8000);
+    }
+
+    return () => {
+      cancelled = true;
+      if (readyTimer) clearTimeout(readyTimer);
+    };
+  }, [codigoIbge, municipioLoaded, municipioEnsuring, mapSpatialReady]);
 
   useEffect(() => {
     if (!codigoIbge) {
@@ -170,23 +207,31 @@ export default function ExecutiveDashboard({
       setActionPlan(null);
       return;
     }
+    if (!mapSpatialReady) return;
+
+    let cancelled = false;
     api.getMunicipalReportHistory(codigoIbge)
-      .then(setReportHistory)
+      .then((v) => { if (!cancelled) setReportHistory(v); })
       .catch((err) => console.error('Erro ao carregar histórico de relatórios:', err));
     api.getExecutiveDiagnostic(codigoIbge)
       .then((record) => {
+        if (cancelled) return null;
         setDiagnostic(record);
         return api.getExecutiveDiagnosticHistory(codigoIbge);
       })
-      .then((history) => setDiagnosticHistory(history.items))
+      .then((history) => {
+        if (!cancelled && history) setDiagnosticHistory(history.items);
+      })
       .catch(() => {
+        if (cancelled) return;
         setDiagnostic(null);
         setDiagnosticHistory([]);
       });
     api.getActionPlan(codigoIbge)
-      .then(setActionPlan)
-      .catch(() => setActionPlan(null));
-  }, [codigoIbge]);
+      .then((v) => { if (!cancelled) setActionPlan(v); })
+      .catch(() => { if (!cancelled) setActionPlan(null); });
+    return () => { cancelled = true; };
+  }, [codigoIbge, mapSpatialReady]);
 
   const handleGenerateReport = async (force = false) => {
     if (!codigoIbge) {

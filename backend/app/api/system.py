@@ -45,6 +45,7 @@ class SystemOverview(BaseModel):
     scheduler: dict
     audit: dict
     routing: dict
+    batch_coverage: dict
 
 
 @router.get("/overview", response_model=SystemOverview)
@@ -85,6 +86,7 @@ def system_overview(
     failed = sum(1 for s in sources if s.get("status") == "FALHA")
 
     from app.services.dem_processor import dem_status
+    from app.services.batch_export_service import batch_coverage_summary
 
     return SystemOverview(
         timestamp=datetime.now(timezone.utc).isoformat(),
@@ -114,6 +116,7 @@ def system_overview(
             "carregados_db": loaded_count,
             "piloto_ibge": settings.PILOT_IBGE_CODE,
             "piloto_nome": settings.PILOT_NAME,
+            "boot_priority_ibge": settings.BOOT_PRIORITY_IBGE_CODES,
         },
         onboarding={
             "by_status": onboarding_by_status,
@@ -135,6 +138,7 @@ def system_overview(
             "top_acoes": [{"action": action, "count": count} for action, count in audit_recent],
         },
         routing=_routing_overview(),
+        batch_coverage=batch_coverage_summary(db),
     )
 
 
@@ -208,24 +212,36 @@ def start_pipeline_job(
 @router.post("/jobs/diagnostics-batch")
 def start_diagnostics_batch_job(
     limit: int = 61,
+    codigos: str | None = None,
     _admin: User = Depends(require_role(Role.ADMIN)),
 ):
-    from app.services.background_jobs import get_job, run_diagnostics_batch_job
+    from app.services.background_jobs import find_active_job, get_job, run_diagnostics_batch_job
 
-    job_id = run_diagnostics_batch_job(limit=min(limit, 61))
-    return {"job_id": job_id, "job": get_job(job_id)}
+    existing = find_active_job("diagnostics_batch")
+    if existing:
+        return {"job_id": existing["id"], "job": existing, "reused": True}
+
+    codes = [c.strip().zfill(7)[:7] for c in codigos.split(",") if c.strip()] if codigos else None
+    job_id = run_diagnostics_batch_job(limit=min(limit, 61), codigos=codes)
+    return {"job_id": job_id, "job": get_job(job_id), "reused": False}
 
 
 @router.post("/jobs/reports-batch")
 def start_reports_batch_job(
     limit: int = 61,
     force: bool = False,
+    codigos: str | None = None,
     _admin: User = Depends(require_role(Role.ADMIN)),
 ):
-    from app.services.background_jobs import get_job, run_reports_batch_job
+    from app.services.background_jobs import find_active_job, get_job, run_reports_batch_job
 
-    job_id = run_reports_batch_job(limit=min(limit, 61), force=force)
-    return {"job_id": job_id, "job": get_job(job_id)}
+    existing = find_active_job("reports_batch")
+    if existing:
+        return {"job_id": existing["id"], "job": existing, "reused": True}
+
+    codes = [c.strip().zfill(7)[:7] for c in codigos.split(",") if c.strip()] if codigos else None
+    job_id = run_reports_batch_job(limit=min(limit, 61), force=force, codigos=codes)
+    return {"job_id": job_id, "job": get_job(job_id), "reused": False}
 
 
 @router.post("/jobs/fontes-externas-batch")

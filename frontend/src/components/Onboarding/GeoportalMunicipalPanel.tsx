@@ -24,7 +24,8 @@ export default function GeoportalMunicipalPanel({ codigoIbge }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [apiUrl, setApiUrl] = useState('');
-  const [apiTipo, setApiTipo] = useState<'geojson_url' | 'arcgis_rest'>('geojson_url');
+  const [apiTipo, setApiTipo] = useState<'geojson_url' | 'arcgis_rest' | 'geoserver_wfs'>('geojson_url');
+  const [geoserverTypeName, setGeoserverTypeName] = useState('Limites_Municipais:bairros_2023');
   const fileRef = useRef<HTMLInputElement>(null);
 
   const loadStatus = useCallback(async () => {
@@ -71,7 +72,13 @@ export default function GeoportalMunicipalPanel({ codigoIbge }: Props) {
     setError(null);
     setMessage(null);
     try {
-      await api.registerGeoportalApi(codigoIbge, { tipo: apiTipo, url: apiUrl.trim() });
+      await api.registerGeoportalApi(codigoIbge, {
+        tipo: apiTipo,
+        url: apiUrl.trim(),
+        ...(apiTipo === 'geoserver_wfs'
+          ? { geoserver_type_name: geoserverTypeName.trim() }
+          : {}),
+      });
       setMessage('API municipal registrada.');
       setApiUrl('');
       await loadStatus();
@@ -132,7 +139,7 @@ export default function GeoportalMunicipalPanel({ codigoIbge }: Props) {
             Geoportal municipal — CTM
           </h4>
           <p className="mt-1 text-[10px] leading-relaxed text-zinc-400">
-            Publique malha de bairros da prefeitura (GeoJSON, shapefile ZIP ou API ArcGIS/GeoJSON).
+            Publique malha de bairros da prefeitura (GeoJSON, shapefile ZIP, ArcGIS REST ou GeoServer WFS).
             Complementa o onboarding sem duplicar o catálogo nacional GeoReDUS.
           </p>
         </div>
@@ -212,22 +219,36 @@ export default function GeoportalMunicipalPanel({ codigoIbge }: Props) {
         <div className="flex flex-wrap gap-1.5">
           <select
             value={apiTipo}
-            onChange={(e) => setApiTipo(e.target.value as 'geojson_url' | 'arcgis_rest')}
+            onChange={(e) => setApiTipo(e.target.value as 'geojson_url' | 'arcgis_rest' | 'geoserver_wfs')}
             className="rounded border border-zinc-700 bg-zinc-950 px-2 py-1 text-[10px] text-zinc-200"
           >
             <option value="geojson_url">GeoJSON URL</option>
             <option value="arcgis_rest">ArcGIS REST</option>
+            <option value="geoserver_wfs">GeoServer WFS</option>
           </select>
           <input
             type="url"
             value={apiUrl}
             onChange={(e) => setApiUrl(e.target.value)}
-            placeholder="https://geoportal.prefeitura.gov.br/..."
+            placeholder={
+              apiTipo === 'geoserver_wfs'
+                ? 'https://fazenda.aracaju.se.gov.br/geoserver/wfs'
+                : 'https://geoportal.prefeitura.gov.br/...'
+            }
             className="min-w-0 flex-1 rounded border border-zinc-700 bg-zinc-950 px-2 py-1 text-[10px] text-zinc-200"
           />
+          {apiTipo === 'geoserver_wfs' && (
+            <input
+              type="text"
+              value={geoserverTypeName}
+              onChange={(e) => setGeoserverTypeName(e.target.value)}
+              placeholder="Limites_Municipais:bairros_2023"
+              className="w-full rounded border border-zinc-700 bg-zinc-950 px-2 py-1 text-[10px] text-zinc-200"
+            />
+          )}
           <button
             type="button"
-            disabled={!!busy || !apiUrl.trim()}
+            disabled={!!busy || !apiUrl.trim() || (apiTipo === 'geoserver_wfs' && !geoserverTypeName.trim())}
             onClick={handleRegisterApi}
             className="inline-flex items-center gap-1 rounded border border-zinc-600 px-2 py-1 text-[10px] font-bold uppercase text-zinc-300"
           >

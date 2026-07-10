@@ -1,7 +1,12 @@
 import type { MunicipalityOption } from '@/utils/api';
 
-/** 61 municípios prioritários — espelho de backend/seeds/municipios_seed_50.yaml */
+/** 61 municípios prioritários — espelho de backend/seeds/municipios_seed_50.yaml.
+ * Recife e Aracaju primeiro (BOOT_PRIORITY_IBGE_CODES). */
+export const BOOT_PRIORITY_IBGE_CODES = ['2611606', '2800308'] as const;
+
 export const SEED_MUNICIPALITIES: MunicipalityOption[] = [
+  { codigo_ibge: '2611606', nome: 'Recife', uf: 'PE', criterio: 'capital' },
+  { codigo_ibge: '2800308', nome: 'Aracaju', uf: 'SE', criterio: 'capital' },
   { codigo_ibge: '1200401', nome: 'Rio Branco', uf: 'AC', criterio: 'capital' },
   { codigo_ibge: '2704302', nome: 'Maceió', uf: 'AL', criterio: 'capital' },
   { codigo_ibge: '1600303', nome: 'Macapá', uf: 'AP', criterio: 'capital' },
@@ -18,7 +23,6 @@ export const SEED_MUNICIPALITIES: MunicipalityOption[] = [
   { codigo_ibge: '1501402', nome: 'Belém', uf: 'PA', criterio: 'capital' },
   { codigo_ibge: '2507507', nome: 'João Pessoa', uf: 'PB', criterio: 'capital' },
   { codigo_ibge: '4106902', nome: 'Curitiba', uf: 'PR', criterio: 'capital' },
-  { codigo_ibge: '2611606', nome: 'Recife', uf: 'PE', criterio: 'capital' },
   { codigo_ibge: '2211001', nome: 'Teresina', uf: 'PI', criterio: 'capital' },
   { codigo_ibge: '3304557', nome: 'Rio de Janeiro', uf: 'RJ', criterio: 'capital' },
   { codigo_ibge: '2408102', nome: 'Natal', uf: 'RN', criterio: 'capital' },
@@ -26,7 +30,6 @@ export const SEED_MUNICIPALITIES: MunicipalityOption[] = [
   { codigo_ibge: '1100205', nome: 'Porto Velho', uf: 'RO', criterio: 'capital' },
   { codigo_ibge: '1400100', nome: 'Boa Vista', uf: 'RR', criterio: 'capital' },
   { codigo_ibge: '4205407', nome: 'Florianópolis', uf: 'SC', criterio: 'capital' },
-  { codigo_ibge: '2800308', nome: 'Aracaju', uf: 'SE', criterio: 'capital' },
   { codigo_ibge: '3550308', nome: 'São Paulo', uf: 'SP', criterio: 'capital' },
   { codigo_ibge: '1721000', nome: 'Palmas', uf: 'TO', criterio: 'capital' },
   { codigo_ibge: '3303906', nome: 'Petrópolis', uf: 'RJ', criterio: 's2id_emergencia' },

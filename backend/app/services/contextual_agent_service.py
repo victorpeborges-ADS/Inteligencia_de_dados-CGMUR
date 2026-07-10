@@ -4,19 +4,39 @@ from __future__ import annotations
 
 import json
 import logging
+import os
+import re
 import time
 from collections.abc import Iterator
 from typing import Any
 
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from app.api.analytics import executive_snapshot
-from app.models import Municipio
+from app.models import AlertaCemaden, HistoricoDesastreS2ID, Municipio
+from app.services.contextual_agent_cache import (
+    get_cached_bundle,
+    get_cached_response,
+    set_cached_bundle,
+    set_cached_response,
+)
 from app.services.contextual_agent_tools import TOOL_DEFINITIONS, execute_tool
 from app.services.municipio_audit_service import audit_municipio
 from rag.providers.registry import resolve_chat_provider_with_fallback
 
 logger = logging.getLogger(__name__)
+
+CONTEXTUAL_AGENT_FAST_MODEL = os.getenv("CONTEXTUAL_AGENT_FAST_MODEL", "mistral-small-latest")
+CONTEXTUAL_AGENT_MAX_TOOL_ROUNDS = int(os.getenv("CONTEXTUAL_AGENT_MAX_TOOL_ROUNDS", "2"))
+
+_SIMPLE_QUESTION_RE = re.compile(
+    r"(como usar|como interpretar|o que significa|o que é|explique|ajuda|como funciona|para que serve)",
+    re.IGNORECASE,
+)
+_DATA_QUESTION_RE = re.compile(
+    r"(alerta|bairro|score|dados|catálogo|catalogo|ivc|iri|desastre|cemaden|mapbiomas|pib|idh)",
+    re.IGNORECASE,
+)
 
 SYSTEM_TEMPLATE = """Você é o Agente Sinidu+Clima, assistente especializado em inteligência territorial
 e gestão de risco urbano para municípios brasileiros.
@@ -51,16 +71,65 @@ REGRAS:
 
 
 def build_municipio_data_bundle(db: Session, muni: Municipio) -> dict[str, Any]:
-    snap = executive_snapshot(db, muni)
+    """Bundle leve para o prompt — evita executive_snapshot (IVC/IRI por bairro) a cada pergunta."""
+    cached = get_cached_bundle(muni.codigo_ibge)
+    if cached:
+        return cached
+
     audit = audit_municipio(db, muni, persist=False)
-    return {
-        **snap,
+    alerts_count = (
+        db.query(func.count(AlertaCemaden.id))
+        .filter(AlertaCemaden.municipio_id == muni.id)
+        .scalar()
+    ) or 0
+    disasters_count = (
+        db.query(func.count(HistoricoDesastreS2ID.id))
+        .filter(HistoricoDesastreS2ID.municipio_id == muni.id)
+        .scalar()
+    ) or 0
+    area = float(muni.area_km2 or 0)
+    bundle = {
+        "codigo_ibge": muni.codigo_ibge,
+        "nome": muni.nome,
+        "uf": muni.uf,
+        "populacao": muni.populacao,
+        "area_km2": area,
+        "densidade_demografica": round(muni.populacao / area, 2) if area > 0 else 0,
+        "score_sinidu": audit.get("score_sinidu"),
         "score_confiabilidade": audit.get("score_confiabilidade"),
         "confiabilidade_geral": audit.get("confiabilidade_geral"),
-        "campos_reais_pct": (audit.get("score") or {}).get("campos_reais_pct"),
-        "malha_nivel": audit.get("malha", {}).get("nivel"),
-        "bairros_count": audit.get("malha", {}).get("bairros_count"),
+        "campos_reais_pct": audit.get("campos_reais_pct"),
+        "bairros_total": audit.get("bairros_total"),
+        "malha_fonte": audit.get("malha_fonte"),
+        "flag_malha": audit.get("flag_malha"),
+        "alertas_ativos_count": int(alerts_count),
+        "historico_desastres_count": int(disasters_count),
     }
+    set_cached_bundle(muni.codigo_ibge, bundle)
+    return bundle
+
+
+def _is_simple_question(message: str) -> bool:
+    if _SIMPLE_QUESTION_RE.search(message):
+        return True
+    return not _DATA_QUESTION_RE.search(message) and len(message.split()) <= 12
+
+
+def _resolve_model(ai_model: str | None, provider: Any) -> str:
+    if ai_model:
+        return ai_model
+    fast = CONTEXTUAL_AGENT_FAST_MODEL.strip()
+    if fast and fast in (provider.info().models or []):
+        return fast
+    return provider.info().default_model
+
+
+def _chat_without_tools(provider: Any, messages: list[dict[str, Any]], model: str) -> str:
+    result = provider.chat_completion(messages, model=model, tools=None)
+    choice = (result.get("choices") or [{}])[0]
+    message = choice.get("message") or {}
+    content = (message.get("content") or "").strip()
+    return content or "Não foi possível gerar uma resposta. Tente reformular a pergunta."
 
 
 def _run_tool_loop(
@@ -69,10 +138,11 @@ def _run_tool_loop(
     messages: list[dict[str, Any]],
     model: str,
     *,
-    max_rounds: int = 4,
+    max_rounds: int | None = None,
 ) -> str:
     """Executa chamadas de ferramenta até resposta final em texto."""
-    for _ in range(max_rounds):
+    rounds = max_rounds if max_rounds is not None else CONTEXTUAL_AGENT_MAX_TOOL_ROUNDS
+    for _ in range(rounds):
         result = provider.chat_completion(messages, model=model, tools=TOOL_DEFINITIONS)
         choice = (result.get("choices") or [{}])[0]
         message = choice.get("message") or {}
@@ -116,6 +186,25 @@ def contextual_chat_stream(
 ) -> Iterator[str]:
     """Gera eventos SSE: token chunks + done metadata."""
     start = time.time()
+
+    cached_answer = get_cached_response(muni.codigo_ibge, pagina_atual, message)
+    if cached_answer and not historico:
+        answer = str(cached_answer.get("response") or "")
+        for word in answer.split(" "):
+            yield _sse({"type": "token", "content": word + " "})
+        elapsed = int((time.time() - start) * 1000)
+        yield _sse(
+            {
+                "type": "done",
+                "response": answer.strip(),
+                "response_time_ms": elapsed,
+                "ai_provider": cached_answer.get("ai_provider"),
+                "ai_model": cached_answer.get("ai_model"),
+                "from_cache": True,
+            }
+        )
+        return
+
     dados_municipio = build_municipio_data_bundle(db, muni)
     system_content = SYSTEM_TEMPLATE.format(
         municipio_nome=muni.nome,
@@ -134,7 +223,7 @@ def contextual_chat_stream(
         yield _sse({"type": "done", "response": str(exc), "response_time_ms": 0})
         return
 
-    model = ai_model or provider.info().default_model
+    model = _resolve_model(ai_model, provider)
     if not provider.is_available():
         msg = "MISTRAL_API_KEY não configurada no servidor."
         yield _sse({"type": "error", "content": msg})
@@ -142,16 +231,29 @@ def contextual_chat_stream(
         return
 
     messages: list[dict[str, Any]] = [{"role": "system", "content": system_content}]
-    for item in historico[-10:]:
+    for item in historico[-6:]:
         if item.get("role") in {"user", "assistant"} and item.get("content"):
             messages.append({"role": item["role"], "content": item["content"]})
     messages.append({"role": "user", "content": message})
 
     try:
-        answer = _run_tool_loop(db, provider, messages, model)
+        if _is_simple_question(message):
+            answer = _chat_without_tools(provider, messages, model)
+        else:
+            answer = _run_tool_loop(db, provider, messages, model)
     except Exception as exc:
         logger.exception("Falha no agente contextual")
         answer = f"Erro ao processar: {exc}"
+
+    if not historico:
+        set_cached_response(
+            muni.codigo_ibge,
+            pagina_atual,
+            message,
+            response=answer,
+            ai_provider=provider.id,
+            ai_model=model,
+        )
 
     # Streaming simulado por palavras (API Mistral tool loop não streama nativamente)
     buffer = ""

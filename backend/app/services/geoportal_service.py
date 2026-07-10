@@ -18,6 +18,7 @@ from app.data_connectors.ctm_collector import (
     catalog_ctm_targets,
     collect_ctm_municipality,
     fetch_arcgis_geojson,
+    fetch_ctm_geojson,
     fetch_geojson_url,
     import_ctm_mesh,
 )
@@ -26,7 +27,7 @@ from app.models import Bairro, Municipio, MunicipioGeoportalPublicacao, Municipi
 
 logger = logging.getLogger(__name__)
 
-GEOPORTAL_TIPOS = frozenset({"arcgis_rest", "geojson_url", "upload_geojson", "upload_shapefile"})
+GEOPORTAL_TIPOS = frozenset({"arcgis_rest", "geojson_url", "geoserver_wfs", "upload_geojson", "upload_shapefile"})
 MAX_SNAPSHOT_FEATURES = 800
 MAX_UPLOAD_BYTES = 25 * 1024 * 1024
 
@@ -125,10 +126,12 @@ def register_geoportal_api(
     arcgis_where: str = "1=1",
     nome_campo_bairro: str | None = None,
 ) -> dict[str, Any]:
-    if tipo not in {"arcgis_rest", "geojson_url"}:
-        raise ValueError("tipo deve ser arcgis_rest ou geojson_url")
+    if tipo not in {"arcgis_rest", "geojson_url", "geoserver_wfs"}:
+        raise ValueError("tipo deve ser arcgis_rest, geojson_url ou geoserver_wfs")
     if not url.strip():
         raise ValueError("URL obrigatória.")
+    if tipo == "geoserver_wfs" and not (arcgis_where or "").strip():
+        raise ValueError("typeName da camada GeoServer é obrigatório (geoserver_type_name).")
 
     _deactivate_previous(db, muni.codigo_ibge)
     row = MunicipioGeoportalPublicacao(
@@ -210,6 +213,25 @@ def _fetch_publication_geojson(pub: MunicipioGeoportalPublicacao) -> dict[str, A
         )
         return fetch_arcgis_geojson(source)
 
+    if pub.tipo == "geoserver_wfs":
+        if not pub.url:
+            raise ValueError("URL GeoServer WFS não configurada.")
+        source = CtmSource(
+            codigo_ibge=pub.codigo_ibge,
+            nome=pub.titulo,
+            uf="",
+            kind="geoserver_wfs",
+            url=pub.url,
+            name_fields=(
+                pub.nome_campo_bairro or "bairro",
+                "bairro",
+                "nome",
+                "NM_BAIRRO",
+            ),
+            where=pub.arcgis_where or "",
+        )
+        return fetch_ctm_geojson(source)
+
     raise ValueError(f"Tipo de publicação não suportado: {pub.tipo}")
 
 
@@ -287,7 +309,7 @@ def get_geoportal_status(db: Session, muni: Municipio) -> dict[str, Any]:
     if bairros < 4:
         acoes.append("Publicar malha de bairros via upload GeoJSON/shapefile ou API municipal.")
     if not pub and not ctm_registry:
-        acoes.append("Registrar URL do geoportal (ArcGIS REST ou GeoJSON) na prefeitura.")
+        acoes.append("Registrar URL do geoportal (ArcGIS REST, GeoJSON ou GeoServer WFS) na prefeitura.")
     if pub and pub.status == "registrado":
         acoes.append("Executar importação para aplicar a malha publicada no mapa Sinidu.")
     if ctm_registry and catalog_row and catalog_row.get("status") not in ("sem_ctm_cadastrada", "erro"):
@@ -311,7 +333,7 @@ def get_geoportal_status(db: Session, muni: Municipio) -> dict[str, Any]:
         "catalog_status": catalog_row.get("status") if catalog_row else "sem_ctm_cadastrada",
         "acoes_sugeridas": acoes,
         "formatos_aceitos": [".geojson", ".json", ".zip (shapefile)"],
-        "tipos_api": ["arcgis_rest", "geojson_url"],
+        "tipos_api": ["arcgis_rest", "geojson_url", "geoserver_wfs"],
     }
 
 
@@ -331,6 +353,19 @@ def probe_geoportal_url(tipo: str, url: str, *, arcgis_where: str = "1=1") -> di
                 where=arcgis_where,
             )
             fc = fetch_arcgis_geojson(source)
+        elif tipo == "geoserver_wfs":
+            if not (arcgis_where or "").strip():
+                return {"ok": False, "error": "typeName da camada GeoServer é obrigatório"}
+            source = CtmSource(
+                codigo_ibge="0000000",
+                nome="probe",
+                uf="",
+                kind="geoserver_wfs",
+                url=url,
+                name_fields=("bairro", "nome", "NM_BAIRRO"),
+                where=arcgis_where,
+            )
+            fc = fetch_ctm_geojson(source)
         else:
             return {"ok": False, "error": "tipo inválido para probe"}
         count = len(fc.get("features") or [])

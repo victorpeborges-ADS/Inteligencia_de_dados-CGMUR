@@ -9,7 +9,6 @@ from typing import Any
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from app.api.analytics import executive_snapshot
 from app.api.data_catalog import coverage_for_code
 from app.models import AlertaCemaden, HistoricoDesastreS2ID, MonitoringAlert, Municipio, PlanoAcaoMunicipal
 from app.services.action_plan_engine import action_plan_to_dict
@@ -23,19 +22,17 @@ def get_score_municipio(db: Session, codigo_ibge: str) -> dict[str, Any]:
     muni = db.query(Municipio).filter(Municipio.codigo_ibge == codigo_ibge).first()
     if not muni:
         return {"error": "Município não encontrado"}
-    snap = executive_snapshot(db, muni)
     audit = audit_municipio(db, muni, persist=False)
     return {
         "codigo_ibge": codigo_ibge,
         "nome": muni.nome,
         "uf": muni.uf,
-        "score_sinidu": snap.get("score_sinidu"),
-        "media_ivc": snap.get("media_ivc"),
-        "media_iri": snap.get("media_iri"),
-        "media_adaptacao": snap.get("media_adaptacao"),
+        "score_sinidu": audit.get("score_sinidu"),
         "score_confiabilidade": audit.get("score_confiabilidade"),
         "confiabilidade_geral": audit.get("confiabilidade_geral"),
-        "campos_reais_pct": audit.get("score", {}).get("campos_reais_pct"),
+        "campos_reais_pct": audit.get("campos_reais_pct"),
+        "bairros_total": audit.get("bairros_total"),
+        "nota": "Índices IVC/IRI por bairro: use o módulo Painel ou Simulações no Sinidu+Clima.",
     }
 
 

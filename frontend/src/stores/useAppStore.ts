@@ -54,6 +54,9 @@ type AppStore = {
   setMunicipioEnsuring: (value: boolean) => void;
   municipioEnsureError: string | null;
   setMunicipioEnsureError: (value: string | null) => void;
+  /** True quando malha municipal/bairros já chegou — painel deve esperar para não saturar o backend. */
+  mapSpatialReady: boolean;
+  setMapSpatialReady: (value: boolean) => void;
   alertNivel: string;
   setAlertNivel: (nivel: string) => void;
   resetMapLayers: () => void;
@@ -118,7 +121,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
   activeTab: 'dashboard',
   setActiveTab: (tab) => set({ activeTab: tab }),
   selectedMunicipio: '2611606',
-  setSelectedMunicipio: (codigo) => set({ selectedMunicipio: codigo }),
+  setSelectedMunicipio: (codigo) =>
+    set({ selectedMunicipio: codigo, mapSpatialReady: false }),
   municipalities: SEED_MUNICIPALITIES,
   setMunicipalities: (value) =>
     set({
@@ -163,6 +167,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
   setMunicipioEnsuring: (value) => set({ municipioEnsuring: value }),
   municipioEnsureError: null,
   setMunicipioEnsureError: (value) => set({ municipioEnsureError: value }),
+  mapSpatialReady: false,
+  setMapSpatialReady: (value) => set({ mapSpatialReady: value }),
   alertNivel: 'VERDE',
   setAlertNivel: (nivel) => set({ alertNivel: nivel }),
   resetMapLayers: () => set({ activeLayers: [...DEFAULT_MAP_LAYERS] }),
@@ -196,7 +202,18 @@ export const useAppStore = create<AppStore>((set, get) => ({
         next[tema.tema_id as TemporalTemaId] = tema.padrao;
       }
     });
-    set({ layerAnoByTema: next });
+    set((state) => {
+      const prev = state.layerAnoByTema;
+      const prevKeys = Object.keys(prev);
+      const nextKeys = Object.keys(next);
+      if (
+        prevKeys.length === nextKeys.length
+        && nextKeys.every((key) => prev[key as TemporalTemaId] === next[key as TemporalTemaId])
+      ) {
+        return state;
+      }
+      return { layerAnoByTema: next };
+    });
   },
   showRegionalOverlay: false,
   setShowRegionalOverlay: (value) => set({ showRegionalOverlay: value }),

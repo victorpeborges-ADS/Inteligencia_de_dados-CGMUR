@@ -68,6 +68,9 @@ TARGET_MUNICIPALITIES = [
 
 TARGET_IBGE_CODES = [item["codigo_ibge"] for item in TARGET_MUNICIPALITIES]
 
+# Prioridade de boot / demo local (Recife + Aracaju). Override via BOOT_PRIORITY_IBGE_CODES.
+BOOT_PRIORITY_IBGE_CODES = ["2611606", "2800308"]
+
 IBGE_BASE_URL = "https://servicodados.ibge.gov.br/api/v3"
 SICONFI_BASE_URL = "https://apidatalake.tesouro.gov.br/ords/siconfi/tt"
 CAPAG_CKAN_URL = "https://www.tesourotransparente.gov.br/ckan/api/3/action/package_show?id=capag-municipios"

@@ -204,7 +204,7 @@ export default function ContingencyWizard({
                     ? `Rotas de evacuação usarão malha real (${osrmCoveredUfs.join(', ')}). Ideal para demo Recife/PE.`
                     : osrmOnline && !ufCovered
                       ? `OSRM online, mas ${municipioUf || 'esta UF'} não está na cobertura (${osrmCoveredUfs.join(', ')}). Rotas serão geodésicas.`
-                      : 'OSRM offline — rotas aproximadas (linha reta). Suba o container: OSRM_REGION=nordeste bash docker/osrm/setup-osrm.sh && docker compose up -d osrm'}
+                      : 'OSRM offline — rotas aproximadas (linha reta). Ative: OSRM_REGION=pe-se bash scripts/osrm-enable.sh'}
                 </p>
               </div>
             </div>

@@ -15,12 +15,11 @@ from app.services.maturity_engine import classify_tier
 from app.security.municipio_access import filter_municipio_query, filter_seed_query, get_accessible_municipio
 from app.services.audit_service import resolve_actor
 from app.data_connectors.mapbiomas_collector import vegetation_coverage_percent
-from app.data_connectors.s2id_collector import ensure_s2id_loaded, s2id_quality_label
+from app.data_connectors.s2id_collector import s2id_quality_label
 from app.data_connectors.territorial_mesh_collector import needs_territorial_refresh, sync_territorial_mesh
 from app.data_connectors.official_bairros_collector import is_official_ibge_mesh
 from app.data_connectors.mapbiomas_collector import ensure_spatial_coverage_polygons, needs_coverage_polygon_refresh
 from app.services.socioeconomic_engine import RECIFE_BAIRRO_RENDA
-from app.api.analytics import executive_snapshot
 from app.services.atlas_economico_service import build_atlas_uf_context
 from app.services.layer_meta_registry import merge_layers_meta
 from app.services.layer_temporal_service import resolve_layer_year, temporal_options_for_municipio
@@ -168,22 +167,19 @@ def get_layers_meta(
 
     bairros_quality = (
         "Oficial"
-        if is_official_mesh
+        if is_official_mesh or malha_fonte in {"prefeitura_oficial", "geoportal_municipal"}
         else ("Referencia" if is_recife_mesh else ("Estimado" if malha_disponivel else "Indisponível"))
     )
-    bairros_source = (
-        "IBGE Censo 2022 — malha oficial de bairros e setores censitários"
-        if is_official_mesh or malha_fonte in {"ibge_censo2022", "ibge_censo2022_setores"}
-        else (
-            "CTM Recife / malha Voronoi calibrada Sinidu+Clima"
-            if is_recife_mesh
-            else (
-                "Geometria aproximada (Voronoi Sinidu+Clima)"
-                if malha_disponivel
-                else "Malha de bairros não disponível para este município"
-            )
-        )
-    )
+    if malha_fonte in {"prefeitura_oficial", "geoportal_municipal"}:
+        bairros_source = "CTM municipal / geoportal da prefeitura (malha oficial de bairros)"
+    elif is_official_mesh or malha_fonte in {"ibge_censo2022", "ibge_censo2022_setores"}:
+        bairros_source = "IBGE Censo 2022 — malha oficial de bairros e setores censitários"
+    elif is_recife_mesh:
+        bairros_source = "CTM Recife / malha Voronoi calibrada Sinidu+Clima"
+    elif malha_disponivel:
+        bairros_source = "Geometria aproximada (Voronoi Sinidu+Clima)"
+    else:
+        bairros_source = "Malha de bairros não disponível para este município"
 
     dynamic_layers = {
             "bairros": {
@@ -384,7 +380,7 @@ def get_executive_indicators(
     """
     muni = get_accessible_municipio(db, codigo_ibge, request=request)
 
-    ensure_s2id_loaded(db, muni)
+    # Não sincronizar S2ID no GET do painel — bloqueava o worker único e atrasava a malha do mapa.
         
     # Count of active alerts
     alerts_count = db.query(AlertaCemaden).filter(AlertaCemaden.municipio_id == muni.id).count()
@@ -504,7 +500,14 @@ def get_executive_indicators(
     malha_fonte = seed.malha_fonte if seed and seed.malha_fonte else audit.get("malha_fonte")
 
     atlas_uf_context = build_atlas_uf_context(muni.uf, codigo_ibge=muni.codigo_ibge)
-    territorial = executive_snapshot(db, muni)
+    # Snapshot completo (IVC/IRI por bairro) é caro demais para o GET do painel —
+    # usa score da auditoria já calculada acima.
+    territorial = {
+        "score_sinidu": int(round(float(audit["score_sinidu"]))) if audit.get("score_sinidu") is not None else None,
+        "media_ivc": None,
+        "media_iri": None,
+        "media_adaptacao": None,
+    }
 
     return ExecutiveIndicators(
         codigo_ibge=muni.codigo_ibge,
@@ -655,6 +658,11 @@ def get_geojson_layer(
                     },
                 })
         else:
+            seed = db.query(MunicipioSeed).filter(MunicipioSeed.codigo_ibge == muni.codigo_ibge).first()
+            malha_fonte = (seed.malha_fonte if seed and seed.malha_fonte else None) or (
+                "ibge_censo2022" if is_official_mesh else ("estimado_sinidu" if not is_recife_mesh else "prefeitura_oficial")
+            )
+            is_ctm = malha_fonte in {"prefeitura_oficial", "geoportal_municipal"}
             for b in bairros:
                 features.append({
                     "type": "Feature",
@@ -663,24 +671,24 @@ def get_geojson_layer(
                         "nome": b.nome,
                         "codigo_bairro": b.codigo_bairro,
                         "fonte_referencia": (
-                            "IBGE Censo 2022 — malha oficial de bairros"
-                            if is_official_mesh
+                            "CTM municipal / geoportal da prefeitura"
+                            if is_ctm
                             else (
-                                "CTM Recife / malha Voronoi calibrada Sinidu+Clima"
-                                if is_recife_mesh
-                                else "Malha territorial estimada Sinidu+Clima (Voronoi)"
+                                "IBGE Censo 2022 — malha oficial de bairros"
+                                if is_official_mesh
+                                else (
+                                    "CTM Recife / malha Voronoi calibrada Sinidu+Clima"
+                                    if is_recife_mesh
+                                    else "Malha territorial estimada Sinidu+Clima (Voronoi)"
+                                )
                             )
                         ),
                         "qualidade_dado": (
                             "Oficial"
-                            if is_official_mesh
+                            if is_official_mesh or is_ctm
                             else ("Referencia" if is_recife_mesh else quality_badge(layer_name))
                         ),
-                        "malha_fonte": (
-                            "ibge_censo2022"
-                            if is_official_mesh
-                            else ("estimado_sinidu" if not is_recife_mesh else "prefeitura_oficial")
-                        ),
+                        "malha_fonte": malha_fonte,
                     }
                 })
 

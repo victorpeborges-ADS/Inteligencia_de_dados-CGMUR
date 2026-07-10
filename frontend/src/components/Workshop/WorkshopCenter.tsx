@@ -69,8 +69,8 @@ export default function WorkshopCenter({
     new Date(lastDiagnostic.gerado_em).toDateString() === new Date().toDateString();
 
   const diagnosticTooltip = lastDiagnostic?.gerado_em
-    ? `Diagn?stico atual gerado em ${new Date(lastDiagnostic.gerado_em).toLocaleString('pt-BR')}. Clique para reatualizar.`
-    : 'Gerar diagn?stico executivo com narrativa IA';
+    ? `Diagnóstico atual gerado em ${new Date(lastDiagnostic.gerado_em).toLocaleString('pt-BR')}. Clique para reatualizar.`
+    : 'Gerar diagnóstico executivo com narrativa IA';
 
   const loadDiagnostic = async () => {
     setDiagnosticLoading(true);
@@ -114,7 +114,7 @@ export default function WorkshopCenter({
               <Sparkles size={13} /> Central da Oficina Sinidu+Clima
             </p>
             <p className="mt-1 line-clamp-2 text-xs text-zinc-300">
-              {diagnostic?.headline || 'Gere um diagn?stico autom?tico, apresente a narrativa guiada e exporte relat?rio executivo.'}
+              {diagnostic?.headline || 'Gere um diagnóstico automático, apresente a narrativa guiada e exporte relatório executivo.'}
             </p>
           </div>
           <div className="flex shrink-0 gap-2">
@@ -127,7 +127,7 @@ export default function WorkshopCenter({
               {diagnosticLoading ? (
                 <Loader2 className="h-3 w-3 animate-spin" />
               ) : null}
-              {diagnosticLoading ? 'Gerando?' : diagnosticToday ? 'Rediagnosticar' : 'Diagn?stico'}
+              {diagnosticLoading ? 'Gerando…' : diagnosticToday ? 'Rediagnosticar' : 'Diagnóstico'}
             </button>
 
             <button
@@ -145,7 +145,7 @@ export default function WorkshopCenter({
                 onClick={() => setReportOpen((v) => !v)}
                 className="inline-flex items-center gap-1 rounded-lg border border-zinc-600 bg-zinc-900 px-3 py-2 text-[10px] font-bold uppercase text-zinc-200 hover:bg-zinc-800"
               >
-                <FileText size={12} /> Relat?rio <ChevronDown size={10} />
+                <FileText size={12} /> Relatório <ChevronDown size={10} />
               </button>
               {reportOpen && (
                 <div className="absolute right-0 top-full z-10 mt-1 min-w-[220px] rounded-lg border border-zinc-700 bg-zinc-900 py-1 shadow-xl">
@@ -157,7 +157,7 @@ export default function WorkshopCenter({
                       onGenerateRapido?.();
                     }}
                   >
-                    Relat?rio Executivo (r?pido)
+                    Relatório Executivo (rápido)
                   </button>
                   <button
                     type="button"
@@ -167,7 +167,7 @@ export default function WorkshopCenter({
                       onGenerateCompleto?.();
                     }}
                   >
-                    Relat?rio Completo (8 p?gs)
+                    Relatório Completo (8 págs)
                   </button>
                 </div>
               )}
@@ -212,8 +212,8 @@ export default function WorkshopCenter({
                   <span className="flex items-center gap-1">
                     <span className="rounded-full bg-rose-500/20 px-2 py-0.5 text-[10px] font-extrabold text-rose-200">{item.score_sinidu}</span>
                     {scoreConfiabilidade && (
-                      <span className="text-[8px] text-amber-300" title={`Confian?a: ${scoreConfiabilidade}`}>
-                        {scoreConfiabilidade === 'ALTA' ? '? Alta' : '? Estimado'}
+                      <span className="text-[8px] text-amber-300" title={`Confiança: ${scoreConfiabilidade}`}>
+                        {scoreConfiabilidade === 'ALTA' ? '● Alta' : '○ Estimado'}
                       </span>
                     )}
                   </span>

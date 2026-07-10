@@ -106,6 +106,29 @@ def fetch_geojson_url(url: str) -> dict[str, Any]:
     return data
 
 
+def fetch_geoserver_wfs_geojson(source: CtmSource) -> dict[str, Any]:
+    """Baixa FeatureCollection via GeoServer WFS 2.0 (outputFormat GeoJSON, EPSG:4326)."""
+    type_name = (source.where or "").strip()
+    if not type_name or type_name == "1=1":
+        raise ValueError("typeName da camada GeoServer é obrigatório (campo where/type_name).")
+
+    base = source.url.strip().rstrip("/")
+    params = {
+        "service": "WFS",
+        "version": "2.0.0",
+        "request": "GetFeature",
+        "typeName": type_name,
+        "outputFormat": "application/json",
+        "srsName": "EPSG:4326",
+    }
+    resp = requests.get(base, params=params, timeout=120)
+    resp.raise_for_status()
+    data = resp.json()
+    if data.get("type") != "FeatureCollection":
+        raise RuntimeError("GeoServer WFS não retornou FeatureCollection GeoJSON.")
+    return data
+
+
 def _safe_shape(feat: dict[str, Any]) -> Any | None:
     try:
         geom = shape(feat["geometry"])
@@ -172,6 +195,8 @@ def fetch_ctm_geojson(source: CtmSource) -> dict[str, Any]:
         raw = fetch_arcgis_geojson(source)
     elif source.kind == "geojson_url":
         raw = fetch_geojson_url(source.url)
+    elif source.kind == "geoserver_wfs":
+        raw = fetch_geoserver_wfs_geojson(source)
     else:
         raise ValueError(f"Tipo de fonte não suportado: {source.kind}")
 
@@ -194,7 +219,7 @@ def probe_ctm_source(source: CtmSource) -> dict[str, Any]:
             "feicoes": count,
             "fonte": source.kind,
             "nota": source.nota,
-            "url": source.url.split("/query")[0],
+            "url": source.url.split("/query")[0] if source.kind == "arcgis" else source.url,
         }
     except Exception as exc:
         return {

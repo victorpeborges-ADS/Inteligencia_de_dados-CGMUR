@@ -35,6 +35,7 @@ from app.services.simulation_job_service import (
     run_rainfall_compare_job,
     run_rainfall_simulation_job,
 )
+from app.services.simulation_prewarm import schedule_rainfall_prewarm
 from app.services.mitigation_planner import MitigationPlanner
 from app.services.simulation_analyzer import analyze_simulation
 from app.services.simulation_interpret_cache import interpret_simulation_cached
@@ -103,6 +104,16 @@ def simulate_extreme_rainfall_async(payload: ChuvaExtremaSimRequest, request: Re
     muni = get_accessible_municipio(db, payload.codigo_ibge, request=request)
     job_id = run_rainfall_simulation_job(muni.codigo_ibge, muni.id, payload.precipitacao_mm)
     return {"job_id": job_id, "async_mode": True, "status": "queued"}
+
+
+@router.post("/extreme-rainfall/prewarm")
+def prewarm_extreme_rainfall(payload: ChuvaExtremaSimRequest, request: Request, db: Session = Depends(get_db)):
+    """Pré-aquece cache da simulação pluvial em background (demo/officina)."""
+    muni = get_accessible_municipio(db, payload.codigo_ibge, request=request)
+    from app.config import settings
+
+    extra = [settings.SIMULATION_PREWARM_BASELINE_MM] if payload.precipitacao_mm != settings.SIMULATION_PREWARM_BASELINE_MM else None
+    return schedule_rainfall_prewarm(muni.codigo_ibge, payload.precipitacao_mm, extra_mm=extra)
 
 
 @router.post("/extreme-rainfall/compare", response_model=RainfallComparisonResponse)

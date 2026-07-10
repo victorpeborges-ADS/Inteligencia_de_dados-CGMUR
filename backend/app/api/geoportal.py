@@ -24,17 +24,22 @@ router = APIRouter()
 
 
 class GeoportalApiRegisterRequest(BaseModel):
-    tipo: str = Field(..., description="arcgis_rest | geojson_url")
+    tipo: str = Field(..., description="arcgis_rest | geojson_url | geoserver_wfs")
     url: str
     titulo: str = "Malha de bairros CTM"
     arcgis_where: str = "1=1"
     nome_campo_bairro: str | None = None
+    geoserver_type_name: str | None = Field(
+        default=None,
+        description="Camada WFS (ex.: Limites_Municipais:bairros_2023) quando tipo=geoserver_wfs",
+    )
 
 
 class GeoportalProbeRequest(BaseModel):
     tipo: str
     url: str
     arcgis_where: str = "1=1"
+    geoserver_type_name: str | None = None
 
 
 @router.get("/{codigo_ibge}/status")
@@ -57,6 +62,7 @@ def geoportal_register_api(
     _gestor: User = Depends(require_role(Role.GESTOR)),
 ):
     muni = get_accessible_municipio(db, codigo_ibge, request=request)
+    type_name = payload.geoserver_type_name if payload.tipo == "geoserver_wfs" else payload.arcgis_where
     try:
         return register_geoportal_api(
             db,
@@ -64,7 +70,7 @@ def geoportal_register_api(
             tipo=payload.tipo,
             url=payload.url,
             titulo=payload.titulo,
-            arcgis_where=payload.arcgis_where,
+            arcgis_where=type_name or payload.arcgis_where,
             nome_campo_bairro=payload.nome_campo_bairro,
         )
     except ValueError as exc:
@@ -126,4 +132,5 @@ def geoportal_sync_ctm_registry(
 
 @router.post("/probe-url")
 def geoportal_probe_url(payload: GeoportalProbeRequest, _gestor: User = Depends(require_role(Role.GESTOR))):
-    return probe_geoportal_url(payload.tipo, payload.url, arcgis_where=payload.arcgis_where)
+    type_name = payload.geoserver_type_name if payload.tipo == "geoserver_wfs" else payload.arcgis_where
+    return probe_geoportal_url(payload.tipo, payload.url, arcgis_where=type_name or payload.arcgis_where)

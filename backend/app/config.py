@@ -5,6 +5,20 @@ def _env_bool(name: str, default: bool = False) -> bool:
     return os.getenv(name, str(default).lower()).lower() in ("1", "true", "yes", "on")
 
 
+def _env_ibge_list(name: str, default: list[str]) -> list[str]:
+    raw = os.getenv(name, "").strip()
+    if not raw:
+        return list(default)
+    codes: list[str] = []
+    seen: set[str] = set()
+    for part in raw.replace(";", ",").split(","):
+        code = part.strip().zfill(7)[:7]
+        if code.isdigit() and len(code) == 7 and code not in seen:
+            seen.add(code)
+            codes.append(code)
+    return codes or list(default)
+
+
 class Settings:
     PROJECT_NAME: str = "Sinidu+Clima - Plataforma Nacional de Inteligência Territorial"
     API_V1_STR: str = "/api/v1"
@@ -17,6 +31,19 @@ class Settings:
     PILOT_IBGE_CODE: str = "2611606" # Recife - PE
     PILOT_NAME: str = "Recife"
     PILOT_UF: str = "PE"
+
+    # Municípios sincronizados/carregados no boot (resto sob demanda ou scheduler semanal)
+    BOOT_PRIORITY_IBGE_CODES: list[str] = _env_ibge_list(
+        "BOOT_PRIORITY_IBGE_CODES",
+        ["2611606", "2800308"],  # Recife, Aracaju
+    )
+    # Malhas sintéticas extras (Caroebe, Salvador, …) — desligado por padrão para boot leve
+    SEED_DEMO_MUNICIPALITIES: bool = _env_bool("SEED_DEMO_MUNICIPALITIES", False)
+    # Pré-aquecimento de simulação pluvial (cache Redis) para demo/officina
+    SIMULATION_PREWARM_ENABLED: bool = _env_bool("SIMULATION_PREWARM_ENABLED", True)
+    SIMULATION_PREWARM_MM: float = float(os.getenv("SIMULATION_PREWARM_MM", "120"))
+    SIMULATION_PREWARM_BASELINE_MM: float = float(os.getenv("SIMULATION_PREWARM_BASELINE_MM", "80"))
+    STALE_JOB_HOURS: int = int(os.getenv("STALE_JOB_HOURS", "6"))
 
     REDIS_URL: str = os.getenv("REDIS_URL", "redis://redis:6379/0")
 

@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { MapContainer as LeafletMap, TileLayer, GeoJSON, useMap } from 'react-leaflet';
 import L from 'leaflet';
 import { api } from '@/utils/api';
@@ -31,6 +31,7 @@ import {
   RASTER_RESCALE_UI,
   type ExternalRasterId,
 } from '@/config/externalRasters';
+import { buildLayerFetchParams } from '@/config/layerTemporal';
 
 type RasterRuntimeConfig = {
   tileUrl: string;
@@ -178,6 +179,46 @@ function MapController({ center, zoom }: { center: [number, number]; zoom: numbe
   return null;
 }
 
+/** Enquadra a malha municipal/bairros quando os dados chegam (evita zoom regional sem polígonos visíveis). */
+function FitBoundsToBaseLayers({
+  municipioFc,
+  bairrosFc,
+  selectedMunicipio,
+  regionalActive,
+}: {
+  municipioFc?: any;
+  bairrosFc?: any;
+  selectedMunicipio: string;
+  regionalActive: boolean;
+}) {
+  const map = useMap();
+  const fittedFor = useRef<string | null>(null);
+
+  useEffect(() => {
+    fittedFor.current = null;
+  }, [selectedMunicipio]);
+
+  useEffect(() => {
+    if (fittedFor.current === selectedMunicipio) return;
+    const fc = bairrosFc?.features?.length ? bairrosFc : municipioFc;
+    if (!fc?.features?.length) return;
+    try {
+      const layer = L.geoJSON(fc);
+      const bounds = layer.getBounds();
+      if (!bounds.isValid()) return;
+      fittedFor.current = selectedMunicipio;
+      map.fitBounds(bounds, {
+        padding: [48, 48],
+        maxZoom: regionalActive ? 12 : 13,
+        animate: true,
+      });
+    } catch {
+      // ignore invalid geometries
+    }
+  }, [map, selectedMunicipio, bairrosFc, municipioFc, regionalActive]);
+  return null;
+}
+
 export default function MapContainer({
   activeLayers,
   mapFocus,
@@ -222,44 +263,120 @@ export default function MapContainer({
   const moveActiveLayer = useAppStore((s) => s.moveActiveLayer);
   const toggleLayer = useAppStore((s) => s.toggleLayer);
   const showRegionalOverlayStore = useAppStore((s) => s.showRegionalOverlay);
+  const setMapSpatialReady = useAppStore((s) => s.setMapSpatialReady);
 
   const activeRasterLayers = activeLayers.filter(isExternalRasterLayer);
 
   const layerMetaById = Object.fromEntries(layerOptions.map((opt) => [opt.id, opt]));
 
+  const activeLayersKey = activeLayers.join(',');
+  const layerLoadGen = useRef(0);
+  const loadedMunicipioRef = useRef<string | null>(null);
+
   // Fetch vector layers (raster layers use mosaicjson tile endpoints).
   useEffect(() => {
-    const vectorLayers = activeLayers.filter((layerName) => !isExternalRasterLayer(layerName));
+    const vectorLayers = activeLayersKey
+      .split(',')
+      .filter(Boolean)
+      .filter((layerName) => !isExternalRasterLayer(layerName));
 
     if (vectorLayers.length === 0) {
       setLayerData({});
+      setLoading(false);
+      setMapSpatialReady(true);
       return;
     }
 
+    const gen = ++layerLoadGen.current;
+    const municipioChanged = loadedMunicipioRef.current !== selectedMunicipio;
+    if (municipioChanged) {
+      loadedMunicipioRef.current = selectedMunicipio;
+      setLayerData({});
+      setMapSpatialReady(false);
+    }
+    setLoading(true);
+
+    let alive = true;
     const loadLayers = async () => {
-      setLoading(true);
-      try {
-        const entries = await Promise.all(
-          vectorLayers.map(async (layerName) => {
-            const extraParams = buildLayerFetchParams(layerName, {
-              educacaoEtapa,
-              territorioTipo,
-              layerAnoByTema,
-            });
-            const data = await api.getLayerGeoJSON(layerName, selectedMunicipio, extraParams);
-            return [layerName, data] as const;
-          })
-        );
-        setLayerData(Object.fromEntries(entries));
-      } catch (err) {
-        console.error('Error loading layers:', err);
-      } finally {
+      // Bairros primeiro — é a malha que o usuário espera ver.
+      const ordered = [
+        ...vectorLayers.filter((id) => id === 'bairros'),
+        ...vectorLayers.filter((id) => id === 'municipio'),
+        ...vectorLayers.filter((id) => id !== 'bairros' && id !== 'municipio'),
+      ];
+
+      for (const layerName of ordered) {
+        if (!alive || layerLoadGen.current !== gen) return;
+        try {
+          const extraParams = buildLayerFetchParams(layerName, {
+            educacaoEtapa,
+            territorioTipo,
+            layerAnoByTema,
+          });
+          const data = await api.getLayerGeoJSON(layerName, selectedMunicipio, extraParams);
+          if (!alive || layerLoadGen.current !== gen) return;
+          if (!data?.features || !Array.isArray(data.features)) {
+            console.error(`Layer ${layerName} retornou payload inválido`, data);
+            continue;
+          }
+          setLayerData((prev) => ({ ...prev, [layerName]: data }));
+          if (layerName === 'bairros' || layerName === 'municipio') {
+            setMapSpatialReady(true);
+          }
+        } catch (err) {
+          console.error(`Error loading layer ${layerName}:`, err);
+        }
+      }
+      if (alive && layerLoadGen.current === gen) {
         setLoading(false);
+        setMapSpatialReady(true);
       }
     };
 
-    loadLayers();
-  }, [activeLayers, selectedMunicipio, educacaoEtapa, territorioTipo, layerAnoByTema]);
+    loadLayers().catch((err) => {
+      console.error('Error loading layers:', err);
+      if (alive && layerLoadGen.current === gen) {
+        setLoading(false);
+        setMapSpatialReady(true);
+      }
+    });
+
+    return () => {
+      alive = false;
+    };
+    // Não incluir layerAnoByTema/educacao/territorio aqui: mudam no boot e cancelavam o fetch de bairros.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeLayersKey, selectedMunicipio, setMapSpatialReady]);
+
+  // Recarrega só camadas que dependem de ano/etapa quando esses filtros mudam.
+  useEffect(() => {
+    const dependent = activeLayers.filter(
+      (id) => id === 'cobertura' || id === 'socioeconomico' || id === 'educacao' || id === 'territorios_especiais' || id === 'lst_observada',
+    ).filter((id) => !isExternalRasterLayer(id));
+    if (dependent.length === 0) return;
+
+    let alive = true;
+    (async () => {
+      for (const layerName of dependent) {
+        if (!alive) return;
+        try {
+          const extraParams = buildLayerFetchParams(layerName, {
+            educacaoEtapa,
+            territorioTipo,
+            layerAnoByTema,
+          });
+          const data = await api.getLayerGeoJSON(layerName, selectedMunicipio, extraParams);
+          if (!alive || !data?.features) return;
+          setLayerData((prev) => ({ ...prev, [layerName]: data }));
+        } catch (err) {
+          console.error(`Error reloading layer ${layerName}:`, err);
+        }
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [educacaoEtapa, territorioTipo, layerAnoByTema, activeLayersKey, selectedMunicipio]);
 
   useEffect(() => {
     if (activeRasterLayers.length === 0) {
@@ -369,11 +486,19 @@ export default function MapContainer({
           ...withOpacity,
           fillOpacity: 0,
           fillColor: 'transparent',
-          weight: 1.4,
+          weight: 1.6,
           color: '#e2e8f0',
+          opacity: 0.9 * layerOpacity,
         };
       }
-      return { ...withOpacity, fillOpacity: Math.min(withOpacity.fillOpacity, 0.12), weight: 0.8 };
+      // Mantém contorno legível mesmo com temáticas por cima
+      return {
+        ...withOpacity,
+        fillOpacity: Math.min(withOpacity.fillOpacity, 0.18),
+        weight: 1.4,
+        color: '#c7d2fe',
+        opacity: 0.9 * layerOpacity,
+      };
     }
     if (layerName === 'cobertura' && activeLayers.includes('bairros')) {
       return { ...withOpacity, fillOpacity: Math.min(withOpacity.fillOpacity, 0.38) };
@@ -689,6 +814,12 @@ export default function MapContainer({
         zoomControl={false}
       >
         <MapController center={mapFocus} zoom={zoom} />
+        <FitBoundsToBaseLayers
+          selectedMunicipio={selectedMunicipio}
+          municipioFc={layerData.municipio}
+          bairrosFc={layerData.bairros}
+          regionalActive={showRegionalOverlay}
+        />
         
         {/* Custom Dark-Themed Basemap */}
         <TileLayer
@@ -734,19 +865,19 @@ export default function MapContainer({
               if (kind === 'referencia_comparacao') {
                 return {
                   fillColor: '#f59e0b',
-                  fillOpacity: 0.12,
+                  fillOpacity: 0.08,
                   color: '#fbbf24',
                   weight: 2.2,
-                  opacity: 0.95,
+                  opacity: 0.9,
                   dashArray: '8,5',
                 };
               }
               return {
                 fillColor: '#22d3ee',
-                fillOpacity: 0.08,
+                fillOpacity: 0.04,
                 color: '#22d3ee',
-                weight: 1.8,
-                opacity: 0.85,
+                weight: 1.6,
+                opacity: 0.75,
                 dashArray: '6,4',
               };
             }}

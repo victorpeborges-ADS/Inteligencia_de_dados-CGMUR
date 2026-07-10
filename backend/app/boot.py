@@ -137,8 +137,16 @@ def initialize_database() -> None:
 
     db = SessionLocal()
     try:
-        ensure_demo_municipalities(db)
-        boot_status.demo_municipalities_ok = True
+        if settings.SEED_DEMO_MUNICIPALITIES:
+            ensure_demo_municipalities(db)
+            boot_status.demo_municipalities_ok = True
+        else:
+            boot_status.demo_municipalities_ok = True
+            logger.info(
+                "Seed demo sintético desligado (SEED_DEMO_MUNICIPALITIES=false); "
+                "prioridade de boot: %s",
+                settings.BOOT_PRIORITY_IBGE_CODES,
+            )
         from app.services.casos_sucesso_service import seed_casos_sucesso
 
         seed_casos_sucesso(db, force=False, embed=True)
@@ -151,13 +159,36 @@ def initialize_database() -> None:
     logger.info("Boot DB concluído (db_ready=%s).", boot_status.db_ready)
 
 
-def _bootstrap_integrations() -> None:
-    from app.data_connectors.orchestrator import IntegrationOrchestrator
+def _ensure_boot_priority_municipalities() -> None:
+    """Garante malha territorial mínima dos municípios prioritários (Recife, Aracaju)."""
+    from app.services.municipio_loader import ensure_municipality_loaded
 
     db = SessionLocal()
     try:
-        summary = IntegrationOrchestrator(db).sync_all()
-        logger.info("Integração inicial concluída: %s", summary)
+        for codigo in settings.BOOT_PRIORITY_IBGE_CODES:
+            try:
+                result = ensure_municipality_loaded(db, codigo)
+                logger.info(
+                    "Município prioritário pronto: %s (%s) loaded=%s",
+                    result.get("nome") or codigo,
+                    codigo,
+                    result.get("loaded"),
+                )
+            except Exception as exc:
+                logger.warning("Falha ao garantir município prioritário %s: %s", codigo, exc)
+                boot_status.errors.append(f"boot_priority_{codigo}: {exc}")
+    finally:
+        db.close()
+
+
+def _bootstrap_integrations() -> None:
+    from app.data_connectors.orchestrator import IntegrationOrchestrator
+
+    priority = settings.BOOT_PRIORITY_IBGE_CODES
+    db = SessionLocal()
+    try:
+        summary = IntegrationOrchestrator(db).sync_all(codigos=priority)
+        logger.info("Integração inicial (prioridade %s): %s", priority, summary)
     except Exception as exc:
         logger.warning("Integração inicial indisponível no boot: %s", exc)
         boot_status.errors.append(f"integration_bootstrap: {exc}")
@@ -178,8 +209,61 @@ def _bootstrap_flood_models() -> None:
         db.close()
 
 
+def _run_boot_background_pipeline() -> None:
+    """Malha prioritária primeiro; integrações/monitoramento depois, com atraso para não saturar o pool no boot."""
+    import time
+
+    # Deixa a API atender o mapa/painel antes do sync externo.
+    time.sleep(8)
+    _ensure_boot_priority_municipalities()
+    if settings.SIMULATION_PREWARM_ENABLED:
+        time.sleep(3)
+        _prewarm_priority_simulations()
+        _prewarm_priority_agent_bundles()
+    # Sync de indicadores públicos pode esperar o scheduler semanal — no boot só malha.
+    # Mantém monitoramento leve dos prioritários.
+    time.sleep(2)
+    _bootstrap_monitoring()
+    _bootstrap_flood_models()
+
+
+def _prewarm_priority_simulations() -> None:
+    from app.services.simulation_prewarm import prewarm_boot_priority_municipalities
+
+    try:
+        prewarm_boot_priority_municipalities()
+        logger.info(
+            "Pré-aquecimento de simulação pluvial agendado para %s",
+            settings.BOOT_PRIORITY_IBGE_CODES,
+        )
+    except Exception as exc:
+        logger.warning("Pré-aquecimento de simulação falhou: %s", exc)
+        boot_status.errors.append(f"simulation_prewarm: {exc}")
+
+
+def _prewarm_priority_agent_bundles() -> None:
+    from app.services.contextual_agent_prewarm import prewarm_boot_priority_agent_bundles
+
+    try:
+        prewarm_boot_priority_agent_bundles()
+        logger.info(
+            "Pré-aquecimento do agente contextual agendado para %s",
+            settings.BOOT_PRIORITY_IBGE_CODES,
+        )
+    except Exception as exc:
+        logger.warning("Pré-aquecimento do agente falhou: %s", exc)
+        boot_status.errors.append(f"agent_prewarm: {exc}")
+
+
 def start_background_jobs() -> None:
     """Scheduler e sync inicial em threads — não bloqueiam o Uvicorn."""
+    try:
+        from app.services.background_jobs import recover_stale_jobs
+
+        recover_stale_jobs()
+    except Exception as exc:
+        logger.warning("Recuperação de jobs expirados falhou: %s", exc)
+
     try:
         from app.data_connectors.scheduler import start_integration_scheduler
 
@@ -190,36 +274,26 @@ def start_background_jobs() -> None:
         logger.warning("Scheduler de integrações não iniciado: %s", exc)
 
     try:
-        threading.Thread(target=_bootstrap_integrations, daemon=True, name="integration-bootstrap").start()
+        threading.Thread(
+            target=_run_boot_background_pipeline,
+            daemon=True,
+            name="boot-background-pipeline",
+        ).start()
         boot_status.integration_bootstrap_started = True
     except Exception as exc:
-        boot_status.errors.append(f"integration_thread: {exc}")
-        logger.warning("Thread de integração não iniciada: %s", exc)
-
-    try:
-        threading.Thread(target=_bootstrap_flood_models, daemon=True, name="ml-flood-bootstrap").start()
-    except Exception as exc:
-        boot_status.errors.append(f"ml_thread: {exc}")
-        logger.warning("Thread ML alagamento não iniciada: %s", exc)
-
-    try:
-        threading.Thread(target=_bootstrap_monitoring, daemon=True, name="monitoring-bootstrap").start()
-    except Exception as exc:
-        boot_status.errors.append(f"monitoring_thread: {exc}")
-        logger.warning("Thread monitoramento não iniciada: %s", exc)
+        boot_status.errors.append(f"boot_pipeline_thread: {exc}")
+        logger.warning("Pipeline de boot em background não iniciado: %s", exc)
 
 
 def _bootstrap_monitoring() -> None:
-    """Sync inicial OpenMeteo + CEMADEN — piloto primeiro, depois rede."""
+    """Sync inicial OpenMeteo + CEMADEN — só municípios prioritários de boot."""
     from app.services.monitoring_sync import sync_monitoring_all_sync
 
+    priority = settings.BOOT_PRIORITY_IBGE_CODES
     db = SessionLocal()
     try:
-        pilot = settings.PILOT_IBGE_CODE
-        summary_pilot = sync_monitoring_all_sync(db, codigos=[pilot])
-        logger.info("Monitoramento piloto (%s): %s", pilot, summary_pilot)
-        summary_all = sync_monitoring_all_sync(db)
-        logger.info("Monitoramento rede completa: %s", summary_all)
+        summary = sync_monitoring_all_sync(db, codigos=priority)
+        logger.info("Monitoramento prioritário (%s): %s", priority, summary)
     except Exception as exc:
         logger.warning("Bootstrap monitoramento indisponível: %s", exc)
         boot_status.errors.append(f"monitoring_bootstrap: {exc}")

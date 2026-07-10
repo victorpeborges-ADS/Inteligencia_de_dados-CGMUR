@@ -119,6 +119,20 @@ def assistant_chat(payload: ChatRequest, request: Request, db: Session = Depends
     )
 
 
+@router.post("/municipal/{codigo_ibge}/prewarm")
+def prewarm_municipal_agent_context(
+    codigo_ibge: str,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    """Pré-aquece bundle de contexto do agente Sinidu (background)."""
+    muni = get_accessible_municipio(db, codigo_ibge, request=request)
+    from app.services.contextual_agent_prewarm import prewarm_agent_bundle
+
+    prewarm_agent_bundle(muni.codigo_ibge)
+    return {"codigo_ibge": muni.codigo_ibge, "status": "scheduled"}
+
+
 @router.post("/chat-contextual")
 def assistant_chat_contextual(payload: ContextualChatRequest, request: Request, db: Session = Depends(get_db)):
     """Agente contextual com dados da página e function calling Mistral."""

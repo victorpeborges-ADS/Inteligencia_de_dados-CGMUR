@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
-SourceKind = Literal["arcgis", "geojson_url"]
+SourceKind = Literal["arcgis", "geojson_url", "geoserver_wfs"]
 
 
 @dataclass(frozen=True)
@@ -141,6 +141,17 @@ CTM_SOURCES: list[CtmSource] = [
         where="CD_MUN='2924009'",
         nota="IDE Bahia/CONDER — serviço intermitente",
         prioridade=3,
+    ),
+    CtmSource(
+        codigo_ibge="2800308",
+        nome="Aracaju",
+        uf="SE",
+        kind="geoserver_wfs",
+        url="https://fazenda.aracaju.se.gov.br/geoserver/wfs",
+        name_fields=("bairro", "nome", "NM_BAIRRO"),
+        where="Limites_Municipais:bairros_2023",
+        nota="GeoServer SEFAZ Aracaju — malha oficial de bairros (Lei 873/1982, revisão 2023)",
+        prioridade=2,
     ),
 ]
 

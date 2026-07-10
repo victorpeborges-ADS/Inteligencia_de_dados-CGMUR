@@ -29,7 +29,7 @@ python3 scripts/homolog_smoke_test.py http://localhost:8000
 Sem dados OSRM, o backend usa **fallback geodésico** (linha reta). Para demo com rotas viárias no Nordeste (~414 MB + 10–25 min de processamento):
 
 ```bash
-OSRM_REGION=nordeste bash docker/osrm/setup-osrm.sh
+OSRM_REGION=pe-se bash scripts/osrm-enable.sh
 docker compose up -d osrm backend
 curl -s http://localhost:8000/api/v1/routing/status | python3 -m json.tool
 ```

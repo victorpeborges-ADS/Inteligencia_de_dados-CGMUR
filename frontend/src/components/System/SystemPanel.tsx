@@ -137,14 +137,14 @@ export default function SystemPanel() {
     }
   };
 
-  const runExportsBatch = async (kind: 'diagnostics' | 'reports') => {
+  const runExportsBatch = async (kind: 'diagnostics' | 'reports', codigos?: string[]) => {
     setExportsRunning(true);
     setSyncMessage(null);
     try {
       const starter =
         kind === 'diagnostics'
           ? () => api.startDiagnosticsBatchJob(61)
-          : () => api.startReportsBatchJob(61, true);
+          : () => api.startReportsBatchJob(61, true, codigos);
       const { job_id } = await starter();
       setSyncMessage(`${kind === 'diagnostics' ? 'Diagnósticos' : 'PDFs'} em lote (job ${job_id})…`);
       const job = await pollJob(job_id);
@@ -466,6 +466,9 @@ export default function SystemPanel() {
             <li>Região PBF: {overview.routing.region}</li>
             <li>UFs cobertas: {overview.routing.covered_ufs.join(', ') || '—'}</li>
             <li className="truncate text-zinc-500">{overview.routing.detail}</li>
+            {!overview.routing.available && overview.routing.setup_hint && (
+              <li className="mt-1 font-mono text-[10px] text-amber-400/90">{overview.routing.setup_hint}</li>
+            )}
           </ul>
         </div>
       )}
@@ -574,6 +577,47 @@ export default function SystemPanel() {
           </ul>
         </div>
       </div>
+
+      {overview.batch_coverage && (
+        <div className="rounded-xl border border-zinc-800 bg-zinc-950/60 p-3">
+          <div className="mb-2 flex items-center justify-between">
+            <span className="text-[10px] font-bold uppercase text-zinc-500">Homologação — diagnósticos e PDFs</span>
+            <div className="flex gap-2">
+              <StatusBadge
+                ok={overview.batch_coverage.diagnosticos_ok}
+                label={`Diag ${overview.batch_coverage.com_diagnostico}/${overview.batch_coverage.municipios_total}`}
+              />
+              <StatusBadge
+                ok={overview.batch_coverage.relatorios_ok}
+                label={`PDF ${overview.batch_coverage.com_relatorio}/${overview.batch_coverage.municipios_total}`}
+              />
+            </div>
+          </div>
+          {overview.batch_coverage.sem_relatorio.length > 0 && (
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <p className="text-xs text-amber-200">
+                Sem PDF:{' '}
+                {overview.batch_coverage.sem_relatorio
+                  .map((m) => `${m.nome}/${m.uf}`)
+                  .join(', ')}
+              </p>
+              <button
+                type="button"
+                onClick={() =>
+                  runExportsBatch(
+                    'reports',
+                    overview.batch_coverage!.sem_relatorio.map((m) => m.codigo_ibge),
+                  )
+                }
+                disabled={exportsRunning}
+                className="rounded border border-rose-800 bg-rose-950/40 px-2 py-0.5 text-[10px] text-rose-200 hover:bg-rose-900/40 disabled:opacity-50"
+              >
+                Gerar PDFs pendentes
+              </button>
+            </div>
+          )}
+        </div>
+      )}
 
       {overview.integrations.sources.length > 0 && (
         <div className="rounded-xl border border-zinc-800 bg-zinc-950/60 p-3">
