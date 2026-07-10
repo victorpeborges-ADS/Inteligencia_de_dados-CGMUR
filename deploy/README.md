@@ -127,7 +127,9 @@ Grupos IdP → roles: `OIDC_ADMIN_GROUPS`, `OIDC_GESTOR_GROUPS`, `OIDC_LEITOR_GR
 
 Claims de tenant: `tenant_uf`, `tenant_ibge` (configuráveis via env).
 
-Verifique conectividade: `GET /health/oidc`
+Verifique conectividade: `GET /health/oidc`  
+Checklist completo gov.br: [CHECKLIST_OIDC_GOVBR.md](../CHECKLIST_OIDC_GOVBR.md)  
+Smoke: `./scripts/validacao_oidc_govbr.sh https://<dominio>`
 
 ## Jobs em background (Fase 7)
 

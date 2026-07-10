@@ -29,7 +29,7 @@ if curl -sf --max-time 3 "${API}/health/ready" >/dev/null 2>&1; then
   CODE=$(curl -s -o /tmp/sinidu_sim_smoke.json -w "%{http_code}" \
     -X POST "${API}/api/v1/simulations/extreme-rainfall/async" \
     -H 'Content-Type: application/json' \
-    -d '{"codigo_ibge":"2611606","precipitation_mm":120}' 2>/dev/null || echo "000")
+    -d '{"codigo_ibge":"2611606","precipitacao_mm":120}' 2>/dev/null || echo "000")
   if [[ "$CODE" == "200" || "$CODE" == "202" ]]; then
     echo "[OK] Job simulação aceito (HTTP ${CODE})"
   else
@@ -38,11 +38,21 @@ if curl -sf --max-time 3 "${API}/health/ready" >/dev/null 2>&1; then
 fi
 
 echo ""
-echo "--- Validação Recife (opcional, ~3 min) ---"
-if [[ "${RUN_RECIFE_VALIDATION:-0}" == "1" ]] && [[ -f scripts/validacao_recife_ui.py ]]; then
+echo "--- OSRM (opcional) ---"
+if [[ "${RUN_OSRM_VALIDATION:-0}" == "1" ]] && [[ -f scripts/validacao_osrm.py ]]; then
+  python3 scripts/validacao_osrm.py "$API" || SMOKE_EXIT=1
+else
+  echo "[INFO] Pulado — defina RUN_OSRM_VALIDATION=1 para validacao_osrm.py"
+fi
+
+echo ""
+echo "--- Validação piloto Recife+Aracaju (opcional, ~5 min) ---"
+if [[ "${RUN_PILOTO_VALIDATION:-0}" == "1" ]] && [[ -f scripts/validacao_piloto_demo.py ]]; then
+  python3 scripts/validacao_piloto_demo.py "$API" || SMOKE_EXIT=1
+elif [[ "${RUN_RECIFE_VALIDATION:-0}" == "1" ]] && [[ -f scripts/validacao_recife_ui.py ]]; then
   python3 scripts/validacao_recife_ui.py "$API" || SMOKE_EXIT=1
 else
-  echo "[INFO] Pulado — defina RUN_RECIFE_VALIDATION=1 para rodar validacao_recife_ui.py"
+  echo "[INFO] Pulado — RUN_PILOTO_VALIDATION=1 ou RUN_RECIFE_VALIDATION=1"
 fi
 
 echo ""

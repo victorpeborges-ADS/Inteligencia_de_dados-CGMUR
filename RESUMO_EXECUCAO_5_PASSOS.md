@@ -62,6 +62,5 @@ Prioridades: GeoSGB/CPRM → Brasil MAIS → SIRENE → AdaptaBrasil → SINTER
 
 | Prioridade | Item |
 |------------|------|
-| P2 | Commit/versionar trabalho Fase 15 ainda fora do git |
-| P3 | gov.br OIDC produção (D.2) |
+| P3 | gov.br OIDC produção — seguir `CHECKLIST_OIDC_GOVBR.md` |
 | P3 | Integrações institucionais A.1–A.6 (convênios) |

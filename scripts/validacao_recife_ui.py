@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validação Recife (Step 1) — agente, simulação, apresentação, badges."""
+"""Validação de município piloto — malha, agente, simulação, apresentação."""
 from __future__ import annotations
 
 import json
@@ -8,14 +8,24 @@ import time
 import urllib.error
 import urllib.request
 
-BASE = sys.argv[1] if len(sys.argv) > 1 else "http://localhost:8000"
-IBGE = "2611606"
+DEFAULT_IBGE = "2611606"
 
 
-def call(method: str, path: str, body: dict | None = None, timeout: int = 120) -> tuple[float, int, dict | list | None]:
-    url = f"{BASE.rstrip('/')}{path}"
+def call(
+    base: str,
+    method: str,
+    path: str,
+    body: dict | None = None,
+    timeout: int = 120,
+) -> tuple[float, int, dict | list | None]:
+    url = f"{base.rstrip('/')}{path}"
     data = json.dumps(body).encode() if body else None
-    req = urllib.request.Request(url, data=data, method=method, headers={"Content-Type": "application/json"} if body else {})
+    req = urllib.request.Request(
+        url,
+        data=data,
+        method=method,
+        headers={"Content-Type": "application/json"} if body else {},
+    )
     t0 = time.time()
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
@@ -31,11 +41,12 @@ def call(method: str, path: str, body: dict | None = None, timeout: int = 120) -
         return elapsed, exc.code, detail
 
 
-def main() -> int:
-    print(f"Validação Recife {IBGE} — {BASE}\n")
+def validate_municipio(base: str, ibge: str, label: str | None = None) -> int:
+    nome = label or ibge
+    print(f"Validação {nome} ({ibge}) — {base}\n")
     fails = 0
 
-    elapsed, code, layers = call("GET", f"/api/v1/indicators/layers/meta?codigo_ibge={IBGE}")
+    elapsed, code, layers = call(base, "GET", f"/api/v1/indicators/layers/meta?codigo_ibge={ibge}")
     malha = layers.get("malha_disponivel") if isinstance(layers, dict) else None
     bairros = (layers or {}).get("bairros", {}) if isinstance(layers, dict) else {}
     badge = bairros.get("qualidade_badge") or bairros.get("data_quality") or bairros.get("fonte")
@@ -43,28 +54,36 @@ def main() -> int:
     print(f"[{'OK' if ok else 'FAIL'}] badges/malha ({elapsed}s) malha={malha} badge={badge}")
     fails += 0 if ok else 1
 
-    call("POST", f"/api/v1/assistant/municipal/{IBGE}/prewarm", None, timeout=15)
-    call("POST", "/api/v1/simulations/extreme-rainfall/prewarm", {"codigo_ibge": IBGE, "precipitacao_mm": 120}, timeout=30)
+    call(base, "POST", f"/api/v1/assistant/municipal/{ibge}/prewarm", None, timeout=15)
+    call(
+        base,
+        "POST",
+        "/api/v1/simulations/extreme-rainfall/prewarm",
+        {"codigo_ibge": ibge, "precipitacao_mm": 120},
+        timeout=30,
+    )
+    elapsed, code, ctx = 0.0, 0, None
     for _ in range(45):
         time.sleep(2)
-        elapsed, code, ctx = call("GET", f"/api/v1/assistant/municipal/{IBGE}/context", timeout=90)
+        elapsed, code, ctx = call(base, "GET", f"/api/v1/assistant/municipal/{ibge}/context", timeout=90)
         if code == 200 and elapsed < 10:
             break
     ok = code == 200 and isinstance(ctx, dict) and ctx.get("summary_text")
     tag = "OK" if ok and elapsed < 10 else ("WARN" if ok else "FAIL")
-    print(f"[{tag}] agente contexto ({elapsed}s) cached={'summary' in str((ctx or {}).keys())}")
+    print(f"[{tag}] agente contexto ({elapsed}s)")
     if tag == "FAIL":
         fails += 1
 
-    elapsed2, code2, ctx2 = call("GET", f"/api/v1/assistant/municipal/{IBGE}/context", timeout=15)
+    elapsed2, code2, _ = call(base, "GET", f"/api/v1/assistant/municipal/{ibge}/context", timeout=15)
     ok2 = code2 == 200 and elapsed2 < 3
     print(f"[{'OK' if ok2 else 'WARN'}] agente contexto cache ({elapsed2}s)")
 
     elapsed, code, chat = call(
+        base,
         "POST",
         "/api/v1/assistant/chat-contextual",
         {
-            "municipio_codigo": IBGE,
+            "municipio_codigo": ibge,
             "message": "O que significa o Score Sinidu?",
             "pagina_atual": "painel",
             "descricao_pagina": "Painel executivo",
@@ -81,9 +100,10 @@ def main() -> int:
         fails += 1
 
     elapsed, code, job_start = call(
+        base,
         "POST",
         "/api/v1/simulations/extreme-rainfall/async",
-        {"codigo_ibge": IBGE, "precipitacao_mm": 120},
+        {"codigo_ibge": ibge, "precipitacao_mm": 120},
         timeout=30,
     )
     job_id = (job_start or {}).get("job_id") if isinstance(job_start, dict) else None
@@ -92,7 +112,7 @@ def main() -> int:
     if job_id:
         for _ in range(40):
             time.sleep(2)
-            _, _, prog = call("GET", f"/api/v1/simulations/jobs/{job_id}", timeout=30)
+            _, _, prog = call(base, "GET", f"/api/v1/simulations/jobs/{job_id}", timeout=30)
             if isinstance(prog, dict) and prog.get("status") == "completed":
                 sim = prog.get("result")
                 break
@@ -105,15 +125,16 @@ def main() -> int:
     )
     from_cache = (prog or {}).get("from_cache") if isinstance(prog, dict) else False
     area = sim.get("affected_area_km2") if isinstance(sim, dict) else None
-    print(f"[{'OK' if ok else 'FAIL'}] simulação 120mm async ({elapsed}s start) cache={from_cache} area_km2={area}")
+    print(f"[{'OK' if ok else 'FAIL'}] simulação 120mm async cache={from_cache} area_km2={area}")
     fails += 0 if ok else 1
 
     if ok and isinstance(sim, dict):
         elapsed, code, interp = call(
+            base,
             "POST",
             "/api/v1/simulations/interpret",
             {
-                "municipio_codigo": IBGE,
+                "municipio_codigo": ibge,
                 "tipo_simulacao": "chuva",
                 "parametro_atual": 120.0,
                 "parametro_referencia": 80.0,
@@ -129,29 +150,36 @@ def main() -> int:
         fails += 0 if ok_i else 1
 
         elapsed, code, cmp = call(
+            base,
             "POST",
             "/api/v1/simulations/extreme-rainfall/compare",
-            {"codigo_ibge": IBGE, "baseline_mm": 80, "scenario_mm": 120},
+            {"codigo_ibge": ibge, "baseline_mm": 80, "scenario_mm": 120},
             timeout=120,
         )
         ok_c = code == 200 and isinstance(cmp, dict) and isinstance(cmp.get("delta"), dict)
         delta = (cmp or {}).get("delta") or {}
-        print(f"[{'OK' if ok_c else 'FAIL'}] comparação 80→120mm ({elapsed}s) delta_area_km2={delta.get('affected_area_km2')}")
+        print(f"[{'OK' if ok_c else 'FAIL'}] comparação 80→120mm delta_area_km2={delta.get('affected_area_km2')}")
         fails += 0 if ok_c else 1
 
-    elapsed, code, pres = call("GET", f"/api/v1/diagnostic/{IBGE}/presentation", timeout=60)
+    elapsed, code, pres = call(base, "GET", f"/api/v1/diagnostic/{ibge}/presentation", timeout=60)
     ok = code == 200 and isinstance(pres, dict) and pres.get("municipio")
-    print(f"[{'OK' if ok else 'FAIL'}] apresentação ({elapsed}s) keys={list((pres or {}).keys())[:6]}")
+    print(f"[{'OK' if ok else 'FAIL'}] apresentação ({elapsed}s)")
     fails += 0 if ok else 1
 
-    elapsed, code, cat = call("GET", f"/api/v1/data-catalog/coverage?codigo_ibge={IBGE}")
+    elapsed, code, cat = call(base, "GET", f"/api/v1/data-catalog/coverage?codigo_ibge={ibge}")
     mat = (cat or {}).get("maturidade_percentual") if isinstance(cat, dict) else None
     ok = code == 200 and mat is not None
-    print(f"[{'OK' if ok else 'FAIL'}] catálogo ({elapsed}s) maturidade={mat}%")
+    print(f"[{'OK' if ok else 'FAIL'}] catálogo maturidade={mat}%")
     fails += 0 if ok else 1
 
-    print(f"\nResultado: {fails} falha(s)")
-    return 1 if fails else 0
+    print(f"→ {nome}: {fails} falha(s)\n")
+    return fails
+
+
+def main() -> int:
+    base = sys.argv[1] if len(sys.argv) > 1 else "http://localhost:8000"
+    ibge = sys.argv[2] if len(sys.argv) > 2 else DEFAULT_IBGE
+    return 1 if validate_municipio(base, ibge) else 0
 
 
 if __name__ == "__main__":

@@ -77,6 +77,14 @@ jobs:
         run: |
           pytest tests/test_osrm_router.py tests/test_batch_export.py tests/test_external_sources_collector.py -q --tb=short --no-cov
 
+      - name: Testes operação demo (agente, jobs zumbis)
+        working-directory: backend
+        env:
+          DATABASE_URL: postgresql://sinidu_user:sinidu_pass@localhost:5432/sinidu_db
+          AUTH_ENABLED: "false"
+        run: |
+          pytest tests/test_contextual_agent_fast.py tests/test_stale_jobs.py -q --tb=short --no-cov
+
       - name: Testes Fase 12 (cache simulação e interpretação)
         working-directory: backend
         env:

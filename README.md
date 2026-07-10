@@ -68,7 +68,7 @@ docker compose up -d db backend frontend
 ### Piloto e validação
 
 - Boot prioritário **Recife** (`2611606`) e **Aracaju** (`2800308`)
-- Scripts: `validacao_recife_ui.py`, `validacao_osrm.py`, `demo-smoke.sh`
+- Scripts: `validacao_recife_ui.py`, `validacao_piloto_demo.py`, `validacao_osrm.py`, `demo-smoke.sh`
 
 ## Documentação
 
@@ -88,6 +88,7 @@ docker compose up -d db backend frontend
 | [Plano lacunas institucionais](PLANO_LACUNAS_INSTITUCIONAIS.md) | GeoSGB, Brasil MAIS, SIRENE, AdaptaBrasil, convênios |
 | [Checklist demo MCID](CHECKLIST_DEMO_MCID.md) | Roteiro de demonstração institucional |
 | [OSRM — roteamento local](docker/osrm/README.md) | Perfil `pe-se`, nordeste completo e `scripts/osrm-enable.sh` |
+| [Checklist OIDC gov.br](CHECKLIST_OIDC_GOVBR.md) | Migração D.2 Keycloak → gov.br produção |
 
 ### Checklists por fase
 

@@ -10,7 +10,8 @@ import urllib.request
 BASE = sys.argv[1] if len(sys.argv) > 1 else "http://localhost:8000"
 
 SAMPLE_IBGE = [
-    "2611606",  # Recife (piloto)
+    "2611606",  # Recife (piloto boot)
+    "2800308",  # Aracaju (piloto boot)
     "3550308",  # São Paulo
     "2927408",  # Salvador
     "1302603",  # Manaus

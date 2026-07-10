@@ -18,6 +18,15 @@ chmod +x scripts/demo-smoke.sh
 ./scripts/demo-smoke.sh
 ```
 
+Validação completa piloto (Recife + Aracaju + OSRM):
+
+```bash
+RUN_PILOTO_VALIDATION=1 RUN_OSRM_VALIDATION=1 ./scripts/demo-smoke.sh
+# ou direto:
+python3 scripts/validacao_piloto_demo.py http://localhost:8000
+python3 scripts/validacao_osrm.py http://localhost:8000
+```
+
 Ou só API:
 
 ```bash

@@ -416,14 +416,14 @@ Consolidação do que **ainda falta**, cruzando roadmap, `PLANO_LACUNAS_INSTITUC
 ### C. Performance (metas não atingidas) — P1
 | # | Item | Atual | Meta |
 |---|------|-------|------|
-| C.1 | **Simulação pluvial 120 mm** | ~4s com cache (prewarm boot/UI) | < 10s 1ª execução — DEM/hidro ainda pesado sem cache |
+| C.1 | **Simulação pluvial 120 mm** | ✅ ~4s com cache (prewarm boot/UI) | < 10s com prewarm; 1ª execução fria ainda ~60s |
 | C.2 | **Agente contextual** | ✅ ~3s pergunta simples; contexto municipal <0.1s com cache | < 8s — bundle leve + fast-path sem tools |
 
 ### D. Operação e homologação — P1/P3
 | # | Item | Situação | O que falta |
 |---|------|----------|-------------|
 | D.1 | **Batch diagnósticos + PDFs (61)** | ✅ jul/2026 | 62/62 diagnóstico + PDF; painel Homologação em Sistema |
-| D.2 | **gov.br REAL** | OIDC homologado local (Keycloak) | Trocar issuer/client para gov.br + certificado MCID em produção |
+| D.2 | **gov.br REAL** | 🔄 jul/2026 | Keycloak local OK; checklist `CHECKLIST_OIDC_GOVBR.md` + `validacao_oidc_govbr.sh` |
 
 ### E. Metas de maturidade Fase 3 (dimensões abaixo da meta) — P2/P3
 | Dimensão | Atual (baseline) | Meta Fase 3 |
@@ -439,7 +439,7 @@ Consolidação do que **ainda falta**, cruzando roadmap, `PLANO_LACUNAS_INSTITUC
 
 ### F. Documentação — P2
 - [x] Registrar metodologia da **ilha de calor** e das novas fontes em `DOCUMENTACAO_TECNICA_COMPLETA.md` (§19–§20)
-- [ ] Commit do trabalho da Fase 15 (hoje não versionado)
+- [x] Commit do trabalho da Fase 15 (PR #1, jul/2026)
 - [x] Documentar integração GeoReDUS (posicionamento, deep links, limites LST vs simulação) — ver **Fase 16** / `DOCUMENTACAO_TECNICA_COMPLETA.md` §20
 
 ### G. Complemento GeoReDUS (Fase 16) — P1→P3

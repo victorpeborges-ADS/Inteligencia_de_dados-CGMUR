@@ -15,8 +15,10 @@
 
 ## 14.3 — Validação operacional
 
-- [x] `scripts/validacao_recife_ui.py` — agente, simulação, apresentação
-- [x] `demo-smoke.sh` — flag `RUN_RECIFE_VALIDATION=1`
+- [x] `scripts/validacao_recife_ui.py` — agente, simulação, apresentação (IBGE parametrizável)
+- [x] `scripts/validacao_piloto_demo.py` — Recife + Aracaju
+- [x] `scripts/validacao_osrm.py` — rotas reais na contingência
+- [x] `demo-smoke.sh` — `RUN_PILOTO_VALIDATION=1`, `RUN_OSRM_VALIDATION=1`
 
 ## Smoke test
 
@@ -30,8 +32,11 @@ open http://localhost:3000/design-system
 # Demo completa (API)
 ./scripts/demo-smoke.sh
 
-# Validação Recife (~3 min)
-RUN_RECIFE_VALIDATION=1 ./scripts/demo-smoke.sh
+# Validação piloto dupla (~5 min)
+RUN_PILOTO_VALIDATION=1 ./scripts/demo-smoke.sh
+
+# Homologação OIDC/TLS
+./scripts/validacao_oidc_govbr.sh https://localhost
 ```
 
 ## Critério de done
