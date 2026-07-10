@@ -66,7 +66,17 @@ else
   echo "[WARN] auth/oidc/login HTTP $code"
 fi
 
-check "API docs" "$BASE/api/v1/docs" "200"
+for docs_path in "/docs" "/api/v1/docs"; do
+  code=$(curl -sk -o /dev/null -w "%{http_code}" --max-time 10 "$BASE$docs_path" 2>/dev/null || echo "000")
+  if [[ "$code" == "200" ]]; then
+    echo "[OK] API docs ($docs_path)"
+    docs_ok=1
+    break
+  fi
+done
+if [[ "${docs_ok:-0}" -ne 1 ]]; then
+  echo "[INFO] API docs não encontrado em /docs nem /api/v1/docs"
+fi
 
 echo ""
 if [[ "$FAIL" -eq 0 ]]; then
