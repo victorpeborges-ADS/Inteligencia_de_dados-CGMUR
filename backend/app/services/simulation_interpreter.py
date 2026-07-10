@@ -23,12 +23,17 @@ DISCLAIMER = (
     "Esta é uma simulação exploratória. Não substitui estudos hidráulicos de engenharia. "
     "Para decisões oficiais, consulte a Defesa Civil."
 )
+DISCLAIMER_CALOR = (
+    "Simulação exploratória de ilha de calor — não substitui medição de temperatura de superfície (LST) "
+    "nem estudo microclimático. Para ações de saúde pública, consulte vigilância epidemiológica municipal."
+)
 
 TIPO_LABELS = {
     "chuva": "Chuva extrema",
     "asfalto": "Impermeabilização urbana",
     "vegetacao": "Perda de vegetação",
     "drenagem": "Déficit de drenagem",
+    "calor": "Ilha de calor urbana",
 }
 
 EQUIPMENT_KEYWORDS = (
@@ -53,7 +58,7 @@ def _hazard_union(simulation: dict[str, Any]):
     for feat in features:
         props = feat.get("properties") or {}
         layer = props.get("layer_type")
-        if layer and layer not in {"flood_band", "landslide"}:
+        if layer and layer not in {"flood_band", "landslide", "heat_band"}:
             continue
         if not feat.get("geometry"):
             continue
@@ -81,8 +86,11 @@ def _extract_bairros(simulation: dict[str, Any]) -> list[dict[str, Any]]:
         return [
             {
                 "nome": row.get("bairro", ""),
-                "exposicao_pct": row.get("exposicao_pct", 0),
+                "exposicao_pct": row.get("exposicao_pct", row.get("delta_t_c")),
                 "populacao_exposta": row.get("populacao_exposta", 0),
+                "delta_t_c": row.get("delta_t_c"),
+                "temp_local_c": row.get("temp_local_c") or row.get("temp_superficie_c"),
+                "faixa_calor": row.get("faixa_calor"),
             }
             for row in exposures
             if row.get("bairro")
@@ -203,18 +211,47 @@ def _deterministic_interpretation(
     equip = metrics.get("equipamentos") or []
     s2id = metrics.get("historico_s2id") or {}
     ev = s2id.get("evento_similar")
+    sim_meta = metrics.get("simulation_meta") or {}
+    is_calor = tipo_simulacao == "calor"
 
-    resumo = (
-        f"Cenário de {TIPO_LABELS.get(tipo_simulacao, tipo_simulacao)} com parâmetro {parametro_atual} "
-        f"em {muni.nome}/{muni.uf} pode afetar cerca de {metrics.get('area_afetada_km2')} km² "
-        f"e ~{metrics.get('populacao_estimada_atingida'):,} habitantes em {metrics.get('n_bairros_afetados')} bairro(s)."
-    ).replace(",", ".")
+    if is_calor:
+        max_delta = sim_meta.get("max_delta_t_c", 0)
+        pico = sim_meta.get("temperatura_pico_c", parametro_atual)
+        pico_local = sim_meta.get("temp_pico_local_c")
+        ganho_veg = sim_meta.get("ganho_vegetal_pct", 0) or 0
+        resfria_max = sim_meta.get("resfriamento_max_c", 0) or 0
+        resumo = (
+            f"Com pico previsto de {pico}°C em {muni.nome}/{muni.uf}, os bairros mais "
+            f"impermeabilizados podem chegar a {pico_local or round(pico + max_delta, 1)}°C "
+            f"(ilha de calor de até +{max_delta}°C), "
+            f"afetando ~{metrics.get('populacao_estimada_atingida'):,} habitantes em "
+            f"{metrics.get('n_bairros_afetados')} bairro(s)."
+        ).replace(",", ".")
+        if ganho_veg and resfria_max:
+            resumo += (
+                f" A arborização de {ganho_veg}% da área pode reduzir a ilha de calor em até "
+                f"{resfria_max}°C nos bairros priorizados."
+            )
+    else:
+        resumo = (
+            f"Cenário de {TIPO_LABELS.get(tipo_simulacao, tipo_simulacao)} com parâmetro {parametro_atual} "
+            f"em {muni.nome}/{muni.uf} pode afetar cerca de {metrics.get('area_afetada_km2')} km² "
+            f"e ~{metrics.get('populacao_estimada_atingida'):,} habitantes em {metrics.get('n_bairros_afetados')} bairro(s)."
+        ).replace(",", ".")
 
     areas_criticas = []
     for row in top3:
-        pct = row.get("exposicao_pct")
-        suffix = f" ({pct}% da área do bairro)" if pct is not None else ""
-        areas_criticas.append(f"{row.get('nome')}{suffix}")
+        if is_calor and row.get("delta_t_c") is not None:
+            band = row.get("faixa_calor") or "—"
+            temp_local = row.get("temp_local_c")
+            local_txt = f" → {temp_local}°C" if temp_local is not None else ""
+            areas_criticas.append(
+                f"{row.get('nome')} (+{row.get('delta_t_c')}°C{local_txt}, faixa {band})"
+            )
+        else:
+            pct = row.get("exposicao_pct")
+            suffix = f" ({pct}% da área do bairro)" if pct is not None else ""
+            areas_criticas.append(f"{row.get('nome')}{suffix}")
 
     equipamentos_txt = (
         [f"{e.get('tipo', 'equipamento')}: {e.get('nome')}" for e in equip[:5]]
@@ -223,21 +260,66 @@ def _deterministic_interpretation(
     )
 
     comparacao = "Sem registro S2ID comparável no município."
-    if ev:
+    lst_cmp = metrics.get("lst_comparison") or {}
+    if is_calor and lst_cmp.get("disponivel"):
+        lst_med = lst_cmp.get("lst_mediana_c")
+        sim_med = lst_cmp.get("sim_temp_mediana_c")
+        div = lst_cmp.get("divergencia_mediana_c")
+        div_txt = f"{div:+.1f}°C" if div is not None else "—"
+        comparacao = (
+            f"LST observada ({lst_cmp.get('lst_periodo', '2021–2025')}, {lst_cmp.get('lst_fonte', 'GeoReDUS')}): "
+            f"mediana {lst_med}°C em {lst_cmp.get('amostras_validas', 0)} bairro(s). "
+            f"Simulação Sinidu: mediana {sim_med}°C no pico · divergência {div_txt}. "
+            f"{lst_cmp.get('narrativa', '')}"
+        )
+    elif is_calor:
+        comparacao = (
+            f"Normal climatológica local: {sim_meta.get('baseline_normal_c', sim_meta.get('baseline_temp_c', '—'))}°C "
+            f"({sim_meta.get('baseline_temp_fonte', 'fonte municipal')}). "
+            f"Pico previsto: {sim_meta.get('temperatura_pico_c', '—')}°C · "
+            f"amplificação da onda de calor: {sim_meta.get('heatwave_amplification', '—')}×. "
+            f"Faixas térmicas: {sim_meta.get('faixas_contagem', {})}."
+        )
+    elif ev:
         comparacao = (
             f"Evento similar: {ev.get('tipo')} em {ev.get('ano')} "
             f"(danos materiais R$ {ev.get('danos_materiais', 0):,.0f})."
         ).replace(",", ".")
 
-    recomendacoes = [
-        "Acionar monitoramento CEMADEN e Defesa Civil nos bairros de maior exposição.",
-        "Inspecionar pontos crônicos de alagamento e galerias pluviais nas áreas críticas.",
-        "Restringir circulação em faixas de profundidade crítica até validação de campo.",
-    ]
+    if is_calor:
+        ganho_veg = sim_meta.get("ganho_vegetal_pct", 0) or 0
+        resfria_medio = sim_meta.get("resfriamento_medio_c", 0) or 0
+        if ganho_veg and resfria_medio:
+            rec_arboriza = (
+                f"Executar a arborização simulada ({ganho_veg}% de nova cobertura) — resfriamento médio "
+                f"estimado de {resfria_medio}°C — priorizando bairros de maior ΔT e IVC."
+            )
+        else:
+            rec_arboriza = "Priorizar arborização e corredores verdes nos bairros de maior ΔT e menor cobertura vegetal."
+        recomendacoes = [
+            rec_arboriza,
+            "Instalar pontos de hidratação e abrigos climáticos próximos a UBS, escolas e terminais.",
+            "Monitorar população vulnerável (IVC alto) em ondas de calor — SMS e Defesa Civil.",
+        ]
+    else:
+        recomendacoes = [
+            "Acionar monitoramento CEMADEN e Defesa Civil nos bairros de maior exposição.",
+            "Inspecionar pontos crônicos de alagamento e galerias pluviais nas áreas críticas.",
+            "Restringir circulação em faixas de profundidade crítica até validação de campo.",
+        ]
 
     interpretacao_diferencial = None
     delta = metrics.get("delta_vs_referencia")
-    if delta and parametro_referencia is not None:
+    if is_calor and lst_cmp.get("disponivel"):
+        div = lst_cmp.get("divergencia_mediana_c")
+        div_txt = f"{div:+.1f}°C" if div is not None else "—"
+        interpretacao_diferencial = (
+            f"Observado × simulado: LST mediana {lst_cmp.get('lst_mediana_c')}°C vs "
+            f"simulação {lst_cmp.get('sim_temp_mediana_c')}°C "
+            f"(Δ mediano {div_txt} em {lst_cmp.get('amostras_validas')} bairros). "
+            "Use a comparação para calibrar narrativa de oficina — não como validação científica."
+        )
+    elif delta and parametro_referencia is not None:
         pct = delta.get("delta_area_pct")
         novos = delta.get("bairros_novos") or []
         interpretacao_diferencial = (
@@ -259,7 +341,7 @@ def _deterministic_interpretation(
         "comparacao_historica": comparacao,
         "recomendacoes_imediatas": recomendacoes,
         "interpretacao_diferencial": interpretacao_diferencial,
-        "disclaimer": DISCLAIMER,
+        "disclaimer": DISCLAIMER_CALOR if is_calor else DISCLAIMER,
         "findings": findings,
         "metricas": metrics,
         "ai_provider": "deterministic",
@@ -305,8 +387,44 @@ def _llm_interpretation(
     s2id = metrics.get("historico_s2id") or {}
     ev = s2id.get("evento_similar") or {}
     delta = metrics.get("delta_vs_referencia") or {}
+    sim_meta = metrics.get("simulation_meta") or {}
+    is_calor = tipo_simulacao == "calor"
 
-    system = f"""Você é um especialista em gestão de risco urbano e hidrologia urbana.
+    expert_role = (
+        "especialista em ilhas de calor urbanas, saúde pública e adaptação climática"
+        if is_calor
+        else "especialista em gestão de risco urbano e hidrologia urbana"
+    )
+
+    heat_block = ""
+    if is_calor:
+        heat_block = f"""
+DADOS TÉRMICOS:
+- Temperatura de pico prevista para a cidade: {sim_meta.get('temperatura_pico_c')}°C
+- Normal climatológica local (INMET/série): {sim_meta.get('baseline_normal_c', sim_meta.get('baseline_temp_c'))}°C ({sim_meta.get('baseline_temp_fonte')})
+- Amplificação da onda de calor sobre a ilha de calor: {sim_meta.get('heatwave_amplification')}×
+- Ilha de calor máxima (ΔT) estimada: +{sim_meta.get('max_delta_t_c')}°C
+- Temperatura local máxima nos bairros críticos: {sim_meta.get('temp_pico_local_c')}°C
+- Perda vegetal simulada: {sim_meta.get('perda_vegetal_pct')}%
+- Ganho de vegetação/arborização simulado: {sim_meta.get('ganho_vegetal_pct')}%
+- Resfriamento por arborização (máx / médio): {sim_meta.get('resfriamento_max_c')}°C / {sim_meta.get('resfriamento_medio_c')}°C
+- Impermeabilização extra: {sim_meta.get('impermeabilizacao_extra_pct')}%
+- Contagem por faixa (leve/moderada/severa): {json.dumps(sim_meta.get('faixas_contagem', {}), ensure_ascii=False)}
+"""
+        lst_cmp = metrics.get("lst_comparison") or {}
+        if lst_cmp.get("disponivel"):
+            heat_block += f"""
+COMPARAÇÃO LST OBSERVADA × SIMULADO (GeoReDUS):
+- LST mediana observada: {lst_cmp.get('lst_mediana_c')}°C ({lst_cmp.get('lst_periodo')})
+- Simulação mediana: {lst_cmp.get('sim_temp_mediana_c')}°C
+- Divergência mediana: {lst_cmp.get('divergencia_mediana_c')}°C
+- Amostras válidas: {lst_cmp.get('amostras_validas')} / {lst_cmp.get('amostras_total')}
+- Narrativa: {lst_cmp.get('narrativa', '')}
+- Limites: {json.dumps(lst_cmp.get('limites_metodologicos', [])[:3], ensure_ascii=False)}
+Explique explicitamente que LST mede superfície histórica e a simulação projeta cenário futuro — a divergência não invalida o modelo.
+"""
+
+    system = f"""Você é um {expert_role}.
 Analise o resultado desta simulação e produza interpretação técnica mas acessível para gestores municipais e Defesa Civil.
 
 DADOS DO MUNICÍPIO: {json.dumps(municipio_dados, ensure_ascii=False)}
@@ -318,7 +436,7 @@ RESULTADO DA SIMULAÇÃO ({TIPO_LABELS.get(tipo_simulacao, tipo_simulacao)}):
 - Bairros atingidos: {json.dumps(metrics.get('bairros_afetados', [])[:8], ensure_ascii=False)}
 - Equipamentos públicos na mancha: {json.dumps(metrics.get('equipamentos', [])[:8], ensure_ascii=False)}
 - Comparação com referência {parametro_referencia} mm: {json.dumps(delta, ensure_ascii=False) if delta else 'não aplicável'}
-
+{heat_block}
 HISTÓRICO S2ID: {json.dumps(ev, ensure_ascii=False)}
 
 Responda APENAS JSON válido com:
@@ -345,7 +463,7 @@ interpretacao_diferencial (string ou null se sem comparação)."""
         parsed = _parse_llm_json(raw)
         if not parsed:
             return None
-        parsed.setdefault("disclaimer", DISCLAIMER)
+        parsed.setdefault("disclaimer", DISCLAIMER_CALOR if is_calor else DISCLAIMER)
         parsed["metricas"] = metrics
         parsed["ai_provider"] = provider.id
         parsed["ai_model"] = model
@@ -367,12 +485,13 @@ def interpret_simulation(
     db: Session,
     muni: Municipio,
     *,
-    tipo_simulacao: Literal["chuva", "asfalto", "vegetacao", "drenagem"],
+    tipo_simulacao: Literal["chuva", "asfalto", "vegetacao", "drenagem", "calor"],
     parametro_atual: float,
     parametro_referencia: float = 80.0,
     resultado_simulacao: dict[str, Any],
     resultado_referencia: dict[str, Any] | None = None,
     comparacao_delta: dict[str, Any] | None = None,
+    lst_comparison: dict[str, Any] | None = None,
     ai_provider: str | None = None,
     ai_model: str | None = None,
     ai_api_key: str | None = None,
@@ -398,6 +517,9 @@ def interpret_simulation(
         d_area = comparacao_delta.get("affected_area_km2")
         if ref_area and d_area is not None:
             metrics["delta_vs_referencia"]["delta_area_pct"] = round(float(d_area) / ref_area * 100, 1)
+
+    if lst_comparison:
+        metrics["lst_comparison"] = lst_comparison
 
     if use_ai:
         llm = _llm_interpretation(

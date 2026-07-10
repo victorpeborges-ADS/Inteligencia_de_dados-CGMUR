@@ -6,7 +6,7 @@ import {
   ArrowRight,
   Database,
   Landmark,
-  MapPinned,
+  MapPin,
   ShieldAlert,
   Siren,
 } from 'lucide-react';
@@ -48,7 +48,7 @@ const CATEGORY_ICON: Record<RecommendationCategory, typeof ShieldAlert> = {
   risco: ShieldAlert,
   operacao: Siren,
   dados: Database,
-  planejamento: MapPinned,
+  planejamento: MapPin,
   fiscal: Landmark,
 };
 

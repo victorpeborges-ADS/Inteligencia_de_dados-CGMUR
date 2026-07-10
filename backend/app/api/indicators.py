@@ -3,7 +3,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.orm import Session
 from sqlalchemy import func, text
 from app.db import get_db
-from app.models import Municipio, Bairro, SetorCensitario, CoberturaVegetalMapBiomas, HistoricoDesastreS2ID, AlertaCemaden, InfraestruturaUrbana, MunicipioIbge, MunicipioFiscal, MunicipioSeed, MunicipioSeguranca, MunicipioSaneamento
+from app.models import Municipio, Bairro, SetorCensitario, CoberturaVegetalMapBiomas, HistoricoDesastreS2ID, AlertaCemaden, InfraestruturaUrbana, MunicipioIbge, MunicipioFiscal, MunicipioSeed, MunicipioSeguranca, MunicipioSaneamento, EscolaInep, TerritorioEspecial
 from app.services.municipio_audit_service import audit_municipio
 from app.config import settings
 from app.schemas import ExecutiveIndicators, GeoJSONFeatureCollection
@@ -20,6 +20,23 @@ from app.data_connectors.territorial_mesh_collector import needs_territorial_ref
 from app.data_connectors.official_bairros_collector import is_official_ibge_mesh
 from app.data_connectors.mapbiomas_collector import ensure_spatial_coverage_polygons, needs_coverage_polygon_refresh
 from app.services.socioeconomic_engine import RECIFE_BAIRRO_RENDA
+from app.api.analytics import executive_snapshot
+from app.services.atlas_economico_service import build_atlas_uf_context
+from app.services.layer_meta_registry import merge_layers_meta
+from app.services.layer_temporal_service import resolve_layer_year, temporal_options_for_municipio
+from app.services.regional_context_service import build_regional_overlay
+from app.data_connectors.inep_educacao_collector import (
+    ETAPAS_VALIDAS,
+    etapa_dominante,
+    matriculas_por_etapa,
+    sync_educacao_municipio,
+)
+from app.data_connectors.territorios_especiais_collector import (
+    TIPOS_VALIDOS,
+    sync_territorios_municipio,
+    territorio_matches_tipo,
+    tipo_label,
+)
 
 router = APIRouter()
 
@@ -168,14 +185,7 @@ def get_layers_meta(
         )
     )
 
-    return {
-        "codigo_ibge": muni.codigo_ibge,
-        "malha_fonte": malha_fonte,
-        "malha_disponivel": malha_disponivel,
-        "camadas_bloqueadas": camadas_bloqueadas,
-        "score_confiabilidade": audit.get("score_confiabilidade"),
-        "confiabilidade_geral": audit.get("confiabilidade_geral"),
-        "layers": {
+    dynamic_layers = {
             "bairros": {
                 "quality": bairros_quality,
                 "source": bairros_source,
@@ -217,6 +227,20 @@ def get_layers_meta(
                     else "IBGE Censo 2022 / SIDRA (quando recarregado)"
                 ),
                 "disponivel": malha_disponivel or muni.codigo_ibge == "2611606",
+                "tooltip_estimado": (
+                    "Déficits domiciliares distribuídos por setor a partir de taxas municipais SIDRA; "
+                    "proxy intra-urbano calibrado por renda."
+                ),
+                "subcamadas": [
+                    "renda",
+                    "arborizacao",
+                    "calcada",
+                    "iluminacao",
+                    "agua",
+                    "esgoto",
+                    "lixo",
+                    "alfabetizacao",
+                ],
             },
             "desastres": {
                 "quality": (
@@ -226,6 +250,30 @@ def get_layers_meta(
                 ),
                 "source": "S2ID / SEDEC — desastres naturais",
                 "count": s2id_count,
+            },
+            "lst_observada": {
+                "quality": "Observado",
+                "source": "GeoReDUS / Landsat 8-9 — média máxima 2021–2025",
+                "disponivel": True,
+                "tooltip_estimado": (
+                    "Dado observado por satélite; complementa a simulação exploratória Sinidu."
+                ),
+            },
+            "educacao": {
+                "quality": "Oficial",
+                "source": f"INEP Censo Escolar {2023} — matrículas por etapa",
+                "disponivel": True,
+                "tooltip_estimado": (
+                    "Tamanho proporcional às matrículas; buffer de influência configurável no painel."
+                ),
+            },
+            "territorios_especiais": {
+                "quality": "Oficial",
+                "source": "INCRA / FUNAI / IBGE aglomerados subnormais — territórios tradicionais e periferias",
+                "disponivel": True,
+                "tooltip_estimado": (
+                    "Quilombos certificados, terras indígenas e comunidades urbanas para VM e planejamento."
+                ),
             },
             "saneamento_drenagem": {
                 "quality": saneamento_quality,
@@ -239,9 +287,39 @@ def get_layers_meta(
                     "fonte": snis.fonte if snis else None,
                     "data_quality": snis.data_quality if snis else "lacuna",
                 },
-            }
-        },
+            },
+        }
+
+    return {
+        "codigo_ibge": muni.codigo_ibge,
+        "malha_fonte": malha_fonte,
+        "malha_disponivel": malha_disponivel,
+        "camadas_bloqueadas": camadas_bloqueadas,
+        "score_confiabilidade": audit.get("score_confiabilidade"),
+        "confiabilidade_geral": audit.get("confiabilidade_geral"),
+        "layers": merge_layers_meta(dynamic_layers),
     }
+
+
+@router.get("/layers/temporal-options")
+def get_layers_temporal_options(
+    request: Request,
+    codigo_ibge: str | None = Query(default=None),
+    db: Session = Depends(get_db),
+):
+    muni = get_accessible_municipio(db, codigo_ibge, request=request)
+    return temporal_options_for_municipio(db, muni)
+
+
+@router.get("/regional-overlay")
+def get_regional_overlay(
+    request: Request,
+    codigo_ibge: str | None = Query(default=None),
+    escopo: str = Query(default="regiao_imediata"),
+    db: Session = Depends(get_db),
+):
+    muni = get_accessible_municipio(db, codigo_ibge, request=request)
+    return build_regional_overlay(db, muni, escopo=escopo)
 
 @router.get("/municipalities")
 def list_municipalities(request: Request, db: Session = Depends(get_db)):
@@ -348,6 +426,13 @@ def get_executive_indicators(
     pib_per_capita = None
     pib_fonte = None
     pib_qualidade = None
+    pib_total_mil_reais = None
+    pib_ano = None
+    pib_serie = None
+    idh = None
+    idh_ano = None
+    idh_fonte = None
+    idh_qualidade = None
     selo_ibge = None
     selo_fiscal = None
 
@@ -371,6 +456,19 @@ def get_executive_indicators(
             pib_qualidade = ibge_row.data_quality or "oficial"
             if not selo_ibge:
                 selo_ibge = f"Oficial IBGE {ibge_row.pib_ano or 2021}"
+        if ibge_row.pib_total_mil_reais is not None:
+            pib_total_mil_reais = float(ibge_row.pib_total_mil_reais)
+            pib_ano = ibge_row.pib_ano
+            if ibge_row.pib_serie:
+                pib_serie = ibge_row.pib_serie
+            if not pib_fonte:
+                pib_fonte = "IBGE SIDRA agregado 5938/37"
+                pib_qualidade = ibge_row.data_quality or "oficial"
+        if ibge_row.idh:
+            idh = float(ibge_row.idh)
+            idh_ano = ibge_row.idh_ano
+            idh_fonte = "Atlas DH / Ipeadata"
+            idh_qualidade = "oficial"
 
     fiscal_fonte = None
     fiscal_qualidade = None
@@ -405,6 +503,9 @@ def get_executive_indicators(
     confiabilidade_geral = audit.get("confiabilidade_geral")
     malha_fonte = seed.malha_fonte if seed and seed.malha_fonte else audit.get("malha_fonte")
 
+    atlas_uf_context = build_atlas_uf_context(muni.uf, codigo_ibge=muni.codigo_ibge)
+    territorial = executive_snapshot(db, muni)
+
     return ExecutiveIndicators(
         codigo_ibge=muni.codigo_ibge,
         nome=muni.nome,
@@ -425,6 +526,9 @@ def get_executive_indicators(
         pib_per_capita=pib_per_capita,
         pib_fonte=pib_fonte,
         pib_qualidade=pib_qualidade,
+        pib_total_mil_reais=pib_total_mil_reais,
+        pib_ano=pib_ano,
+        pib_serie=pib_serie,
         nota_capag=nota_capag,
         capag_fonte=capag_fonte,
         receita_corrente_liquida=receita_corrente_liquida,
@@ -442,9 +546,18 @@ def get_executive_indicators(
         desastres_qualidade=desastres_qualidade,
         renda_qualidade=renda_qualidade,
         densidade_qualidade=densidade_qualidade,
+        idh=idh,
+        idh_ano=idh_ano,
+        idh_fonte=idh_fonte,
+        idh_qualidade=idh_qualidade,
+        atlas_uf_context=atlas_uf_context,
         score_confiabilidade=score_confiabilidade,
         confiabilidade_geral=confiabilidade_geral,
         malha_fonte=malha_fonte,
+        score_sinidu=territorial.get("score_sinidu"),
+        media_ivc=territorial.get("media_ivc"),
+        media_iri=territorial.get("media_iri"),
+        media_adaptacao=territorial.get("media_adaptacao"),
     )
 
 @router.get("/layers/{layer_name}", response_model=GeoJSONFeatureCollection)
@@ -452,15 +565,24 @@ def get_geojson_layer(
     layer_name: str,
     request: Request,
     codigo_ibge: str | None = Query(default=None),
+    etapa: str | None = Query(default="todas"),
+    tipo: str | None = Query(default="todas"),
+    ano: int | None = Query(default=None),
     db: Session = Depends(get_db),
 ):
     """
     Returns the requested geospatial layer as a standard GeoJSON FeatureCollection.
     Supported layers: municipio, bairros, vulnerabilidade, inundacao, socioeconomico,
     adaptacao_climatica, prioridade_planejamento, saneamento_drenagem, lacunas_dados, setores,
-    desastres, alertas, cobertura, infraestrutura
+    desastres, alertas, cobertura, infraestrutura, educacao, territorios_especiais
     """
     muni = get_accessible_municipio(db, codigo_ibge, request=request)
+
+    if layer_name == "lst_observada":
+        raise HTTPException(
+            status_code=400,
+            detail="Camada raster LST — use GET /api/v1/map/lst-observada/config",
+        )
 
     if layer_name in ("bairros", "infraestrutura"):
         bairro_count = db.query(Bairro).filter(Bairro.municipio_id == muni.id).count()
@@ -669,6 +791,8 @@ def get_geojson_layer(
             SetorCensitario.codigo_setor,
             SetorCensitario.populacao,
             SetorCensitario.renda_media,
+            SetorCensitario.deficits_censo_json,
+            SetorCensitario.deficits_censo_fonte,
             func.ST_Area(SetorCensitario.geom).label("area_deg"),
             func.ST_AsGeoJSON(SetorCensitario.geom).label("geojson")
         ).filter(SetorCensitario.municipio_id == muni.id).all()
@@ -683,6 +807,11 @@ def get_geojson_layer(
             area_km2 = float(s.area_deg or 0.0) * 12300.0
             densidade = float(s.populacao or 0) / area_km2 if area_km2 > 0 else 0.0
             classe_renda = classe_renda_from_value(renda, p33, p66)
+            deficits = s.deficits_censo_json if isinstance(s.deficits_censo_json, dict) else {}
+            deficit_composto = None
+            if deficits:
+                vals = [float(v) for v in deficits.values() if v is not None]
+                deficit_composto = round(sum(vals) / len(vals), 1) if vals else None
 
             features.append({
                 "type": "Feature",
@@ -697,8 +826,15 @@ def get_geojson_layer(
                     "classificacao_relativa": True,
                     "limiar_p33": round(p33, 2),
                     "limiar_p66": round(p66, 2),
-                    "fonte_referencia": "IBGE PIB municipal + gradiente intra-urbano calibrado",
-                    "qualidade_dado": renda_qualidade,
+                    "deficits_censo": deficits,
+                    "deficit_composto_pct": deficit_composto,
+                    "deficits_fonte": s.deficits_censo_fonte or "ibge_censo2022_sidra_deficits",
+                    "fonte_referencia": (
+                        "IBGE Censo 2022 / SIDRA — déficits domiciliares e renda por setor"
+                        if deficits
+                        else "IBGE PIB municipal + gradiente intra-urbano calibrado"
+                    ),
+                    "qualidade_dado": "Referencia" if deficits else renda_qualidade,
                 }
             })
 
@@ -886,12 +1022,17 @@ def get_geojson_layer(
             })
 
     elif layer_name == "desastres":
-        # Get historical disasters
-        desastres = db.query(
+        ano_efetivo = resolve_layer_year(layer_name, ano, db, muni)
+        desastres_q = db.query(
             HistoricoDesastreS2ID.tipo_desastre, HistoricoDesastreS2ID.data_ocorrencia,
             HistoricoDesastreS2ID.populacao_afetada, HistoricoDesastreS2ID.danos_materiais,
             func.ST_AsGeoJSON(HistoricoDesastreS2ID.geom).label("geojson")
-        ).filter(HistoricoDesastreS2ID.municipio_id == muni.id).all()
+        ).filter(HistoricoDesastreS2ID.municipio_id == muni.id)
+        if ano_efetivo is not None:
+            desastres_q = desastres_q.filter(
+                extract("year", HistoricoDesastreS2ID.data_ocorrencia) == ano_efetivo
+            )
+        desastres = desastres_q.all()
         s2id_count = len(desastres)
         for d in desastres:
             features.append({
@@ -902,6 +1043,9 @@ def get_geojson_layer(
                     "data_ocorrencia": str(d.data_ocorrencia),
                     "populacao_afetada": d.populacao_afetada,
                     "danos_materiais": float(d.danos_materiais),
+                    "ano_referencia": (
+                        int(str(d.data_ocorrencia)[:4]) if d.data_ocorrencia else None
+                    ),
                     "eventos_municipio": s2id_count,
                     "fonte_referencia": "S2ID / Secretaria Nacional de Protecao e Defesa Civil",
                     "qualidade_dado": "Oficial" if s2id_count > 1 else quality_badge(layer_name),
@@ -928,11 +1072,14 @@ def get_geojson_layer(
             })
             
     elif layer_name == "cobertura":
-        # Get land use/vegetation cover
-        coberturas = db.query(
+        ano_efetivo = resolve_layer_year(layer_name, ano, db, muni)
+        coberturas_q = db.query(
             CoberturaVegetalMapBiomas.classe_uso, CoberturaVegetalMapBiomas.ano,
             func.ST_AsGeoJSON(CoberturaVegetalMapBiomas.geom).label("geojson")
-        ).filter(CoberturaVegetalMapBiomas.municipio_id == muni.id).all()
+        ).filter(CoberturaVegetalMapBiomas.municipio_id == muni.id)
+        if ano_efetivo is not None:
+            coberturas_q = coberturas_q.filter(CoberturaVegetalMapBiomas.ano == ano_efetivo)
+        coberturas = coberturas_q.all()
         for c in coberturas:
             features.append({
                 "type": "Feature",
@@ -965,7 +1112,92 @@ def get_geojson_layer(
                         else "OpenStreetMap / bases locais de infraestrutura urbana"
                     ),
                     "qualidade_dado": "Referencia" if is_recife_infra else quality_badge(layer_name),
-                }
+                },
+            })
+
+    elif layer_name == "educacao":
+        etapa_norm = (etapa or "todas").strip().lower()
+        if etapa_norm not in ETAPAS_VALIDAS:
+            etapa_norm = "todas"
+        ano_efetivo = resolve_layer_year(layer_name, ano, db, muni)
+
+        escola_count = db.query(EscolaInep).filter(EscolaInep.municipio_id == muni.id).count()
+        if escola_count == 0:
+            sync_educacao_municipio(db, muni)
+            db.commit()
+
+        escolas_q = db.query(EscolaInep).filter(EscolaInep.municipio_id == muni.id)
+        if ano_efetivo is not None:
+            escolas_q = escolas_q.filter(EscolaInep.ano == ano_efetivo)
+        escolas = escolas_q.all()
+
+        for esc in escolas:
+            geojson = (
+                db.query(func.ST_AsGeoJSON(EscolaInep.geom))
+                .filter(EscolaInep.id == esc.id)
+                .scalar()
+            )
+            if not geojson:
+                continue
+            mat_ativa = matriculas_por_etapa(esc, etapa_norm)
+            if etapa_norm != "todas" and mat_ativa <= 0:
+                continue
+            features.append({
+                "type": "Feature",
+                "geometry": json.loads(geojson),
+                "properties": {
+                    "codigo_inep": esc.codigo_inep,
+                    "nome": esc.nome,
+                    "dependencia": esc.dependencia,
+                    "localizacao": esc.localizacao,
+                    "ano": esc.ano,
+                    "etapa": etapa_norm,
+                    "etapa_dominante": etapa_dominante(esc),
+                    "matriculas_total": int(esc.matriculas_total or 0),
+                    "matriculas_infantil": int(esc.matriculas_infantil or 0),
+                    "matriculas_fundamental": int(esc.matriculas_fundamental or 0),
+                    "matriculas_medio": int(esc.matriculas_medio or 0),
+                    "matriculas_ativas": mat_ativa,
+                    "fonte_referencia": f"INEP Censo Escolar {esc.ano or 2023}",
+                    "qualidade_dado": "Oficial" if esc.data_quality == "oficial" else "Estimado",
+                },
+            })
+
+    elif layer_name == "territorios_especiais":
+        tipo_norm = (tipo or "todas").strip().lower()
+        if tipo_norm not in TIPOS_VALIDOS:
+            tipo_norm = "todas"
+
+        terr_count = db.query(TerritorioEspecial).filter(TerritorioEspecial.municipio_id == muni.id).count()
+        if terr_count == 0:
+            sync_territorios_municipio(db, muni)
+            db.commit()
+
+        territorios = db.query(TerritorioEspecial).filter(TerritorioEspecial.municipio_id == muni.id).all()
+        for terr in territorios:
+            if not territorio_matches_tipo(terr, tipo_norm):
+                continue
+            geojson = (
+                db.query(func.ST_AsGeoJSON(TerritorioEspecial.geom))
+                .filter(TerritorioEspecial.id == terr.id)
+                .scalar()
+            )
+            if not geojson:
+                continue
+            features.append({
+                "type": "Feature",
+                "geometry": json.loads(geojson),
+                "properties": {
+                    "nome": terr.nome,
+                    "tipo": terr.tipo,
+                    "tipo_label": tipo_label(terr.tipo),
+                    "codigo_oficial": terr.codigo_oficial,
+                    "populacao_estimada": terr.populacao_estimada,
+                    "ano": terr.ano,
+                    "fonte_referencia": terr.fonte or "INCRA / FUNAI / IBGE",
+                    "qualidade_dado": "Oficial" if terr.data_quality == "oficial" else "Estimado",
+                    "layer": layer_name,
+                },
             })
 
     elif layer_name == "saude_risco":

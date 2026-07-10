@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
 from app.data_connectors.base import fetch_json
+from app.data_connectors.ipeadata_collector import collect_idhm_municipality
 
 IBGE_PESQUISAS_URL = "https://servicodados.ibge.gov.br/api/v1/pesquisas"
 IBGE_AGREGADOS_URL = "https://servicodados.ibge.gov.br/api/v3/agregados"
@@ -43,6 +44,40 @@ def _latest_numeric_value(payload: Any) -> tuple[Optional[float], Optional[int]]
             year, value = max(candidates, key=lambda item: item[0])
             return value, year
     return None, None
+
+
+def _agregado_series(
+    codigo_ibge: str,
+    agregado: int,
+    variavel: int,
+    *,
+    start_year: int = 2002,
+    end_year: int = 2023,
+) -> list[dict[str, Any]]:
+    periodos = "|".join(str(y) for y in range(start_year, end_year + 1))
+    url = f"{IBGE_AGREGADOS_URL}/{agregado}/periodos/{periodos}/variaveis/{variavel}"
+    params = {"localidades": f"N6[{codigo_ibge}]"}
+    cache_key = f"ibge:agregado-serie:{agregado}:{start_year}:{end_year}:{variavel}:{codigo_ibge}"
+    try:
+        payload = fetch_json(url, params=params, cache_key=cache_key, cache_ttl=86400)
+    except Exception:
+        return []
+    serie_rows: list[dict[str, Any]] = []
+    if not payload:
+        return serie_rows
+    for item in payload:
+        for result in item.get("resultados", []):
+            for series in result.get("series", []):
+                serie = series.get("serie") or {}
+                for year, value in serie.items():
+                    if not str(year).isdigit() or value in (None, "", "-", "..."):
+                        continue
+                    parsed = _parse_ibge_number(value)
+                    if parsed is None:
+                        continue
+                    serie_rows.append({"ano": int(year), "valor_mil_reais": round(parsed, 3)})
+    serie_rows.sort(key=lambda row: row["ano"])
+    return serie_rows
 
 
 def _agregado_value(codigo_ibge: str, agregado: int, periodo: int, variavel: int) -> tuple[Optional[float], Optional[int]]:
@@ -88,7 +123,15 @@ def collect_ibge_municipality(codigo_ibge: str) -> Dict[str, Any]:
     pop_est, pop_est_year = _pesquisa_value(codigo_ibge, 33, 29171)
     area, area_year = _pesquisa_value(codigo_ibge, 33, 29167)
     densidade, densidade_year = _pesquisa_value(codigo_ibge, 33, 29168)
-    pib_mil_reais, pib_year = _agregado_value(codigo_ibge, 5938, 2021, 37)
+    pib_serie = _agregado_series(codigo_ibge, 5938, 37)
+    pib_mil_reais = None
+    pib_year = None
+    if pib_serie:
+        latest = pib_serie[-1]
+        pib_mil_reais = latest["valor_mil_reais"]
+        pib_year = latest["ano"]
+    else:
+        pib_mil_reais, pib_year = _agregado_value(codigo_ibge, 5938, 2021, 37)
 
     populacao = int(pop_est or pop_census or 0)
     populacao_ano = pop_est_year or pop_census_year
@@ -101,6 +144,8 @@ def collect_ibge_municipality(codigo_ibge: str) -> Dict[str, Any]:
         densidade = round(populacao / area_km2, 2)
         densidade_year = populacao_ano
 
+    idhm = collect_idhm_municipality(codigo_ibge)
+
     return {
         "codigo_ibge": codigo_ibge,
         "populacao": populacao,
@@ -111,8 +156,12 @@ def collect_ibge_municipality(codigo_ibge: str) -> Dict[str, Any]:
         "densidade_ano": densidade_year,
         "pib_per_capita": pib_per_capita,
         "pib_ano": pib_year,
-        "idh": None,
-        "idh_ano": None,
+        "pib_total_mil_reais": pib_mil_reais,
+        "pib_serie": pib_serie,
+        "idh": idhm.get("idh"),
+        "idh_ano": idhm.get("idh_ano"),
+        "idh_fonte": idhm.get("idh_fonte"),
+        "idh_qualidade": idhm.get("idh_qualidade"),
         "data_quality": "oficial" if populacao and area_km2 else "estimado",
         "fonte": "IBGE Cidades / SIDRA (população, área, PIB municipal)",
         "atualizado_em": datetime.now(timezone.utc),
@@ -123,5 +172,6 @@ def collect_ibge_municipality(codigo_ibge: str) -> Dict[str, Any]:
             "pop_est_year": pop_est_year,
             "pib_mil_reais": pib_mil_reais,
             "pib_year": pib_year,
+            "pib_serie_len": len(pib_serie),
         },
     }

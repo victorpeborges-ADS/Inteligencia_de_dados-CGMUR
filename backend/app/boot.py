@@ -31,6 +31,12 @@ MIGRATIONS = (
     "014_municipio_data_honesty.sql",
     "015_diagnostic_narrativa_ia.sql",
     "016_casos_sucesso_semantic.sql",
+    "017_singedlab_rs.sql",
+    "018_pib_serie.sql",
+    "019_censo_deficits.sql",
+    "020_educacao_inep.sql",
+    "021_territorios_especiais.sql",
+    "022_municipio_geoportal.sql",
 )
 
 

@@ -22,6 +22,8 @@ class Municipio(Base):
     alertas = relationship("AlertaCemaden", back_populates="municipio", cascade="all, delete-orphan")
     cobertura = relationship("CoberturaVegetalMapBiomas", back_populates="municipio", cascade="all, delete-orphan")
     infraestrutura = relationship("InfraestruturaUrbana", back_populates="municipio", cascade="all, delete-orphan")
+    escolas_inep = relationship("EscolaInep", back_populates="municipio", cascade="all, delete-orphan")
+    territorios_especiais = relationship("TerritorioEspecial", back_populates="municipio", cascade="all, delete-orphan")
 
 class Bairro(Base):
     __tablename__ = "bairros"
@@ -51,6 +53,9 @@ class SetorCensitario(Base):
     populacao = Column(Integer, default=0)
     renda_media = Column(Numeric(12, 2), default=0.0)
     fonte_renda = Column(String(40), nullable=True)
+    deficits_censo_json = Column(JSON, nullable=True)
+    deficits_censo_fonte = Column(String(80), nullable=True)
+    deficits_censo_atualizado_em = Column(DateTime, nullable=True)
     geom = Column(Geometry(geometry_type="MULTIPOLYGON", srid=4326, spatial_index=True))
     
     # Temporal columns
@@ -123,6 +128,44 @@ class InfraestruturaUrbana(Base):
 
     municipio = relationship("Municipio", back_populates="infraestrutura")
 
+class EscolaInep(Base):
+    __tablename__ = "escolas_inep"
+
+    id = Column(Integer, primary_key=True, index=True)
+    municipio_id = Column(Integer, ForeignKey("municipios.id", ondelete="CASCADE"), nullable=False)
+    codigo_inep = Column(String(20), nullable=False)
+    nome = Column(String(255), nullable=False)
+    dependencia = Column(String(32), nullable=True)
+    localizacao = Column(String(16), default="urbana")
+    ano = Column(Integer, nullable=False, default=2023)
+    matriculas_total = Column(Integer, default=0)
+    matriculas_infantil = Column(Integer, default=0)
+    matriculas_fundamental = Column(Integer, default=0)
+    matriculas_medio = Column(Integer, default=0)
+    geom = Column(Geometry(geometry_type="POINT", srid=4326, spatial_index=True))
+    fonte = Column(String(128), default="inep_censo_escolar")
+    data_quality = Column(String(24), default="oficial")
+    atualizado_em = Column(DateTime, default=datetime.datetime.utcnow)
+
+    municipio = relationship("Municipio", back_populates="escolas_inep")
+
+class TerritorioEspecial(Base):
+    __tablename__ = "territorios_especiais"
+
+    id = Column(Integer, primary_key=True, index=True)
+    municipio_id = Column(Integer, ForeignKey("municipios.id", ondelete="CASCADE"), nullable=False)
+    tipo = Column(String(32), nullable=False)
+    nome = Column(String(255), nullable=False)
+    codigo_oficial = Column(String(64), nullable=True)
+    populacao_estimada = Column(Integer, nullable=True)
+    ano = Column(Integer, nullable=False, default=2022)
+    geom = Column(Geometry(geometry_type="MULTIPOLYGON", srid=4326, spatial_index=True))
+    fonte = Column(String(128), default="bases_oficiais")
+    data_quality = Column(String(24), default="oficial")
+    atualizado_em = Column(DateTime, default=datetime.datetime.utcnow)
+
+    municipio = relationship("Municipio", back_populates="territorios_especiais")
+
 class MunicipioIbge(Base):
     __tablename__ = "municipios_ibge"
 
@@ -135,6 +178,8 @@ class MunicipioIbge(Base):
     area_ano = Column(Integer)
     pib_per_capita = Column(Numeric(14, 2))
     pib_ano = Column(Integer)
+    pib_total_mil_reais = Column(Numeric(18, 3))
+    pib_serie = Column(JSON, default=list)
     idh = Column(Numeric(4, 3))
     idh_ano = Column(Integer)
     densidade_demografica = Column(Numeric(12, 2))
@@ -217,6 +262,30 @@ class MunicipioFonteExterna(Base):
     brasil_mais_indicadores = Column(JSON, default=dict)
     brasil_mais_data_quality = Column(String(24), default="ausente")
     fonte_metodo = Column(String(64), default="derivado_sinidu")
+    sincronizado_em = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+
+    municipio = relationship("Municipio")
+
+
+class MunicipioSingedlabRs(Base):
+    __tablename__ = "municipio_singedlab_rs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    codigo_ibge = Column(String(7), nullable=False, unique=True, index=True)
+    municipio_id = Column(Integer, ForeignKey("municipios.id", ondelete="SET NULL"), nullable=True)
+    escopo = Column(String(24), nullable=False, default="nao_aplicavel")
+    evento = Column(String(64), nullable=False, default="enchentes_rs_2024")
+    populacao_area_afetada = Column(Integer, nullable=True)
+    domicilios_area_afetada = Column(Integer, nullable=True)
+    estabelecimentos_area_afetada = Column(Integer, nullable=True)
+    pct_populacao_municipio = Column(Numeric(6, 2), nullable=True)
+    pct_area_municipio = Column(Numeric(6, 2), nullable=True)
+    indicadores = Column(JSON, default=dict)
+    data_quality = Column(String(32), nullable=False, default="ausente")
+    fonte_url = Column(Text, default="https://www.ibge.gov.br/singedlab/dados-apoio-rs.php")
+    fonte_ref = Column(Text, nullable=True)
     sincronizado_em = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
@@ -483,3 +552,26 @@ class WeatherForecastCache(Base):
     risk_probability = Column(Numeric(5, 4), default=0)
     raw_payload = Column(JSON, nullable=True)
     fetched_at = Column(DateTime, default=datetime.datetime.utcnow, nullable=False, index=True)
+
+
+class MunicipioGeoportalPublicacao(Base):
+    """Publicação municipal de malha CTM — upload ou API local (Fase 16d.5)."""
+
+    __tablename__ = "municipio_geoportal_publicacao"
+
+    id = Column(Integer, primary_key=True, index=True)
+    codigo_ibge = Column(String(7), nullable=False, index=True)
+    municipio_id = Column(Integer, ForeignKey("municipios.id", ondelete="SET NULL"), nullable=True)
+    tipo = Column(String(24), nullable=False)
+    titulo = Column(String(120), nullable=False, default="Malha de bairros CTM")
+    url = Column(Text, nullable=True)
+    arcgis_where = Column(String(256), default="1=1")
+    nome_campo_bairro = Column(String(64), nullable=True)
+    arquivo_nome = Column(String(255), nullable=True)
+    feature_count = Column(Integer, nullable=True)
+    status = Column(String(24), default="registrado")
+    mensagem = Column(Text, nullable=True)
+    geojson_snapshot = Column(JSON, nullable=True)
+    ativo = Column(Boolean, default=True)
+    publicado_em = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)
+    importado_em = Column(DateTime, nullable=True)

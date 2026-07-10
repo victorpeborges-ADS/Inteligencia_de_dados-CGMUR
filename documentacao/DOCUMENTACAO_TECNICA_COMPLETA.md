@@ -1,7 +1,7 @@
 # Sinidu+Clima — Documentação Técnica Completa do Sistema
 
 **Plataforma Nacional de Inteligência Territorial**  
-**Versão do documento:** julho/2026  
+**Versão do documento:** julho/2026 (Fases 15–16)  
 **Município piloto:** Recife/PE (IBGE `2611606`)  
 **Escopo:** 61 municípios prioritários MCID
 
@@ -27,6 +27,8 @@
 16. [Variáveis de ambiente](#16-variáveis-de-ambiente)
 17. [Fluxo operacional do gestor](#17-fluxo-operacional-do-gestor)
 18. [Limitações e considerações](#18-limitações-e-considerações)
+19. [Fase 15 — Novos indicadores e simulação climática](#19-fase-15--novos-indicadores-e-simulação-climática)
+20. [Fase 16 — Complemento GeoReDUS](#20-fase-16--complemento-georedus)
 
 ---
 
@@ -200,6 +202,8 @@ Na inicialização (`backend/main.py`):
 | `EstabelecimentoSaude` | `estabelecimentos_saude` | CNES/DataSUS |
 | `MunicipioSaude` | `municipios_saude` | Indicadores agregados de saúde |
 | `MunicipioSeguranca` | `municipios_seguranca` | SINESP / dados.gov.br |
+| `MunicipioSingedlabRs` | `municipio_singedlab_rs` | Exposição CNEFE SINGED Lab (enchentes RS 2024) |
+| `MunicipioGeoportalPublicacao` | `municipio_geoportal_publicacao` | Upload/API CTM municipal |
 | `ContingencyPlan` | `contingency_plans` | Planos de contingência |
 | `ContingencyPlanRevision` | `contingency_plan_revisions` | Revisões e snapshots |
 | `MonitoringAlert` | `monitoring_alerts` | Alertas internos |
@@ -217,12 +221,26 @@ Na inicialização (`backend/main.py`):
 | `006_onboarding_engine.sql` | Colunas de onboarding |
 | `007_diagnosticos_executivos.sql` | Diagnósticos executivos |
 | `008_planos_acao_municipais.sql` | Planos de ação |
+| `009_municipios_saneamento.sql` | SNIS/SINISA saneamento |
+| `010_audit_log_sei.sql` | Trilha de auditoria SEI |
+| `011_mapbiomas_stats.sql` | Estatísticas MapBiomas |
+| `012_fontes_externas.sql` | AdaptaBrasil, GeoSGB, SIRENE, Brasil MAIS |
+| `013_rag_mistral_embeddings.sql` | Embeddings Mistral no RAG |
+| `014_municipio_data_honesty.sql` | Metadados de honestidade de dados |
+| `015_diagnostic_narrativa_ia.sql` | Narrativa IA no diagnóstico |
+| `016_casos_sucesso_semantic.sql` | Busca semântica de casos de sucesso |
+| `017_singedlab_rs.sql` | Exposição IBGE SINGED Lab RS 2024 (`municipio_singedlab_rs`) |
+| `018_pib_serie.sql` | Série histórica de PIB municipal (`pib_serie` JSON em `municipio_ibge`) |
+| `019_censo_deficits.sql` | Déficits domiciliares Censo 2022 por setor censitário |
+| `020_educacao_inep.sql` | Matrículas INEP por setor (`educacao_setor_censitario`) |
+| `021_territorios_especiais.sql` | Quilombos, TIs e aglomerados subnormais |
+| `022_municipio_geoportal.sql` | Publicações CTM do geoportal municipal |
 
 ### Camadas geoespaciais (GeoJSON)
 
 Endpoint: `GET /api/v1/indicators/layers/{layer_name}`
 
-Camadas disponíveis: `municipio`, `bairros`, `setores`, `socioeconomico`, `vulnerabilidade`, `inundacao`, `cobertura`, `desastres`, `alertas`, `infraestrutura`, `adaptacao_climatica`, `prioridade_planejamento`, `saneamento_drenagem`, `lacunas_dados`, `saude_risco`, `seguranca_publica`, `vulnerabilidade_multidimensional`.
+Camadas disponíveis: `municipio`, `bairros`, `setores`, `socioeconomico`, `vulnerabilidade`, `inundacao`, `cobertura`, `desastres`, `alertas`, `infraestrutura`, `adaptacao_climatica`, `prioridade_planejamento`, `saneamento_drenagem`, `lacunas_dados`, `saude_risco`, `seguranca_publica`, `vulnerabilidade_multidimensional`, `lst_observada`, `educacao`, `territorios_especiais`.
 
 Cada camada possui badge de qualidade: **Oficial**, **Estimado** ou **Derivado Sinidu+Clima**.
 
@@ -281,9 +299,12 @@ Peso por status: Oficial (100%), Derivado (75%), Estimado (55%), Lacuna (0%).
 
 ### Outros índices derivados
 
-- **Ilhas de calor urbanas** — impermeabilização + densidade + vegetação
+- **Ilhas de calor urbanas (analytics)** — proxy por bairro a partir de capacidade de adaptação (vegetação MapBiomas inversa); endpoint `GET /analytics/heat-islands` com faixas `heat_band` no mapa
+- **Simulação de ilha de calor v1.1** — modelo temperatura-driven exploratório (ver [§19.1](#191-simulação-de-ilha-de-calor-v11))
 - **Vulnerabilidade multidimensional** — saúde × risco, segurança × risco, capacidade fiscal
 - **Prioridade de planejamento** — combinação IVC + IRI + lacunas de dados
+- **Atlas Econômico (UF)** — contexto estadual IPEA/RFB via `atlas_economico_service` (referência, não municipal)
+- **Exposição SINGED Lab** — população/domicílios/estabelecimentos na área afetada (RS 2024, CNEFE)
 
 ---
 
@@ -342,7 +363,9 @@ Gera narrativa Markdown com 7 seções:
 | Simulação | Endpoint | Descrição |
 |-----------|----------|-----------|
 | Impermeabilização | `POST /waterproofing` | Aumento de área impermeável |
-| Perda de vegetação | `POST /vegetation-loss` | Redução de cobertura verde |
+| Perda de vegetação | `POST /vegetation-loss` | Redução de cobertura verde (bidirecional: desmatar ↔ arborizar) |
+| Ilha de calor | `POST /heat-island` | Temperatura de pico + UHI por bairro (modelo v1.1, °C) |
+| Comparador LST × simulado | `POST /heat-lst-compare` | LST observada (GeoReDUS) vs simulação Sinidu |
 | Chuva extrema | `POST /extreme-rainfall` | Cenário de precipitação intensa |
 | Déficit de drenagem | `POST /drainage-deficit` | Capacidade reduzida de escoamento |
 
@@ -451,15 +474,17 @@ Conteúdo do relatório municipal:
 **Base URL:** `http://localhost:8000`  
 **Prefixo:** `/api/v1`
 
-### Resumo por router (~55 endpoints REST)
+### Resumo por router (~65 endpoints REST)
 
 | Router | Prefixo | Principais operações |
 |--------|---------|---------------------|
-| `indicators` | `/indicators` | Municípios, seeds, executive, camadas GeoJSON |
+| `indicators` | `/indicators` | Municípios, seeds, executive (Score + Atlas), camadas GeoJSON |
 | `analytics` | `/analytics` | Índices, ilhas de calor, clima, diagnóstico, comparação, Sentinel |
-| `simulations` | `/simulations` | 4 simulações + mitigação |
+| `simulations` | `/simulations` | 6 simulações + mitigação + comparador LST |
 | `assistant` | `/assistant` | Chat, provedores, contexto municipal, casos |
-| `data_catalog` | `/data-catalog` | Cobertura de dados |
+| `data_catalog` | `/data-catalog` | Cobertura, SINGED Lab, import CSV, refresh |
+| `map` | `/map` | Tiles raster externos (mosaicjson) |
+| `geoportal` | `/geoportal` | Upload CTM, API ArcGIS/GeoJSON, importação malha |
 | `integrations` | `/integrations` | Status e sync manual |
 | `reports` | `/reports` | Gerar PDF, histórico, download |
 | `predictions` | `/predictions` | Risco de alagamento ML |
@@ -499,9 +524,9 @@ Retorna status, nome da plataforma e município piloto.
 | Aba | Rota | Componente | Funcionalidade |
 |-----|------|------------|----------------|
 | Painel | `/painel` | `ExecutiveDashboard` | KPIs, maturidade, diagnóstico PDF, plano de ação, relatório completo IA |
-| Municípios | `/municipios` | `OnboardingPanel` | Cadastro e validação de municípios |
-| Catálogo | `/catalogo` | `DataCatalogPanel` | Panorama nacional de bases de dados |
-| Simulações | `/simulacoes` | `SimulationPanel` | Chuva, preditiva, asfalto, vegetação, drenagem + IA + export |
+| Municípios | `/municipios` | `OnboardingPanel` | Cadastro, validação e geoportal municipal (upload CTM) |
+| Catálogo | `/catalogo` | `DataCatalogPanel` | Panorama nacional, lacunas institucionais, GeoReDUS, SINGED Lab |
+| Simulações | `/simulacoes` | `SimulationPanel` | Chuva, preditiva, asfalto, vegetação, ilha de calor, drenagem + comparador LST + IA |
 | Monitor | `/monitor` | `MonitoringPanel` | CEMADEN, clima, timeline, ativação |
 | Contingência | `/contingencia` | `ContingencyWizard` | CRUD plano, desenho de zonas, PDF |
 | Assistente | `/assistente` | `AssistantPanel` | Chat IA com contexto municipal |
@@ -520,11 +545,22 @@ Componente flutuante `WorkshopCenter.tsx` sobre o mapa:
 
 ### Mapa
 
-- **2D:** Leaflet com 16 camadas temáticas, manchas de simulação, curvas de nível e vetores D8
+- **2D:** Leaflet com 18+ camadas temáticas, manchas de simulação, LST observada (raster externo), curvas de nível e vetores D8
 - **3D:** MapLibre GL + DEM Terrarium (`Map3DMapLibreContainer`)
 - Toggle **Mapa 2D** / **Terreno 3D** no canto superior direito
 - Sincronização de camadas via `layerStyles.ts` e `maplibreLayers.ts`
+- Painel **Camadas ativas (N)** com ordem e opacidade (`ActiveLayersPanel`)
+- Seletor de **ano por tema** (MapBiomas, S2ID, PIB, LST, INEP)
+- Toggle **dados regionais** (município vs mesorregião/RM)
 - Após simulação pluvial ou ilha de calor: modo 3D automático + painel de inspeção por clique
+
+### Catálogo de dados (componentes Fase 15/16)
+
+| Componente | Função |
+|------------|--------|
+| `GeoReDusReferenceCard` | Deep link `municipioId` para o portal GeoReDUS |
+| `InstitutionalGapsPanel` | Lacunas nacionais que exigem convênio MCID |
+| `SingedLabPanel` | Exposição RS 2024 + importação CSV (gestor) |
 
 ### Recursos transversais (Step 9)
 
@@ -552,7 +588,9 @@ Componente flutuante `WorkshopCenter.tsx` sobre o mapa:
 
 | Fonte | Módulo | Frequência | Dados |
 |-------|--------|------------|-------|
-| IBGE | `ibge_collector.py` | Domingos 03:00 | População, PIB, área, prefeito |
+| IBGE | `ibge_collector.py` | Domingos 03:00 | População, PIB, série PIB (`pib_serie`), área, prefeito |
+| IPEA/Atlas | `ipeadata_collector.py` | Sob demanda / sync | IDH municipal (Atlas Brasil) |
+| SINGED Lab RS | `singedlab_rs_collector.py` | Sync batch (orchestrator) | Exposição CNEFE enchentes RS 2024 |
 | SICONFI | `siconfi_collector.py` | Domingos 03:00 | Receitas, despesas, dívida |
 | CAPAG | `capag_collector.py` | Domingos 03:00 | Nota A–D, indicadores 1–3 |
 | SNIS/SINISA | `snis_sinisa_collector.py` | Domingos 03:00 (sync semanal) | Saneamento |
@@ -577,11 +615,15 @@ Componente flutuante `WorkshopCenter.tsx` sobre o mapa:
 | Gotify | Container local :8888 | Push notifications |
 | Google Maps | Static Maps API (opcional) | Mapa no PDF |
 | Siconfi.IA | siconfi-ia.tesourotransparente.gov.br | Perguntas fiscais |
+| GeoReDUS | redus.org.br/georedus | Referência nacional, LST raster (mosaicjson) |
+| IBGE SINGED Lab | ibge.gov.br/singedlab | Export CSV manual (sem API pública) |
+| IPEA Atlas Econômico | ipea.gov.br/atlaseconomico | Contexto estadual (link) |
 
 ### Dados referenciados (tabelas + ETL)
 
 - **S2ID** — histórico de desastres
 - **MapBiomas** — cobertura vegetal
+- **SINGED Lab RS** — exposição populacional oficial nas áreas afetadas (6 municípios RS do piloto)
 - **CNES/DataSUS** — estabelecimentos de saúde
 - **SINESP** — indicadores de segurança pública
 - **Adapta Brasil / GeoSGB / SIRENE / Brasil MAIS** — tabela `municipio_fontes_externas` (migration 012); status dinâmico no catálogo
@@ -638,6 +680,20 @@ O `MunicipalAssistantContext` injeta no prompt:
 - Maturidade e lacunas
 - Diagnóstico executivo (se existir)
 - Resumo do último relatório
+- URL GeoReDUS do município (`georedus_url`)
+
+### Ferramentas contextuais (agent tools)
+
+O agente contextual (`contextual_agent_tools.py`) expõe 8 ferramentas, incluindo:
+
+| Tool | Uso |
+|------|-----|
+| `get_georedus_referencia` | Quando dado local ausente, sugere indicador GeoReDUS com deep link |
+| `get_catalog_coverage` | Maturidade e lacunas do catálogo |
+| `get_executive_snapshot` | KPIs e Score |
+| demais | Simulações, contingência, diagnóstico, etc. |
+
+Regra no prompt: **não duplicar ingestão nacional** — citar GeoReDUS como referência externa quando a fonte Sinidu estiver em lacuna.
 
 ---
 
@@ -658,6 +714,9 @@ Scripts em `backend/etl/`:
 | `etl_rag_ingest.py` | Ingestão corpus RAG |
 | `etl_municipios_seed.py` | Seed 61 municípios |
 | `etl_runner.py` | Orquestrador (IBGE + OSM + INMET + casos) |
+| `import_singedlab_csv.py` | Import manual CSV SINGED Lab → seed + sync DB |
+
+Scripts de importação curada (`backend/scripts/`) complementam coletores automáticos quando a fonte não expõe API pública (ex.: SINGED Lab retorna 403 em fetch automatizado).
 
 ---
 
@@ -714,7 +773,7 @@ Implementação: APScheduler em `backend/app/data_connectors/scheduler.py`; jobs
 
 Diretório: `backend/tests/` (pytest)
 
-Cobertura inclui: conectores (IBGE, SICONFI, CAPAG, SNIS, fontes externas), RAG, ML, onboarding, maturidade, DEM, relatórios, OSRM, batch export, engine analítico, auth/OIDC, system/jobs.
+Cobertura inclui: conectores (IBGE, SICONFI, CAPAG, SNIS, fontes externas, IPEA/IDH, SINGED Lab), simulação de calor (`test_heat_simulator`), PIB série, GeoReDUS (`test_georedus_reference_service`), rasters externos, geoportal, agente contextual, RAG, ML, onboarding, maturidade, DEM, relatórios, OSRM, batch export, engine analítico, auth/OIDC, system/jobs.
 
 Execução:
 
@@ -809,6 +868,10 @@ Desenvolvido e testado em Mac mini 2018 (Intel i5, 32 GB RAM). Ollama limitado a
 - OSRM: região configurável via `OSRM_REGION` (padrão Nordeste); cobertura nacional exige PBF `brazil` (~1,5 GB+) ou troca de região
 - Simulação pluvial comparada (120 vs 80 mm): ~60 s no piloto Recife (dois passes hidrológicos)
 - Extrusão 3D é proxy visual (DEM 30 m); não substitui modelagem hidrodinâmica 2D
+- **Simulação de ilha de calor v1.1** é exploratória (proxy °C); não substitui LST observada (GeoReDUS) nem estudo microclimático de campo
+- **SINGED Lab** cobre apenas enchentes RS 2024; portal IBGE sem API — importação CSV manual
+- **GeoReDUS** é referência externa (5.570 municípios); Sinidu opera nos 61 prioritários com simulação, contingência e IA
+- **SGB/ANADEM** (16d.2) pendente de convênio CPRM — não iniciar ingestão sem trâmite A.1
 
 ### Visualização 3D
 
@@ -827,6 +890,256 @@ Desenvolvido e testado em Mac mini 2018 (Intel i5, 32 GB RAM). Ollama limitado a
 - OIDC gov.br / Keycloak (Fase 4); multi-tenant por UF/IBGE
 - Chaves de API via variáveis de ambiente (não commitadas)
 - CORS restrito via `CORS_ORIGINS` em staging/produção
+
+---
+
+## 19. Fase 15 — Novos indicadores e simulação climática
+
+Trabalho concluído em julho/2026, integrado ao orchestrator, boot (migrations 017–018), API, catálogo e painel executivo.
+
+### 19.1 Simulação de ilha de calor v1.1
+
+**Arquivo:** `backend/app/services/heat_simulator.py`  
+**API:** `POST /api/v1/simulations/heat-island`  
+**Modelo:** `HEAT_MODEL_VERSION = "1.1"`
+
+#### Posicionamento metodológico
+
+| Aspecto | Simulação Sinidu v1.1 | LST observada (GeoReDUS) |
+|---------|----------------------|--------------------------|
+| Natureza | Proxy exploratório (°C ar) | Medição satélite (°C superfície) |
+| Entrada | Temperatura de pico prevista + cenário de uso do solo | Série Landsat 8/9 agregada |
+| Uso | Planejamento de cenários (arborizar, impermeabilizar) | Diagnóstico observado |
+| Badge | Derivado Sinidu+Clima | Observado / Oficial |
+
+#### Fórmula da intensidade UHI (ΔT) por bairro
+
+```
+ΔT = coef_imperm × impermeabilização
+   + coef_urban × fração_urbana
+   - coef_veg × fração_vegetação
+   + coef_density × densidade_normalizada
+   + amplificação_onda_calor
+```
+
+Coeficientes calibrados para cidades tropicais/subtropicais brasileiras (ΔT típico 2–6 °C):
+
+| Coeficiente | Valor | Fonte conceitual |
+|-------------|-------|------------------|
+| `UHI_COEF_IMPERM` | 3.5 °C | Oke (1982) — superfície impermeável |
+| `UHI_COEF_URBAN` | 1.2 °C | Calor antropogênico estrutural |
+| `UHI_COEF_VEG` | 2.5 °C | Resfriamento por dossel (evapotranspiração) |
+| `UHI_COEF_DENSITY` | 1.0 °C | Densidade populacional |
+| `HEATWAVE_AMP_K` | 0.35 | Li & Bou-Zeid (2013) — sinergia onda de calor |
+
+**Temperatura local** = temperatura de pico prevista + ΔT.
+
+Impermeabilização derivada de classes MapBiomas por interseção espacial com o polígono do bairro. Baseline de temperatura obtida de `OfficialClimateService` (INMET) com fallback 27 °C.
+
+#### Parâmetros de entrada (`IlhaCalorSimRequest`)
+
+| Parâmetro | Descrição |
+|-----------|-----------|
+| `temperatura_pico_c` | Pico previsto para a cidade (°C); padrão 34 °C |
+| `perda_vegetal_pct` | Cenário de desmatamento adicional (0–100%) |
+| `ganho_vegetal_pct` | Cenário de arborização (0–100%) — slider bidirecional |
+| `impermeabilizacao_extra_pct` | Impermeabilização adicional |
+
+#### Saída
+
+GeoJSON por bairro com propriedades:
+
+- `temp_local_c` — temperatura simulada
+- `uhi_intensity_c` — intensidade da ilha (ΔT)
+- `heat_band` — faixa (`leve` / `moderada` / `severa`)
+- `resfriamento_max_c` / `resfriamento_medio_c` — métricas de arborização
+
+Visualização 3D: extrusão proporcional a `temp_increase_celsius × 12` em `maplibreLayers.ts`.
+
+#### Comparador observado × simulado
+
+**API:** `POST /api/v1/simulations/heat-lst-compare`  
+Cruza resultado da simulação com LST observada (camada `lst_observada`) e gera narrativa IA com limites explícitos.
+
+### 19.2 Camada analytics de ilhas de calor
+
+**API:** `GET /api/v1/analytics/heat-islands`  
+Proxy por bairro baseado em capacidade de adaptação (vegetação inversa). Camada `heat_band` em `layerStyles.ts`.  
+Nota: série histórica interna é demonstrativa — substituir por integração oficial antes de uso conclusivo.
+
+### 19.3 IDH municipal (IPEA / Atlas Brasil)
+
+**Coletor:** `ipeadata_collector.py`  
+**Serviço:** `atlas_economico_service.py`  
+**Migration:** `018_pib_serie.sql` (PIB série) + colunas `idh` / `idh_ano` em `municipio_ibge`  
+**Painel:** card Atlas Econômico no `ExecutiveDashboard` (contexto UF + link IPEA)
+
+### 19.4 Série histórica de PIB
+
+**Coletor:** `ibge_collector.py` (pesquisa 38, indicadores 46996/47000)  
+Campo `pib_serie` (JSON) sincronizado no `IntegrationOrchestrator`.  
+Seletor de ano no mapa (Fase 16c.2) consome esta série.
+
+### 19.5 SINGED Lab RS — enchentes 2024
+
+**Coletor:** `singedlab_rs_collector.py`  
+**Migration:** `017_singedlab_rs.sql` → tabela `municipio_singedlab_rs`  
+**Catálogo:** fonte `ibge_singedlab_rs` no `catalog_source_registry`
+
+O portal IBGE não expõe API REST pública (fetch automatizado retorna 403). Estratégia:
+
+1. Seed CSV curado: `backend/data/singedlab_rs_enchentes_2024.csv` (61 municípios)
+2. Municípios RS do piloto (6): Porto Alegre, Canoas, Santa Maria, São Luiz Gonzaga, Bento Gonçalves, Caxias do Sul
+3. Demais 55 municípios: `escopo = nao_aplicavel`
+
+#### Importação curada (15.7)
+
+| Componente | Descrição |
+|------------|-----------|
+| `singedlab_import_service.py` | Normalização flexível de colunas do export IBGE |
+| `POST /data-catalog/singedlab/import-csv` | Upload CSV (gestor) + merge no seed + sync DB |
+| `scripts/import_singedlab_csv.py` | CLI equivalente (`--sync-db`) |
+| `SingedLabPanel.tsx` | UI no catálogo com métricas e botão de importação |
+
+**APIs adicionais:**
+
+```
+GET  /api/v1/data-catalog/singedlab/{codigo_ibge}   # exposição municipal
+POST /api/v1/data-catalog/singedlab/sync-all      # recarrega seed (gestor)
+POST /api/v1/data-catalog/singedlab/import-csv    # upload CSV (gestor)
+```
+
+### 19.6 Testes
+
+| Arquivo | Cobertura |
+|---------|-----------|
+| `test_heat_simulator.py` | Modelo v1.1, faixas, cenários vegetação |
+| `test_ibge_pib_series.py` | Série PIB no coletor IBGE |
+| `test_ipeadata_atlas_p1.py` | IDH / IPEA |
+| `test_singedlab_collector.py` | Seed CSV, status catálogo |
+| `test_singedlab_import_service.py` | Normalização e merge de importação |
+
+---
+
+## 20. Fase 16 — Complemento GeoReDUS
+
+Integração paulatina com a plataforma [GeoReDUS](https://www.redus.org.br/georedus) (ReDUS/CEM-USP, 5.570 municípios). O Sinidu **não replica** o escopo nacional; referencia o GeoReDUS quando o dado local está ausente e mantém o diferencial (simulação, contingência, IA, maturidade).
+
+### Posicionamento Sinidu × GeoReDUS
+
+| GeoReDUS (referência externa) | Sinidu+Clima |
+|------------------------------|--------------|
+| Catálogo estático nacional | Operação em 61 municípios prioritários |
+| LST observada (Landsat) | Simulação exploratória v1.1 + link LST |
+| Indicadores Censo/INEP no mapa | Scores derivados, contingência, monitor, PDF |
+| Download/visualização | Decisão + simulação + assistente + maturidade |
+
+**Fora de escopo:** cobertura 5.570 municípios, catálogo completo saúde+educação, basemap MapTiler, substituir simulação por LST.
+
+### Onda 16a — Quick wins ✅
+
+| Item | Implementação |
+|------|---------------|
+| 16a.1 Link GeoReDUS | `GeoReDusReferenceCard` + deep link `?v=v0&municipioId={ibge}` |
+| 16a.2 Busca global | Campo no `LayerPanel` + referências externas |
+| 16a.3 Badge duplo calor | `SimulationPanel` — simulação Sinidu + link LST GeoReDUS |
+
+### Onda 16b — Dados observados e Censo ✅
+
+| Item | Implementação |
+|------|---------------|
+| 16b.1 LST observada | Camada `lst_observada`; tiles via `external_raster_service` |
+| 16b.2 Comparador LST × simulado | `POST /simulations/heat-lst-compare` |
+| 16b.3 Censo déficits | Migration `019_censo_deficits.sql`; subcamadas em `socioeconomico` |
+| 16b.4 Metadados por camada | Tooltip/painel via `catalog_source_registry` + `layer_meta_registry` |
+
+### Onda 16c — Educação, temporalidade e contexto regional ✅
+
+| Item | Implementação |
+|------|---------------|
+| 16c.1 Educação INEP | Migration `020_educacao_inep.sql`; camada `educacao` |
+| 16c.2 Ano por tema | Controle temporal unificado (MapBiomas, S2ID, PIB, LST, INEP) |
+| 16c.3 Dados regionais | Toggle município vs mesorregião/RM no mapa |
+| 16c.4 Camadas ativas (N) | `ActiveLayersPanel` — resumo, ordem, opacidade |
+
+### Onda 16d — Territórios, risco geológico e IA
+
+| Item | Status | Implementação |
+|------|--------|---------------|
+| 16d.1 Territórios especiais | ✅ | Migration `021`; camada `territorios_especiais` (quilombos, TIs, aglomerados) |
+| 16d.2 SGB/ANADEM | ⬜ | Depende convênio CPRM (backlog A.1) |
+| 16d.3 Assistente + GeoReDUS | ✅ | `georedus_reference_service.py`, tool `get_georedus_referencia`, RAG |
+| 16d.4 Tiles raster externos | ✅ | `external_raster_service.py`, API `/map/external-rasters` |
+| 16d.5 Geoportal municipal | ✅ | Migration `022`, `geoportal_service.py`, `GeoportalMunicipalPanel` |
+
+### 20.1 Referência GeoReDUS no assistente (16d.3)
+
+**Arquivo:** `georedus_reference_service.py`
+
+Quando o usuário pergunta sobre tema com lacuna local, o assistente:
+
+1. Detecta tema por palavras-chave (`GEOREDUS_INDICATORS`)
+2. Cruza com lacunas do catálogo municipal
+3. Retorna deep link `georedus_municipio_url(codigo_ibge)` e indicadores sugeridos
+4. **Não ingere** dados nacionais — apenas referencia
+
+Indicadores mapeados: déficits Censo, INEP, saúde CNES, territórios especiais, LST.
+
+### 20.2 Tiles raster externos (16d.4)
+
+**Arquivo:** `external_raster_service.py`  
+**API:**
+
+```
+GET /api/v1/map/external-rasters
+GET /api/v1/map/external-rasters/{layer_id}/config
+GET /api/v1/map/external-rasters/{layer_id}/health
+```
+
+Registry de fontes `mosaicjson` (padrão GeoReDUS / TiTiler):
+
+| `layer_id` | Fonte | Rescale padrão |
+|------------|-------|----------------|
+| `lst_observada` | GeoReDUS raster-server (Landsat 8/9, 2021–2025) | 20–60 °C |
+
+Novas coberturas pesadas (MapBiomas raster, DSM) entram no registry com `status: em_avaliacao` — sem pipeline PostGIS.
+
+**Frontend:** `MapContainer` carrega rasters genéricos via `externalRasters.ts`; colormap `turbo`, zoom 8–14.
+
+### 20.3 Geoportal municipal (16d.5)
+
+**Migration:** `022_municipio_geoportal.sql`  
+**Modelo:** `MunicipioGeoportalPublicacao`  
+**API:** `/api/v1/geoportal/{codigo_ibge}/*`
+
+Fluxos suportados:
+
+| Tipo | Endpoint | Descrição |
+|------|----------|-----------|
+| Upload GeoJSON | `POST .../upload` | Arquivo até 25 MB |
+| Upload Shapefile | `POST .../upload` | ZIP com .shp/.dbf/.prj |
+| API ArcGIS REST | `POST .../register-api` | FeatureServer/MapServer |
+| URL GeoJSON | `POST .../register-api` | Fetch remoto |
+| Importar malha | `POST .../import` | Persiste bairros em PostGIS |
+
+**Frontend:** `GeoportalMunicipalPanel` no onboarding (`OnboardingPanel`).
+
+Cadastro CTM pré-existente em `ctm_registry.py` complementa geoportais conhecidos.
+
+### 20.4 Lacunas institucionais
+
+**Frontend:** `InstitutionalGapsPanel` + `institutionalGaps.ts`  
+Lista fontes que exigem convênio MCID (GeoSGB, Brasil MAIS, SIRENE, AdaptaBrasil, SINTER, CTM) com impacto estimado no Score e status derivado do catálogo.
+
+### 20.5 Arquivos-chave
+
+| Área | Arquivos |
+|------|----------|
+| Catálogo / lacunas | `DataCatalogPanel.tsx`, `InstitutionalGapsPanel.tsx`, `SingedLabPanel.tsx`, `GeoReDusReferenceCard.tsx` |
+| Camadas mapa | `layerStyles.ts`, `MapContainer.tsx`, `externalRasters.ts`, `ActiveLayersPanel` |
+| Backend | `georedus_reference_service.py`, `external_raster_service.py`, `geoportal_service.py`, `heat_simulator.py` |
+| Assistente | `contextual_agent_tools.py`, `municipal_assistant_context.py`, `rag/chat.py` |
+| Testes | `test_georedus_reference_service.py`, `test_external_raster_service.py`, `test_geoportal_service.py`, `test_contextual_agent.py` |
 
 ---
 
@@ -859,8 +1172,14 @@ Desenvolvido e testado em Mac mini 2018 (Intel i5, 32 GB RAM). Ollama limitado a
 | SemanticSearch | `semantic_search.py` | Casos de sucesso |
 | FederalFinancingCatalog | `federal_financing_catalog.py` | Programas federais |
 | IntegrationOrchestrator | `data_connectors/orchestrator.py` | Sync integrações |
+| HeatSimulator | `heat_simulator.py` | Ilha de calor v1.1 (°C) |
+| AtlasEconomicoService | `atlas_economico_service.py` | Contexto UF IPEA/Atlas |
+| SingedlabImportService | `singedlab_import_service.py` | Import CSV SINGED Lab |
+| GeoReDusReferenceService | `georedus_reference_service.py` | Referência GeoReDUS no assistente |
+| ExternalRasterService | `external_raster_service.py` | Registry mosaicjson (LST) |
+| GeoportalService | `geoportal_service.py` | Upload/API CTM municipal |
 | SiconfiIaBridge | `assistant/siconfi_ia_bridge.py` | Ponte fiscal |
 
 ---
 
-*Documento gerado a partir do inventário do repositório Sinidu+Clima — junho/2026.*
+*Documento atualizado a partir do inventário do repositório Sinidu+Clima — julho/2026 (Fases 15 e 16).*

@@ -14,6 +14,7 @@ from app.api.data_catalog import coverage_for_code
 from app.models import AlertaCemaden, HistoricoDesastreS2ID, MonitoringAlert, Municipio, PlanoAcaoMunicipal
 from app.services.action_plan_engine import action_plan_to_dict
 from app.services.analytical_engine import AnalyticalEngine
+from app.services.georedus_reference_service import build_georedus_referencia
 from app.services.municipio_audit_service import audit_municipio
 from app.services.report_generator import build_bairro_ranking
 
@@ -78,6 +79,7 @@ def get_alertas_cemaden(db: Session, codigo_ibge: str) -> dict[str, Any]:
 def get_catalogo_dados(db: Session, codigo_ibge: str) -> dict[str, Any]:
     maturidade, bases, gaps = coverage_for_code(codigo_ibge, db)
     lacunas = [g.get("nome") or g.get("id") for g in gaps]
+    georedus = build_georedus_referencia(db, codigo_ibge) if lacunas else {}
     return {
         "codigo_ibge": codigo_ibge,
         "maturidade_percentual": maturidade,
@@ -91,7 +93,18 @@ def get_catalogo_dados(db: Session, codigo_ibge: str) -> dict[str, Any]:
             for f in bases[:12]
         ],
         "lacunas": lacunas[:8],
+        "georedus_url": georedus.get("georedus_url"),
+        "georedus_indicadores": georedus.get("indicadores_sugeridos") or [],
     }
+
+
+def get_georedus_referencia(
+    db: Session,
+    codigo_ibge: str,
+    tema: str | None = None,
+    query: str | None = None,
+) -> dict[str, Any]:
+    return build_georedus_referencia(db, codigo_ibge, tema=tema, query=query)
 
 
 def get_historico_desastres(db: Session, codigo_ibge: str) -> dict[str, Any]:
@@ -273,6 +286,25 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_georedus_referencia",
+            "description": (
+                "Referência externa GeoReDUS quando dados locais estão ausentes ou parciais. "
+                "Retorna deep link municipioId e indicadores sugeridos — sem ingestão nacional."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "cod_ibge": {"type": "string", "description": "Código IBGE 7 dígitos"},
+                    "tema": {"type": "string", "description": "Tema da pergunta (ex.: saúde, educação)"},
+                    "query": {"type": "string", "description": "Texto livre para casar indicadores GeoReDUS"},
+                },
+                "required": ["cod_ibge"],
+            },
+        },
+    },
 ]
 
 _TOOL_DISPATCH = {
@@ -284,6 +316,12 @@ _TOOL_DISPATCH = {
     "get_plano_acao": lambda db, args: get_plano_acao(db, args["cod_ibge"]),
     "get_simulacao_resultado": lambda db, args: get_simulacao_resultado(
         db, args["cod_ibge"], float(args.get("precipitacao_mm") or 120)
+    ),
+    "get_georedus_referencia": lambda db, args: get_georedus_referencia(
+        db,
+        args["cod_ibge"],
+        tema=args.get("tema"),
+        query=args.get("query"),
     ),
 }
 

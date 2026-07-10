@@ -54,6 +54,9 @@ class ExecutiveIndicators(BaseModel):
     pib_per_capita: Optional[float] = None
     pib_fonte: Optional[str] = None
     pib_qualidade: Optional[str] = None
+    pib_total_mil_reais: Optional[float] = None
+    pib_ano: Optional[int] = None
+    pib_serie: Optional[list] = None
     nota_capag: Optional[str] = None
     capag_fonte: Optional[str] = None
     receita_corrente_liquida: Optional[float] = None
@@ -71,6 +74,15 @@ class ExecutiveIndicators(BaseModel):
     desastres_qualidade: Optional[str] = None
     renda_qualidade: Optional[str] = None
     densidade_qualidade: Optional[str] = None
+    idh: Optional[float] = None
+    idh_ano: Optional[int] = None
+    idh_fonte: Optional[str] = None
+    idh_qualidade: Optional[str] = None
+    atlas_uf_context: Optional[dict] = None
+    score_sinidu: Optional[int] = None
+    media_ivc: Optional[float] = None
+    media_iri: Optional[float] = None
+    media_adaptacao: Optional[float] = None
     score_confiabilidade: Optional[str] = None
     confiabilidade_geral: Optional[str] = None
     malha_fonte: Optional[str] = None
@@ -122,6 +134,13 @@ class PerdaVegetacaoSimRequest(BaseModel):
     taxa_desmatamento: float = Field(..., description="Perda de cobertura vegetal de 0 a 100%")
     codigo_ibge: Optional[str] = Field(default=None, description="Código IBGE do município selecionado")
 
+class IlhaCalorSimRequest(BaseModel):
+    temperatura_pico_c: float = Field(default=34.0, description="Temperatura de pico prevista para a cidade (°C)")
+    perda_vegetal_pct: float = Field(default=30.0, description="Perda adicional de vegetação (0–100%)")
+    ganho_vegetal_pct: float = Field(default=0.0, description="Ganho de cobertura vegetal / arborização (0–60%)")
+    impermeabilizacao_extra_pct: float = Field(default=15.0, description="Impermeabilização urbana adicional (0–50%)")
+    codigo_ibge: Optional[str] = Field(default=None, description="Código IBGE do município selecionado")
+
 class ChuvaExtremaSimRequest(BaseModel):
     precipitacao_mm: float = Field(..., description="Precipitação estimada em milímetros (e.g. 50 a 200)")
     codigo_ibge: Optional[str] = Field(default=None, description="Código IBGE do município selecionado")
@@ -156,6 +175,40 @@ class RainfallComparisonResponse(BaseModel):
     scenario: SimulationOutput
     delta: Dict[str, Any]
     from_cache: Optional[bool] = None
+
+
+class HeatLstCompareRequest(BaseModel):
+    codigo_ibge: Optional[str] = Field(default=None, description="Código IBGE do município")
+    simulation: Dict[str, Any] = Field(..., description="Resultado da simulação de ilha de calor")
+
+
+class BairroLstCompareRow(BaseModel):
+    bairro: str
+    lst_observada_c: Optional[float] = None
+    temp_simulada_c: float
+    delta_c: Optional[float] = None
+    faixa_calor: Optional[str] = None
+
+
+class HeatLstComparisonResponse(BaseModel):
+    disponivel: bool
+    municipio: str
+    uf: str
+    codigo_ibge: str
+    lst_fonte: str
+    lst_periodo: str
+    lst_mediana_c: Optional[float] = None
+    lst_max_c: Optional[float] = None
+    lst_min_c: Optional[float] = None
+    sim_temp_max_c: Optional[float] = None
+    sim_temp_mediana_c: Optional[float] = None
+    sim_delta_t_max_c: Optional[float] = None
+    divergencia_mediana_c: Optional[float] = None
+    amostras_validas: int = 0
+    amostras_total: int = 0
+    bairros: List[BairroLstCompareRow] = []
+    narrativa: str
+    limites_metodologicos: List[str] = []
 
 
 class SimulationJobStartResponse(BaseModel):
@@ -205,12 +258,13 @@ class SimulationAnalysisResponse(BaseModel):
 
 class SimulationInterpretRequest(BaseModel):
     municipio_codigo: str
-    tipo_simulacao: str = Field(..., description="chuva | asfalto | vegetacao | drenagem")
+    tipo_simulacao: str = Field(..., description="chuva | asfalto | vegetacao | drenagem | calor")
     parametro_atual: float
     parametro_referencia: float = Field(default=80.0)
     resultado_simulacao: Dict[str, Any]
     resultado_referencia: Optional[Dict[str, Any]] = None
     comparacao_delta: Optional[Dict[str, Any]] = None
+    lst_comparison: Optional[Dict[str, Any]] = None
     use_ai: bool = True
     ai_provider: Optional[str] = None
     ai_model: Optional[str] = None
@@ -360,6 +414,8 @@ class MunicipalAssistantContext(BaseModel):
     suggested_questions: List[str]
     tem_diagnostico: bool = False
     tem_relatorio: bool = False
+    georedus_url: Optional[str] = None
+    georedus_indicadores: List[Dict[str, Any]] = []
 
 class AIProviderOption(BaseModel):
     id: str

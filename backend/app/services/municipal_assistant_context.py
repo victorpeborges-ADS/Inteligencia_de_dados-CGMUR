@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from app.api.analytics import executive_snapshot
 from app.data_connectors.capag_collector import collect_capag_municipality
 from app.models import DiagnosticoExecutivo, Municipio, MunicipioFiscal, MunicipioIbge, RelatorioMunicipal
+from app.services.georedus_reference_service import georedus_municipio_url, georedus_summary_for_context
 from app.services.maturity_engine import compute_maturity
 from app.services.report_generator import build_bairro_ranking
 
@@ -219,6 +220,24 @@ def build_municipal_assistant_context(db: Session, muni: Municipio) -> dict[str,
     if report:
         summary_lines.append(f"- Relatório PDF disponível: {report.nome_arquivo}")
 
+    georedus_ctx = georedus_summary_for_context(db, muni.codigo_ibge)
+    georedus_url = georedus_ctx.get("georedus_url") or georedus_municipio_url(muni.codigo_ibge)
+    georedus_indicadores = georedus_ctx.get("georedus_indicadores") or []
+    if georedus_ctx.get("georedus_summary"):
+        summary_lines.extend(["", "REFERÊNCIA EXTERNA (lacunas locais):", georedus_ctx["georedus_summary"]])
+        sources.append(
+            _source(
+                "georedus",
+                "GeoReDUS — Catálogo nacional ReDUS",
+                (
+                    "Complemento para indicadores intramunicipais não integrados no Sinidu "
+                    f"({len(georedus_indicadores)} sugestões para este município)."
+                ),
+                georedus_url,
+                "REFERENCIA_EXTERNA",
+            )
+        )
+
     suggested = [
         f"Qual a nota CAPAG e a situação fiscal de {muni.nome}?",
         f"Quais bairros têm maior prioridade de intervenção em {muni.nome}?",
@@ -229,6 +248,8 @@ def build_municipal_assistant_context(db: Session, muni: Municipio) -> dict[str,
     ]
     if diag:
         suggested.insert(2, "Explique os principais riscos territoriais com base no diagnóstico salvo.")
+    if georedus_ctx.get("tem_lacunas"):
+        suggested.append("Quais dados ainda faltam localmente e onde consultar no GeoReDUS?")
 
     return {
         "codigo_ibge": muni.codigo_ibge,
@@ -243,6 +264,8 @@ def build_municipal_assistant_context(db: Session, muni: Municipio) -> dict[str,
         "suggested_questions": suggested[:6],
         "tem_diagnostico": diag is not None,
         "tem_relatorio": report is not None,
+        "georedus_url": georedus_url,
+        "georedus_indicadores": georedus_indicadores,
     }
 
 

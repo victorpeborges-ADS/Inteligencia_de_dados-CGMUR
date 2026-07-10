@@ -44,6 +44,9 @@ REGRAS:
    indicadores de vulnerabilidade, finanças públicas municipais (LRF, CAPAG),
    dados IBGE, MapBiomas, CEMADEN, S2ID, políticas MCID
 9. Use as ferramentas disponíveis quando precisar de dados atualizados não presentes no contexto
+10. Quando dados locais estiverem ausentes ou parciais, use get_georedus_referencia e cite o GeoReDUS
+    com o link municipioId retornado pela ferramenta. NUNCA invente valores do GeoReDUS — apenas
+    oriente o gestor a consultar o catálogo nacional ReDUS como complemento ao Sinidu
 """
 
 

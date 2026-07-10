@@ -48,6 +48,7 @@ Para demo rápida **sem OSRM**, o fluxo de contingência funciona com fallback �
 | 4 | Tecla **F** | Modo Focus (mapa expandido) |
 | 5 | **Contingência** | Banner OSRM verde se PE + OSRM online |
 | 6 | **Centro de oficina** → Comparar | Par sugerido Recife × Salvador + deltas |
+| 7 | **Catálogo** | Bloco "Trâmite institucional" + Impacto IA por fonte |
 
 ## 5. Homologação institucional (opcional)
 

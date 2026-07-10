@@ -2,7 +2,8 @@
 
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { api, AIProviderOption, ChatMessage, MunicipalAssistantContext, MunicipalDataSource, RagSource } from '@/utils/api';
-import { Send, Bot, User, FileText, X, Clock, Cpu, Cloud, Key, Link2, CheckCircle2, AlertCircle } from 'lucide-react';
+import { Send, Bot, User, FileText, X, Clock, Cpu, Cloud, Key, Link2, CheckCircle2, AlertCircle, ExternalLink } from 'lucide-react';
+import GeoReDusReferenceCard from '@/components/DataCatalog/GeoReDusReferenceCard';
 
 interface AssistantProps {
   onToggleLayer: (layerName: string) => void;
@@ -51,6 +52,7 @@ function shortSourceLabel(label: string) {
   if (label.includes('CONAMA 369')) return 'CONAMA 369';
   if (label.includes('CONAMA 303')) return 'CONAMA 303';
   if (label.includes('1.012')) return 'Portaria MCID 1.012';
+  if (label.toLowerCase().includes('georedus')) return 'GeoReDUS';
   if (label.toLowerCase().includes('sinidu')) return 'Sinidu+Clima';
   if (label.toLowerCase().includes('adapta')) return 'AdaptaBrasil';
   if (label.toLowerCase().includes('sedec')) return 'Manual SEDEC';
@@ -371,6 +373,12 @@ export default function AssistantPanel({ onToggleLayer, onFocusMap, codigoIbge }
             {municipalContext.tem_diagnostico ? ' · diagnóstico salvo' : ''}
             {municipalContext.tem_relatorio ? ' · relatório PDF' : ''}
           </p>
+          {municipalContext.georedus_url && (
+            <GeoReDusReferenceCard
+              codigoIbge={municipalContext.codigo_ibge}
+              municipioNome={municipalContext.municipio.nome}
+            />
+          )}
         </div>
       )}
       <div className="px-3 py-2 border-b border-zinc-900 bg-zinc-950/90 flex flex-col gap-1.5">
@@ -528,8 +536,14 @@ export default function AssistantPanel({ onToggleLayer, onFocusMap, codigoIbge }
                     </button>
                   ))}
                   {m.sourceUrl && (
-                    <a href={m.sourceUrl} target="_blank" rel="noreferrer" className="inline-flex text-[9px] font-bold text-sky-300 hover:text-sky-200">
-                      Siconfi.IA ↗
+                    <a
+                      href={m.sourceUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="inline-flex items-center gap-1 text-[9px] font-bold text-sky-300 hover:text-sky-200"
+                    >
+                      <ExternalLink size={10} />
+                      {m.sourceUrl.includes('redus.org.br') ? 'GeoReDUS ↗' : 'Siconfi.IA ↗'}
                     </a>
                   )}
                 </div>

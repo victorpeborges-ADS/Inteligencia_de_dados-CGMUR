@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
 from sqlalchemy.orm import Session
 from app.config import settings
 from app.db import get_db
@@ -18,6 +18,9 @@ from app.services.catalog_sync_service import (
     get_source_sync_meta,
     refresh_catalog_source,
 )
+from app.data_connectors.singedlab_rs_collector import row_to_dict, sync_singedlab_batch
+from app.models import MunicipioSingedlabRs
+from app.services.singedlab_import_service import run_singedlab_csv_import
 
 router = APIRouter()
 
@@ -78,7 +81,7 @@ def get_national_data_coverage(
             "lacunas_count": len(gaps),
         })
         for item in bases:
-            bucket = base_totals.setdefault(item["id"], {"nome": item["nome"], "Integrado": 0, "Estimado": 0, "Em integracao": 0, "Ausente": 0})
+            bucket = base_totals.setdefault(item["id"], {"nome": item["nome"], "Integrado": 0, "Estimado": 0, "Em integracao": 0, "Ausente": 0, "Nao aplicavel": 0})
             status = item["status"]
             if status in bucket:
                 bucket[status] += 1
@@ -172,6 +175,64 @@ def refresh_all_integrated_sources(
 
     job_id = run_catalog_refresh_job(codigo_ibge)
     return {"job_id": job_id, "status": "queued"}
+
+
+@router.get("/singedlab/{codigo_ibge}")
+def get_singedlab_exposure(
+    codigo_ibge: str,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    muni = get_accessible_municipio(db, codigo_ibge, request=request)
+    row = db.query(MunicipioSingedlabRs).filter(MunicipioSingedlabRs.codigo_ibge == codigo_ibge).first()
+    if not row:
+        raise HTTPException(
+            status_code=404,
+            detail="Exposição SINGED Lab ainda não sincronizada — use refresh da fonte ibge_singedlab_rs.",
+        )
+    payload = row_to_dict(row)
+    payload["municipio"] = {"codigo_ibge": muni.codigo_ibge, "nome": muni.nome, "uf": muni.uf}
+    return payload
+
+
+@router.post("/singedlab/sync-all")
+def sync_singedlab_all_municipios(
+    request: Request,
+    db: Session = Depends(get_db),
+    _user: User = Depends(require_role(Role.GESTOR)),
+):
+    """Recarrega CSV curado para os 61 municípios prioritários."""
+    summary = sync_singedlab_batch(db, force=True)
+    return summary
+
+
+@router.post("/singedlab/import-csv")
+async def import_singedlab_csv(
+    request: Request,
+    file: UploadFile = File(...),
+    sync_db: bool = Query(default=True, description="Sincroniza banco após merge no seed CSV"),
+    db: Session = Depends(get_db),
+    _user: User = Depends(require_role(Role.GESTOR)),
+):
+    """Importa export CSV do portal IBGE SINGED Lab para o seed curado e opcionalmente sincroniza o banco."""
+    filename = (file.filename or "").strip()
+    if not filename.lower().endswith(".csv"):
+        raise HTTPException(status_code=400, detail="Envie um arquivo .csv exportado do portal IBGE SINGED Lab.")
+
+    content = await file.read()
+    if not content:
+        raise HTTPException(status_code=400, detail="Arquivo CSV vazio.")
+    if len(content) > 5 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="Arquivo excede o limite de 5 MB.")
+
+    try:
+        return run_singedlab_csv_import(
+            content,
+            filename=filename,
+            db=db if sync_db else None,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.get("/refresh-job/{job_id}")

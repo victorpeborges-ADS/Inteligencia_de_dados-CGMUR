@@ -6,6 +6,7 @@ from app.db import get_db
 from app.schemas import (
     ImpermeabilizacaoSimRequest,
     PerdaVegetacaoSimRequest,
+    IlhaCalorSimRequest,
     ChuvaExtremaSimRequest,
     ChuvaExtremaCompareRequest,
     RainfallComparisonResponse,
@@ -22,8 +23,12 @@ from app.schemas import (
     MitigationPlanRequest,
     MitigationPlanResponse,
     GeoJSONFeatureCollection,
+    HeatLstCompareRequest,
+    HeatLstComparisonResponse,
 )
 from app.services.analytical_engine import AnalyticalEngine
+from app.services.heat_simulator import run_heat_island_simulation
+from app.services.lst_heat_comparator import compare_heat_simulation_with_lst
 from app.services.simulation_cache import compare_rainfall_cached, run_rainfall_cached
 from app.services.simulation_job_service import (
     get_simulation_job_progress,
@@ -57,9 +62,34 @@ def simulate_waterproofing(payload: ImpermeabilizacaoSimRequest, request: Reques
 @router.post("/vegetation-loss", response_model=SimulationOutput)
 def simulate_vegetation_loss(payload: PerdaVegetacaoSimRequest, request: Request, db: Session = Depends(get_db)):
     muni = get_accessible_municipio(db, payload.codigo_ibge, request=request)
-    return AnalyticalEngine.run_perda_vegetacao_simulation(
-        db, muni.id, payload.taxa_desmatamento
+    result = run_heat_island_simulation(
+        db,
+        muni.id,
+        perda_vegetal_pct=payload.taxa_desmatamento,
+        impermeabilizacao_extra_pct=0.0,
     )
+    result["scenario_type"] = "VegetationLoss"
+    result["input_value"] = payload.taxa_desmatamento
+    return result
+
+
+@router.post("/heat-island", response_model=SimulationOutput)
+def simulate_heat_island(payload: IlhaCalorSimRequest, request: Request, db: Session = Depends(get_db)):
+    muni = get_accessible_municipio(db, payload.codigo_ibge, request=request)
+    return run_heat_island_simulation(
+        db,
+        muni.id,
+        temperatura_pico_c=payload.temperatura_pico_c,
+        perda_vegetal_pct=payload.perda_vegetal_pct,
+        ganho_vegetal_pct=payload.ganho_vegetal_pct,
+        impermeabilizacao_extra_pct=payload.impermeabilizacao_extra_pct,
+    )
+
+
+@router.post("/heat-lst-compare", response_model=HeatLstComparisonResponse)
+def heat_lst_compare(payload: HeatLstCompareRequest, request: Request, db: Session = Depends(get_db)):
+    muni = get_accessible_municipio(db, payload.codigo_ibge, request=request)
+    return compare_heat_simulation_with_lst(db, muni, payload.simulation)
 
 
 @router.post("/extreme-rainfall", response_model=SimulationOutput)
@@ -128,7 +158,7 @@ def analyze_simulation_result(payload: SimulationAnalyzeRequest, request: Reques
 def interpret_simulation_result(payload: SimulationInterpretRequest, request: Request, db: Session = Depends(get_db)):
     muni = get_accessible_municipio(db, payload.municipio_codigo, request=request)
     tipo = payload.tipo_simulacao.strip().lower()
-    if tipo not in {"chuva", "asfalto", "vegetacao", "drenagem"}:
+    if tipo not in {"chuva", "asfalto", "vegetacao", "drenagem", "calor"}:
         raise HTTPException(status_code=400, detail="tipo_simulacao inválido.")
     return interpret_simulation_cached(
         db,
@@ -139,6 +169,7 @@ def interpret_simulation_result(payload: SimulationInterpretRequest, request: Re
         resultado_simulacao=payload.resultado_simulacao,
         resultado_referencia=payload.resultado_referencia,
         comparacao_delta=payload.comparacao_delta,
+        lst_comparison=payload.lst_comparison,
         ai_provider=payload.ai_provider,
         ai_model=payload.ai_model,
         ai_api_key=payload.ai_api_key,

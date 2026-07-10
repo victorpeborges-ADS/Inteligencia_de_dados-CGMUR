@@ -10,7 +10,7 @@
 - [x] Barrel export `frontend/src/design-system/index.ts`
 - [x] `tailwind.config.js` inclui pasta `design-system`
 - [x] Componentes base (`KpiCard`, `PanelSection`, `Badge`)
-- [ ] Storybook ou página `/design-system` — opcional
+- [x] Página `/design-system` — showcase de tokens e componentes
 
 ## Prompt 04 — Modo Focus
 

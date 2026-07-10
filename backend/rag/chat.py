@@ -12,6 +12,7 @@ from rag.config import SYSTEM_PROMPT_TEMPLATE
 from rag.providers.registry import resolve_chat_provider_with_fallback
 from rag.retriever import retrieve
 from rag.store import RetrievedChunk
+from app.services.georedus_reference_service import detect_georedus_source_url
 from app.services.municipal_assistant_context import (
     build_municipal_assistant_context,
     format_context_for_prompt,
@@ -160,6 +161,9 @@ class RagAssistant:
             for c in chunks
         ]
 
+        georedus_url = ctx.get("georedus_url")
+        source_url = detect_georedus_source_url(message, answer, georedus_url)
+
         return {
             "response": answer,
             "rag_sources": rag_sources,
@@ -167,7 +171,7 @@ class RagAssistant:
             "suggested_questions": ctx.get("suggested_questions") or [],
             "response_time_ms": elapsed,
             "suggested_layer": _suggested_layer(message, answer),
-            "source_url": None,
+            "source_url": source_url,
             "coordinates": None,
             "zoom": 13,
             "ai_provider": used_provider.id,

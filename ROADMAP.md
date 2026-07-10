@@ -1,7 +1,14 @@
 # Sinidu+Clima — Roadmap Priorizado
 
-**Atualizado:** julho/2026  
+**Atualizado:** julho/2026 (revisão 09/07 — Fase 16 GeoReDUS)  
 **Referência:** avaliação técnica de maturidade + documentação em `documentacao/DOCUMENTACAO_TECNICA_COMPLETA.md`
+
+> **Resumo da revisão 09/07:** Fases 1–14 concluídas. Fase 15 (novos indicadores +
+> simulação de ilha de calor) já implementada no código e documentada abaixo.
+> **Fase 16** incorpora o benchmarking do [GeoReDUS](https://www.redus.org.br/georedus)
+> (ReDUS/CEM-USP/FNP) — integração **complementar**, não replicação do catálogo nacional.
+> Implementação planejada em **4 ondas** (16a→16d). O backlog geral permanece em
+> **[Pendências / Backlog priorizado](#pendências--backlog-priorizado)**.
 
 ---
 
@@ -279,6 +286,169 @@ Roteiro incremental **frontend-only** (sem alterar API), derivado do plano de me
 **Ordem sugerida:** 13.0 → 13.1 → 13.2 → 13.3 → 13.5 → 13.6 → 13.9 → demais.
 
 Ver `CHECKLIST_FASE_13.md`.
+
+---
+
+## Fase 14 — Lacunas institucionais e operação demo (P1)
+
+| # | Item | Status | Notas |
+|---|------|--------|-------|
+| 14.1 | **Painel trâmite institucional** no Catálogo | ✅ | `InstitutionalGapsPanel` + `institutionalGaps.ts` |
+| 14.2 | **Plano lacunas MCID** documentado | ✅ | `PLANO_LACUNAS_INSTITUCIONAIS.md` |
+| 14.3 | **Página Design System** | ✅ | `/design-system` |
+| 14.4 | **Validação Recife** integrada ao smoke | ✅ | `validacao_recife_ui.py` + `RUN_RECIFE_VALIDATION=1` |
+
+Ver `CHECKLIST_FASE_14.md`.
+
+---
+
+## Fase 15 — Novos indicadores e simulação climática (P1/P2)
+
+Trabalho concluído após a Fase 14 (jul/2026), já integrado ao orchestrator, boot, API e catálogo.
+
+| # | Item | Status | Notas |
+|---|------|--------|-------|
+| 15.1 | **Simulação de ilha de calor** (temperatura-driven) | ✅ | `heat_simulator.py` v1.1 — entrada em °C, `POST /simulations/heat-island`, auto-3D |
+| 15.2 | **Slider bidirecional de cobertura vegetal** (desmatar ↔ arborizar) | ✅ | Métrica de resfriamento (`resfriamento_max_c` / `medio_c`) na simulação e na interpretação IA |
+| 15.3 | **Camada/analytics de ilhas de calor** | ✅ | `GET /analytics/heat-islands` + `heat_band` no `layerStyles.ts` |
+| 15.4 | **IDH municipal** (IPEA / Atlas Brasil) | ✅ | `ipeadata_collector` + `atlas_economico_service` → colunas `idh`/`idh_ano` |
+| 15.5 | **Série histórica de PIB** | ✅ | `ibge_collector` + migration `018_pib_serie.sql` → `pib_serie` no orchestrator |
+| 15.6 | **SINGEDLab RS — enchentes 2024** | ✅ | `singedlab_rs_collector` + migration `017` + sync no `orchestrator.sync_all` + `GET/POST /data-catalog/singedlab/*` |
+| 15.7 | **Import curado SINGEDLab (CSV)** | ✅ | `singedlab_import_service` + `POST /data-catalog/singedlab/import-csv` + `SingedLabPanel` no catálogo |
+| 15.8 | **Testes das novas fontes/simulação** | ✅ | `test_heat_simulator`, `test_ibge_pib_series`, `test_ipeadata_atlas_p1`, `test_singedlab_collector` |
+
+Ver `CHECKLIST_FASE_13.md` / commits recentes; metodologia da ilha de calor e integração GeoReDUS documentadas em `documentacao/DOCUMENTACAO_TECNICA_COMPLETA.md` (§19–§20).
+
+---
+
+## Fase 16 — Complemento GeoReDUS (integração paulatina, P1→P3)
+
+Benchmarking da plataforma [GeoReDUS](https://www.redus.org.br/georedus) (5.570 municípios,
+catálogo + visualização intramunicipal). O Sinidu **não replica** o escopo nacional do GeoReDUS;
+integra o que falta no nosso diferencial (simulação, contingência, IA) e **referencia** o GeoReDUS
+quando o dado estiver fora do escopo dos 61 prioritários.
+
+**Posicionamento:**
+
+| GeoReDUS (referência externa) | Sinidu+Clima (este sistema) |
+|------------------------------|-----------------------------|
+| Catálogo estático nacional | Operação em 61 municípios prioritários |
+| LST observada (Landsat) | Simulação exploratória de ilha de calor v1.1 |
+| Indicadores Censo/INEP no mapa | Scores derivados, contingência, monitor, PDF |
+| Download/visualização | Decisão + simulação + assistente + maturidade |
+
+**Fora de escopo desta fase (não copiar):** cobertura 5.570 municípios, catálogo completo
+saúde+educação+população, basemap MapTiler, substituir simulação por LST.
+
+### Onda 16a — Quick wins (P1, ~1 sprint)
+
+| # | Item | Status | Notas |
+|---|------|--------|-------|
+| 16a.1 | **Link GeoReDUS** no Catálogo / lacunas | ✅ | `GeoReDusReferenceCard` + deep link `municipioId` |
+| 16a.2 | **Busca global de indicadores** | ✅ | Campo no `LayerPanel` + referências externas GeoReDUS |
+| 16a.3 | **Badge duplo calor** na simulação | ✅ | Simulação Sinidu (derivado) + link LST GeoReDUS em `SimulationPanel` |
+
+### Onda 16b — Dados observados e Censo (P1, ~2 sprints)
+
+| # | Item | Status | Notas |
+|---|------|--------|-------|
+| 16b.1 | **Camada LST observada** (Landsat 8/9) | ✅ | Nova camada `lst_observada` no mapa; fonte GeoReDUS tiles ou STAC/GEE; slider 20–60 °C; badge **Oficial/Observado** |
+| 16b.2 | **Comparador observado × simulado** (calor) | ✅ | Painel na aba Simulações ou mapa: LST (16b.1) vs `heat_simulator` v1.1; narrativa IA explicitando limites |
+| 16b.3 | **Censo 2022 — déficits domiciliares por setor** | ✅ | Ampliar `enriquecer_socioeconomico_censo`: arborização, calçada, iluminação, água, esgoto, lixo, alfabetização; subcamadas em `socioeconomico` |
+| 16b.4 | **Metadados por camada** (fonte + descrição) | ✅ | Tooltip/painel ao ativar camada — padrão GeoReDUS; reutilizar `catalog_source_registry` |
+
+### Onda 16c — Educação, temporalidade e contexto regional (P2, ~2–3 sprints)
+
+| # | Item | Status | Notas |
+|---|------|--------|-------|
+| 16c.1 | **Educação INEP no mapa** | ✅ | Collector Censo Escolar/INEP; camada `educacao`: matrículas por etapa, tamanho proporcional, buffer de influência (raio configurável) |
+| 16c.2 | **Seletor de ano por tema** | ✅ | Controle temporal unificado: MapBiomas, S2ID, PIB, LST, INEP (padrão GeoReDUS por aba/tema) |
+| 16c.3 | **Toggle "Visualizar dados regionais"** | ✅ | Overlay do município vs mesorregião/RM no mapa; complementa `CompareModal` |
+| 16c.4 | **Painel "Camadas ativas (N)"** | ✅ | Resumo compacto das camadas ligadas + ordem/opacidade (UX GeoReDUS) |
+
+### Onda 16d — Territórios, risco geológico e IA (P2/P3)
+
+| # | Item | Status | Notas |
+|---|------|--------|-------|
+| 16d.1 | **Territórios tradicionais e periferias** | ✅ | Quilombos, TIs, favelas/comunidades urbanas (fontes oficiais); camada `territorios_especiais` para VM e planejamento |
+| 16d.2 | **SGB/ANADEM no mapa** | ⬜ | Suscetibilidade enxurrada/inundação/altura acima da drenagem — **depende convênio A.1**; sobrepor risco derivado S2ID |
+| 16d.3 | **Assistente + GeoReDUS** | ✅ | RAG/tool: quando dado local ausente, citar GeoReDUS com link `municipioId`; não duplicar ingestão nacional |
+| 16d.4 | **Tiles raster externos** (mosaicjson) | ✅ | Registry `external_raster_service` + API `/map/external-rasters`; LST via GeoReDUS raster-server sem pipeline PostGIS |
+| 16d.5 | **Geoportal municipal** (upload CTM) | ✅ | Onboarding: upload GeoJSON/shapefile, API ArcGIS/GeoJSON, importação malha; tabela `municipio_geoportal_publicacao` |
+
+**Ordem sugerida:** 16a → 16b → 16c → 16d. Itens 16d.2 e 16d.5 dependem de trâmite institucional (ver A.1, A.6).
+
+**Arquivos-alvo previstos:**
+
+| Área | Arquivos |
+|------|----------|
+| Catálogo / lacunas | `InstitutionalGapsPanel.tsx`, `DataCatalogPanel.tsx`, `institutionalGaps.ts` |
+| Camadas mapa | `platformTabs.ts`, `layerStyles.ts`, `MapContainer.tsx`, `LayerPanel` |
+| Backend Censo/LST/INEP | `malha_ibge_service.py`, novos collectors, `catalog_source_registry.py`, `orchestrator.py` |
+| Simulação calor | `heat_simulator.py`, `SimulationPanel.tsx`, `simulation_interpreter.py` |
+| Assistente | `contextual_agent_tools.py`, dataset RAG |
+
+---
+
+## Pendências / Backlog priorizado
+
+Consolidação do que **ainda falta**, cruzando roadmap, `PLANO_LACUNAS_INSTITUCIONAIS.md`,
+`RESUMO_EXECUCAO_5_PASSOS.md` e marcadores no código. Nenhum item é bloqueador de demo.
+
+### A. Integrações institucionais (dependem de convênio/credencial) — P2/P3
+| # | Fonte | Situação atual | O que falta |
+|---|-------|----------------|-------------|
+| A.1 | **GeoSGB / CPRM** (litologia, susceptibilidade) | Proxy IRI+IVC ativo · 0/61 integrado | Convênio MCID–CPRM (WMS/API) — ±8 pts de maturidade |
+| A.2 | **Brasil MAIS** | `external_sources_collector` pronto · 0/61 | API interna MCID ou carga batch acordada |
+| A.3 | **SIRENE / MCTI** (emissões) | Proxy per capita ativo | Credencial/extract anual via convênio MCTI |
+| A.4 | **AdaptaBrasil / INPE** | Proxy MapBiomas (status "Estimado") | Credencial API INPE para substituir proxy |
+| A.5 | **SINTER / Receita** | Estimado via SICONFI/IBGE | Avaliar necessidade real vs. IBGE já integrado |
+| A.6 | **CTM / UTB** (`ctm_registry.py`) | Cadastro pendente | Download manual do shapefile no portal DIDT |
+
+### B. Itens técnicos adiados por decisão (➖ ativáveis) — P2
+| # | Item | Situação | O que falta |
+|---|------|----------|-------------|
+| B.1 | **OSRM malha viária real** | Fallback Haversine (40 km/h) ativo | Rodar `docker/osrm/setup-osrm.sh` (~414 MB nordeste) quando houver demo com rotas reais |
+| B.2 | **Google Street View 3D** | `Map3DGoogleContainer.tsx` existe, fora do fluxo | Decisão de custo de API para ativar |
+
+### C. Performance (metas não atingidas) — P1
+| # | Item | Atual | Meta |
+|---|------|-------|------|
+| C.1 | **Simulação pluvial 120 mm** | ~160 s (DEM/hidro pesado) | < 10 s — otimizar/pré-aquecer ou aceitar como job assíncrono |
+| C.2 | **Agente contextual** | até ~90 s (Mistral local) | < 8 s — cache/modelo menor ou fallback Gemini mais agressivo |
+
+### D. Operação e homologação — P1/P3
+| # | Item | Situação | O que falta |
+|---|------|----------|-------------|
+| D.1 | **Batch diagnósticos + PDFs (61)** | Reiniciado (Passo 2) | Concluir `diagnostics-batch` → `reports-batch` e conferir 61/61 |
+| D.2 | **gov.br REAL** | OIDC homologado local (Keycloak) | Trocar issuer/client para gov.br + certificado MCID em produção |
+
+### E. Metas de maturidade Fase 3 (dimensões abaixo da meta) — P2/P3
+| Dimensão | Atual (baseline) | Meta Fase 3 |
+|----------|------------------|-------------|
+| Integrações externas | 72% | 85% (depende de A.1/A.2) |
+| Análise e índices | 78% | 88% |
+| IA e RAG | 70% | 82% |
+| Visualização 2D/3D | 75% | 88% |
+| Contingência e alerta | 80% | 88% |
+| Testes automatizados | ~60% (mín. CI) | 70% |
+| Produção / deploy | 20% | 75% (depende de D.2) |
+| Infraestrutura | 88% | 95% |
+
+### F. Documentação — P2
+- [ ] Registrar metodologia da **ilha de calor** e das novas fontes em `DOCUMENTACAO_TECNICA_COMPLETA.md`
+- [ ] Commit do trabalho da Fase 15 (hoje não versionado)
+- [x] Documentar integração GeoReDUS (posicionamento, deep links, limites LST vs simulação) — ver **Fase 16** / `DOCUMENTACAO_TECNICA_COMPLETA.md` §20
+
+### G. Complemento GeoReDUS (Fase 16) — P1→P3
+| Onda | Itens | Prioridade | Dependências |
+|------|-------|------------|--------------|
+| **16a** | Link externo, busca indicadores, badge calor | P1 | Nenhuma — ✅ concluída jul/2026 |
+| **16b** | LST, comparador calor, Censo déficits, metadados | P1 | 16a.3 → 16b.1 |
+| **16c** | INEP, ano por tema, regional, camadas ativas | P2 | Malha setores (já existe) |
+| **16d** | Territórios especiais, SGB, IA, tiles, geoportal | P2/P3 | A.1 (SGB), A.6 (CTM) |
+
+Itens **16d.2** (SGB/ANADEM) alinham-se ao backlog **A.1**; não iniciar ingestão sem convênio CPRM.
 
 ---
 

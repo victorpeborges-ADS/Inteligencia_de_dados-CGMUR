@@ -22,6 +22,7 @@ SIMULATION_INTERPRET_CACHE_ENABLED = os.getenv(
 def _fingerprint(
     resultado_simulacao: dict[str, Any],
     comparacao_delta: dict[str, Any] | None,
+    lst_comparison: dict[str, Any] | None = None,
 ) -> str:
     meta = resultado_simulacao.get("simulation_meta") or {}
     payload = {
@@ -29,8 +30,11 @@ def _fingerprint(
         "pop": resultado_simulacao.get("affected_population"),
         "patches": meta.get("flood_patches"),
         "max_depth": meta.get("max_depth_m"),
+        "max_delta_t": meta.get("max_delta_t_c"),
         "model": meta.get("model_version"),
         "delta": comparacao_delta,
+        "lst_div": (lst_comparison or {}).get("divergencia_mediana_c"),
+        "lst_n": (lst_comparison or {}).get("amostras_validas"),
     }
     raw = json.dumps(payload, sort_keys=True, default=str)
     return hashlib.sha256(raw.encode()).hexdigest()[:16]
@@ -55,18 +59,19 @@ def interpret_simulation_cached(
     db: Session,
     muni: Municipio,
     *,
-    tipo_simulacao: Literal["chuva", "asfalto", "vegetacao", "drenagem"],
+    tipo_simulacao: Literal["chuva", "asfalto", "vegetacao", "drenagem", "calor"],
     parametro_atual: float,
     parametro_referencia: float = 80.0,
     resultado_simulacao: dict[str, Any],
     resultado_referencia: dict[str, Any] | None = None,
     comparacao_delta: dict[str, Any] | None = None,
+    lst_comparison: dict[str, Any] | None = None,
     ai_provider: str | None = None,
     ai_model: str | None = None,
     ai_api_key: str | None = None,
     use_ai: bool = True,
 ) -> dict[str, Any]:
-    fp = _fingerprint(resultado_simulacao, comparacao_delta)
+    fp = _fingerprint(resultado_simulacao, comparacao_delta, lst_comparison)
     key = _cache_key(
         muni.codigo_ibge,
         tipo_simulacao,
@@ -92,6 +97,7 @@ def interpret_simulation_cached(
         resultado_simulacao=resultado_simulacao,
         resultado_referencia=resultado_referencia,
         comparacao_delta=comparacao_delta,
+        lst_comparison=lst_comparison,
         ai_provider=ai_provider,
         ai_model=ai_model,
         ai_api_key=ai_api_key,

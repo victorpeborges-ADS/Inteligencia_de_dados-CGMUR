@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import dynamic from 'next/dynamic';
 import { usePathname, useRouter } from 'next/navigation';
 import { api, getApiBaseUrl, type SocioeconomicRanking, type WorkshopDiagnostic } from '@/utils/api';
@@ -31,6 +31,7 @@ import {
   type LayerQuality,
 } from '@/config/platformTabs';
 import { useAppStore, FOCUS_MODE_STORAGE_KEY } from '@/stores/useAppStore';
+import { resolveActiveTemporalTemas } from '@/config/layerTemporal';
 import AgenteSinidu from '@/components/AgenteSinidu';
 import { useAgenteProativo } from '@/hooks/useAgenteContexto';
 import WorkshopCenter from '@/components/Workshop/WorkshopCenter';
@@ -68,6 +69,14 @@ export default function PlatformApp({ initialTab }: PlatformAppProps) {
   const setActiveLayers = useAppStore((s) => s.setActiveLayers);
   const toggleLayer = useAppStore((s) => s.toggleLayer);
   const resetMapLayers = useAppStore((s) => s.resetMapLayers);
+  const socioSubcamada = useAppStore((s) => s.socioSubcamada);
+  const setSocioSubcamada = useAppStore((s) => s.setSocioSubcamada);
+  const educacaoEtapa = useAppStore((s) => s.educacaoEtapa);
+  const setEducacaoEtapa = useAppStore((s) => s.setEducacaoEtapa);
+  const educacaoRaioM = useAppStore((s) => s.educacaoRaioM);
+  const setEducacaoRaioM = useAppStore((s) => s.setEducacaoRaioM);
+  const showEducacaoBuffer = useAppStore((s) => s.showEducacaoBuffer);
+  const setShowEducacaoBuffer = useAppStore((s) => s.setShowEducacaoBuffer);
   const mapFocus = useAppStore((s) => s.mapFocus);
   const setMapFocus = useAppStore((s) => s.setMapFocus);
   const zoom = useAppStore((s) => s.zoom);
@@ -86,6 +95,17 @@ export default function PlatformApp({ initialTab }: PlatformAppProps) {
   const setMunicipioEnsureError = useAppStore((s) => s.setMunicipioEnsureError);
   const layerOptions = useAppStore((s) => s.layerOptions);
   const setLayerOptions = useAppStore((s) => s.setLayerOptions);
+  const temporalOptions = useAppStore((s) => s.temporalOptions);
+  const setTemporalOptions = useAppStore((s) => s.setTemporalOptions);
+  const layerAnoByTema = useAppStore((s) => s.layerAnoByTema);
+  const setLayerAnoForTema = useAppStore((s) => s.setLayerAnoForTema);
+  const initLayerAnoFromTemporal = useAppStore((s) => s.initLayerAnoFromTemporal);
+  const showRegionalOverlay = useAppStore((s) => s.showRegionalOverlay);
+  const setShowRegionalOverlay = useAppStore((s) => s.setShowRegionalOverlay);
+  const regionalEscopo = useAppStore((s) => s.regionalEscopo);
+  const setRegionalEscopo = useAppStore((s) => s.setRegionalEscopo);
+  const territorioTipo = useAppStore((s) => s.territorioTipo);
+  const setTerritorioTipo = useAppStore((s) => s.setTerritorioTipo);
   const focusMode = useAppStore((s) => s.focusMode);
   const setFocusMode = useAppStore((s) => s.setFocusMode);
   const toggleFocusMode = useAppStore((s) => s.toggleFocusMode);
@@ -373,6 +393,9 @@ export default function PlatformApp({ initialTab }: PlatformAppProps) {
               quality?: string;
               disponivel?: boolean;
               tooltip_estimado?: string;
+              descricao?: string;
+              count?: number;
+              fontes_catalogo?: { id: string; nome: string; descricao_curta?: string }[];
             };
             return {
               ...layer,
@@ -380,6 +403,9 @@ export default function PlatformApp({ initialTab }: PlatformAppProps) {
               quality: (patchObj.quality as LayerQuality) ?? layer.quality,
               disponivel: patchObj.disponivel ?? !blocked.has(layer.id),
               tooltipEstimado: patchObj.tooltip_estimado,
+              descricao: patchObj.descricao ?? layer.descricao,
+              count: patchObj.count ?? layer.count,
+              fontesCatalogo: patchObj.fontes_catalogo ?? layer.fontesCatalogo,
             };
           }),
         );
@@ -389,6 +415,20 @@ export default function PlatformApp({ initialTab }: PlatformAppProps) {
       })
       .catch(() => {});
   }, [selectedMunicipio, setLayerOptions, setActiveLayers]);
+
+  useEffect(() => {
+    api.getLayersTemporalOptions(selectedMunicipio)
+      .then((payload) => {
+        setTemporalOptions(payload);
+        initLayerAnoFromTemporal(payload.temas || {});
+      })
+      .catch(() => setTemporalOptions(null));
+  }, [selectedMunicipio, setTemporalOptions, initLayerAnoFromTemporal]);
+
+  const temporalActiveTemas = useMemo(
+    () => resolveActiveTemporalTemas(activeLayers, temporalOptions),
+    [activeLayers, temporalOptions],
+  );
 
   useEffect(() => {
     if (!activeLayers.includes('socioeconomico')) {
@@ -705,6 +745,24 @@ export default function PlatformApp({ initialTab }: PlatformAppProps) {
               toggleLayer={toggleLayer}
               layerOptions={layerOptions}
               malhaIndisponivel={malhaIndisponivel}
+              codigoIbge={selectedMunicipio}
+              socioSubcamada={socioSubcamada}
+              setSocioSubcamada={setSocioSubcamada}
+              educacaoEtapa={educacaoEtapa}
+              setEducacaoEtapa={setEducacaoEtapa}
+              educacaoRaioM={educacaoRaioM}
+              setEducacaoRaioM={setEducacaoRaioM}
+              showEducacaoBuffer={showEducacaoBuffer}
+              setShowEducacaoBuffer={setShowEducacaoBuffer}
+              temporalActiveTemas={temporalActiveTemas}
+              layerAnoByTema={layerAnoByTema}
+              setLayerAnoForTema={setLayerAnoForTema}
+              showRegionalOverlay={showRegionalOverlay}
+              setShowRegionalOverlay={setShowRegionalOverlay}
+              regionalEscopo={regionalEscopo}
+              setRegionalEscopo={setRegionalEscopo}
+              territorioTipo={territorioTipo}
+              setTerritorioTipo={setTerritorioTipo}
             />
           )}
 
@@ -781,6 +839,13 @@ export default function PlatformApp({ initialTab }: PlatformAppProps) {
             simOverlays={simOverlays}
             selectedMunicipio={selectedMunicipio}
             simulating={simulating}
+            socioSubcamada={socioSubcamada}
+            layerOptions={layerOptions}
+            educacaoEtapa={educacaoEtapa}
+            educacaoRaioM={educacaoRaioM}
+            showEducacaoBuffer={showEducacaoBuffer}
+            territorioTipo={territorioTipo}
+            layerAnoByTema={layerAnoByTema}
           />
           ) : (
           <Map3DMapLibreContainer

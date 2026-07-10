@@ -1,8 +1,9 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { api, MitigationPlan, RainfallComparison, SimulationInterpret, SimulationOutput, SlopeInterpretation } from '@/utils/api';
-import { Play, RotateCcw, AlertTriangle, HelpCircle, Thermometer, Droplet, FileText, Waves, Layers, Mountain, Activity, Sparkles, Copy, ClipboardCheck, Droplets } from 'lucide-react';
+import { api, HeatLstComparison, MitigationPlan, RainfallComparison, SimulationInterpret, SimulationOutput, SlopeInterpretation } from '@/utils/api';
+import { Play, RotateCcw, AlertTriangle, HelpCircle, Thermometer, Droplet, FileText, Waves, Layers, Mountain, Activity, Sparkles, Copy, ClipboardCheck, Droplets, ExternalLink } from 'lucide-react';
+import { georedusMunicipioUrl } from '@/config/georedus';
 import PredictiveAnalysis from './PredictiveAnalysis';
 import RotatingLoader, { INTERPRETATION_MESSAGES, SIMULATION_MESSAGES } from '@/components/UI/RotatingLoader';
 import TermTooltip from '@/components/UI/TermTooltip';
@@ -61,13 +62,18 @@ export default function SimulationPanel({
   onCrossRiskLayers,
   mapMode3dActive = false,
 }: SimulationProps) {
-  const [activeTab, setActiveTab] = useState<'waterproofing' | 'veg_loss' | 'rainfall' | 'drainage' | 'predictive'>('rainfall');
+  const [activeTab, setActiveTab] = useState<'waterproofing' | 'heat_island' | 'rainfall' | 'drainage' | 'predictive'>('rainfall');
   const [waterproofingPct, setWaterproofingPct] = useState(25);
-  const [vegLossPct, setVegLossPct] = useState(40);
+  const [heatPeakTempC, setHeatPeakTempC] = useState(36);
+  // Mudança líquida de cobertura vegetal: negativo = desmatamento, positivo = arborização
+  const [heatVegChangePct, setHeatVegChangePct] = useState(20);
+  const [heatImpermExtraPct, setHeatImpermExtraPct] = useState(15);
   const [rainfallMm, setRainfallMm] = useState(120);
   const [compareRainfall, setCompareRainfall] = useState(true);
   const [baselineRainfallMm, setBaselineRainfallMm] = useState(80);
   const [rainfallComparison, setRainfallComparison] = useState<RainfallComparison | null>(null);
+  const [heatLstComparison, setHeatLstComparison] = useState<HeatLstComparison | null>(null);
+  const [lstCompareLoading, setLstCompareLoading] = useState(false);
   const [drainageDeficitPct, setDrainageDeficitPct] = useState(45);
   
   const [loading, setLoading] = useState(false);
@@ -141,9 +147,9 @@ export default function SimulationPanel({
     }
   };
 
-  const simulationTipo = (): 'chuva' | 'asfalto' | 'vegetacao' | 'drenagem' => {
+  const simulationTipo = (): 'chuva' | 'asfalto' | 'vegetacao' | 'drenagem' | 'calor' => {
     if (activeTab === 'waterproofing') return 'asfalto';
-    if (activeTab === 'veg_loss') return 'vegetacao';
+    if (activeTab === 'heat_island') return 'calor';
     if (activeTab === 'drainage') return 'drenagem';
     return 'chuva';
   };
@@ -161,7 +167,11 @@ export default function SimulationPanel({
         ].filter(Boolean) as string[],
   });
 
-  const runInterpret = async (data: SimulationOutput, comparison: RainfallComparison | null) => {
+  const runInterpret = async (
+    data: SimulationOutput,
+    comparison: RainfallComparison | null,
+    lstComparison: HeatLstComparison | null = null,
+  ) => {
     if (!codigoIbge) return;
     setAnalysisLoading(true);
     setSimInterpret(null);
@@ -176,6 +186,7 @@ export default function SimulationPanel({
         resultado_simulacao: data,
         resultado_referencia: comparison?.baseline,
         comparacao_delta: comparison?.delta,
+        lst_comparison: lstComparison ?? undefined,
       });
       setSimInterpret(interpret);
       const meta = data.simulation_meta;
@@ -200,17 +211,35 @@ export default function SimulationPanel({
     setSlopeInterpret(null);
     setInterpretError(null);
     setRainfallComparison(null);
+    setHeatLstComparison(null);
     try {
       let data: SimulationOutput;
       let comparison: RainfallComparison | null = null;
+      let lstComparison: HeatLstComparison | null = null;
       const onJobProgress = (p: { progress: number; stage_label?: string }) => {
         setSimProgress({ progress: p.progress, stage_label: p.stage_label });
       };
 
       if (activeTab === 'waterproofing') {
         data = await api.simulateWaterproofing(waterproofingPct, codigoIbge);
-      } else if (activeTab === 'veg_loss') {
-        data = await api.simulateVegetationLoss(vegLossPct, codigoIbge);
+      } else if (activeTab === 'heat_island') {
+        data = await api.simulateHeatIsland({
+          temperaturaPicoC: heatPeakTempC,
+          perdaVegetalPct: heatVegChangePct < 0 ? -heatVegChangePct : 0,
+          ganhoVegetalPct: heatVegChangePct > 0 ? heatVegChangePct : 0,
+          impermeabilizacaoExtraPct: heatImpermExtraPct,
+          codigoIbge,
+        });
+        setLstCompareLoading(true);
+        try {
+          lstComparison = await api.compareHeatLst(data, codigoIbge);
+          setHeatLstComparison(lstComparison);
+        } catch (lstErr) {
+          console.error('LST comparison failed:', lstErr);
+          setHeatLstComparison(null);
+        } finally {
+          setLstCompareLoading(false);
+        }
       } else if (activeTab === 'drainage') {
         data = await api.simulateDrainageDeficit(drainageDeficitPct, codigoIbge);
       } else if (compareRainfall) {
@@ -227,7 +256,11 @@ export default function SimulationPanel({
       }
       setResult(data);
       onSimulate(data);
-      void runInterpret(data, compareRainfall && activeTab === 'rainfall' ? comparison : null);
+      void runInterpret(
+        data,
+        compareRainfall && activeTab === 'rainfall' ? comparison : null,
+        activeTab === 'heat_island' ? lstComparison : null,
+      );
     } catch (err) {
       console.error('Error running simulation:', err);
       setSimError(err instanceof Error ? err.message : 'Falha na simulação pluvial.');
@@ -278,6 +311,7 @@ export default function SimulationPanel({
     setSlopeInterpret(null);
     setInterpretError(null);
     setRainfallComparison(null);
+    setHeatLstComparison(null);
     onClear();
   };
 
@@ -332,7 +366,7 @@ export default function SimulationPanel({
     setContingencyLoading(true);
     try {
       const cenario =
-        activeTab === 'drainage' || activeTab === 'rainfall' ? 'INUNDACAO' : activeTab === 'veg_loss' ? 'DESLIZAMENTO' : 'MULTIPLO';
+        activeTab === 'drainage' || activeTab === 'rainfall' ? 'INUNDACAO' : activeTab === 'heat_island' ? 'CALOR' : 'MULTIPLO';
       await api.generateContingencyFromSimulation({
         codigo_ibge: codigoIbge,
         cenario_tipo: cenario,
@@ -397,7 +431,7 @@ export default function SimulationPanel({
       )}
       {/* Simulation Selector tabs */}
       <div className="grid grid-cols-5 gap-1 bg-zinc-950 p-1 rounded-lg border border-border">
-        {(['rainfall', 'predictive', 'waterproofing', 'veg_loss', 'drainage'] as const).map((tab) => (
+        {(['rainfall', 'predictive', 'waterproofing', 'heat_island', 'drainage'] as const).map((tab) => (
           <button
             key={tab}
             onClick={() => { setActiveTab(tab); setResult(null); setMitigationPlan(null); setSimInterpret(null); setInterpretError(null); if (tab !== 'predictive') onClear(); }}
@@ -407,7 +441,7 @@ export default function SimulationPanel({
                 : 'text-zinc-400 hover:text-zinc-200'
             }`}
           >
-            {tab === 'rainfall' ? 'Chuva' : tab === 'predictive' ? 'Preditiva' : tab === 'waterproofing' ? 'Asfalto' : tab === 'veg_loss' ? 'Vegetação' : 'Drenagem'}
+            {tab === 'rainfall' ? 'Chuva' : tab === 'predictive' ? 'Preditiva' : tab === 'waterproofing' ? 'Asfalto' : tab === 'heat_island' ? 'Calor' : 'Drenagem'}
           </button>
         ))}
       </div>
@@ -590,41 +624,149 @@ export default function SimulationPanel({
           </div>
         )}
 
-        {activeTab === 'veg_loss' && (
+        {activeTab === 'heat_island' && (
           <div className="flex flex-col gap-4">
-            <div>
-              <h4 className="font-extrabold text-sm text-zinc-200 flex items-center gap-1.5">
-                <Thermometer size={16} className="text-accent-rose" /> Perda de Cobertura Vegetal
-              </h4>
-              <p className="text-[11px] text-zinc-400 mt-1">Redução de áreas florestadas e impacto no microclima.</p>
+            <div className="rounded-lg border border-rose-500/25 bg-gradient-to-br from-rose-950/40 to-zinc-950/60 p-3">
+              <div className="flex items-start justify-between gap-2">
+                <div>
+                  <h4 className="font-extrabold text-sm text-zinc-100 flex items-center gap-1.5">
+                    <Thermometer size={16} className="text-rose-400" /> Ilha de Calor Urbana
+                  </h4>
+                  <p className="text-[10px] text-rose-200/70 mt-1 uppercase tracking-wider font-bold">
+                    MapBiomas · INMET · IVC · densidade por bairro
+                  </p>
+                </div>
+                <span className="shrink-0 rounded-md border border-rose-500/30 bg-rose-500/10 px-2 py-1 text-[9px] font-bold text-rose-200">
+                  v{displayedModelVersion}
+                </span>
+              </div>
+              <div className="mt-3 flex flex-wrap gap-2">
+                <span className="rounded-md border border-sky-500/35 bg-sky-500/10 px-2 py-1 text-[9px] font-bold uppercase tracking-wide text-sky-200">
+                  Simulação Sinidu · Derivado
+                </span>
+                {codigoIbge ? (
+                  <a
+                    href={georedusMunicipioUrl(codigoIbge)}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1 rounded-md border border-emerald-500/35 bg-emerald-500/10 px-2 py-1 text-[9px] font-bold uppercase tracking-wide text-emerald-200 transition hover:bg-emerald-500/20"
+                    title="Ative a camada LST observada no mapa ou abra o GeoReDUS para o município"
+                  >
+                    LST observada · Observado
+                    <ExternalLink size={10} />
+                  </a>
+                ) : (
+                  <span className="rounded-md border border-emerald-500/25 bg-emerald-950/20 px-2 py-1 text-[9px] font-bold uppercase tracking-wide text-emerald-300/70">
+                    LST observada · Referência externa
+                  </span>
+                )}
+              </div>
             </div>
+
+            <div className="grid grid-cols-3 gap-2">
+              <div className="rounded-lg border border-zinc-800 bg-zinc-950/70 p-2 text-center">
+                <span className="block text-[8px] font-bold uppercase tracking-wider text-zinc-500">Pico previsto</span>
+                <span className="text-lg font-extrabold text-rose-300">{heatPeakTempC}</span>
+                <span className="text-[9px] text-zinc-500"> °C</span>
+              </div>
+              <div className="rounded-lg border border-zinc-800 bg-zinc-950/70 p-2 text-center">
+                <span className="block text-[8px] font-bold uppercase tracking-wider text-zinc-500">
+                  {heatVegChangePct >= 0 ? 'Arborização' : 'Desmatamento'}
+                </span>
+                <span className={`text-lg font-extrabold ${heatVegChangePct >= 0 ? 'text-lime-300' : 'text-rose-300'}`}>
+                  {heatVegChangePct > 0 ? '+' : ''}{heatVegChangePct}
+                </span>
+                <span className="text-[9px] text-zinc-500"> %</span>
+              </div>
+              <div className="rounded-lg border border-zinc-800 bg-zinc-950/70 p-2 text-center">
+                <span className="block text-[8px] font-bold uppercase tracking-wider text-zinc-500">Asfalto extra</span>
+                <span className="text-lg font-extrabold text-amber-300">{heatImpermExtraPct}</span>
+                <span className="text-[9px] text-zinc-500"> %</span>
+              </div>
+            </div>
+
             <div className="flex flex-col gap-2">
               <div className="flex justify-between text-xs text-zinc-300">
-                <span>Remoção da Cobertura Verde</span>
-                <span className="font-bold text-accent-rose">-{vegLossPct}%</span>
+                <span>Temperatura de pico prevista</span>
+                <span className="font-bold text-rose-300">{heatPeakTempC}°C</span>
               </div>
               <input
                 type="range"
-                min="10"
-                max="100"
-                step="5"
-                value={vegLossPct}
-                onChange={(e) => setVegLossPct(Number(e.target.value))}
-                className="w-full h-1 bg-zinc-800 rounded-lg appearance-none cursor-pointer accent-rose-500"
+                min="28"
+                max="46"
+                step="1"
+                value={heatPeakTempC}
+                onChange={(e) => setHeatPeakTempC(Number(e.target.value))}
+                className="w-full h-1.5 bg-zinc-800 rounded-lg appearance-none cursor-pointer accent-rose-500"
               />
-              <span className="text-[9px] text-zinc-500 italic">Calcula o efeito de ilha de calor decorrente de desmatamento local.</span>
+              <div className="flex justify-between text-[8px] text-zinc-600 font-mono">
+                <span>28 °C</span>
+                <span>36 °C (onda típica)</span>
+                <span>46 °C</span>
+              </div>
+              <span className="text-[9px] text-zinc-500 italic">
+                Informe a temperatura máxima prevista (previsão do tempo). Os bairros mais
+                impermeabilizados chegam a esse pico somado à intensidade da ilha de calor.
+              </span>
             </div>
+
+            <div className="flex flex-col gap-2">
+              <div className="flex justify-between text-xs text-zinc-300">
+                <span>Cobertura vegetal (desmatar ↔ arborizar)</span>
+                <span className={`font-bold ${heatVegChangePct >= 0 ? 'text-lime-300' : 'text-rose-300'}`}>
+                  {heatVegChangePct > 0 ? '+' : ''}{heatVegChangePct}%
+                </span>
+              </div>
+              <input
+                type="range"
+                min="-60"
+                max="60"
+                step="5"
+                value={heatVegChangePct}
+                onChange={(e) => setHeatVegChangePct(Number(e.target.value))}
+                className={`w-full h-1.5 bg-zinc-800 rounded-lg appearance-none cursor-pointer ${heatVegChangePct >= 0 ? 'accent-lime-500' : 'accent-rose-500'}`}
+              />
+              <div className="flex justify-between text-[8px] text-zinc-600 font-mono">
+                <span>-60% desmatar</span>
+                <span>0 atual</span>
+                <span>+60% arborizar</span>
+              </div>
+              <span className="text-[9px] text-zinc-500 italic">
+                Positivo simula arborização, telhados verdes e novos parques — converte
+                superfície impermeável em vegetada e reduz a ilha de calor.
+              </span>
+            </div>
+
+            <div className="flex flex-col gap-2">
+              <div className="flex justify-between text-xs text-zinc-300">
+                <span>Impermeabilização urbana adicional</span>
+                <span className="font-bold text-amber-300">{heatImpermExtraPct}%</span>
+              </div>
+              <input
+                type="range"
+                min="0"
+                max="50"
+                step="5"
+                value={heatImpermExtraPct}
+                onChange={(e) => setHeatImpermExtraPct(Number(e.target.value))}
+                className="w-full h-1.5 bg-zinc-800 rounded-lg appearance-none cursor-pointer accent-amber-500"
+              />
+            </div>
+
             <div className="rounded-lg border border-rose-500/20 bg-rose-950/10 p-3">
               <h5 className="mb-2 flex items-center gap-1.5 text-[10px] font-extrabold uppercase tracking-wide text-rose-200">
-                <HelpCircle size={13} /> Metodologia da vegetação
+                <HelpCircle size={13} /> Metodologia
               </h5>
               <p className="text-[10px] leading-relaxed text-zinc-400">
-                A simulação usa a cobertura vegetal e a área urbana para estimar a expansão de ilhas de calor quando há
-                perda de cobertura vegetal. O percentual informado amplia a zona térmica e estima a população dentro da área afetada.
+                Modelo temperatura-driven: a partir do pico previsto, a intensidade da ilha de calor (ΔT) de cada
+                bairro deriva da impermeabilização e vegetação (MapBiomas) e da densidade populacional, seguindo
+                a relação de Oke (1982), e é amplificada pela severidade da onda de calor. A temperatura local
+                de cada bairro = pico + ΔT. Arborizar converte superfície impermeável em vegetada e o sistema
+                mede o resfriamento obtido contra o cenário sem arborização. O IVC prioriza a exposição da
+                população vulnerável. A Sinidu·IA interpreta equipamentos expostos e sugere onde plantar.
               </p>
               <p className="mt-2 text-[9px] italic leading-relaxed text-zinc-500">
-                Resultado demonstrativo: serve para priorizar arborização, corredores verdes e proteção de remanescentes,
-                não substitui inventário arbóreo ou medição microclimática de campo.
+                Proxy territorial para oficinas — não substitui medição LST nem estudo microclimático de campo.
               </p>
             </div>
           </div>
@@ -853,7 +995,7 @@ export default function SimulationPanel({
                   <p className="text-[10px] text-rose-200">{interpretError}</p>
                   <button
                     type="button"
-                    onClick={() => void runInterpret(result, rainfallComparison)}
+                    onClick={() => void runInterpret(result, rainfallComparison, heatLstComparison)}
                     className="mt-2 text-[9px] font-bold uppercase text-rose-300 underline"
                   >
                     Tentar novamente
@@ -983,6 +1125,86 @@ export default function SimulationPanel({
             </div>
           )}
 
+          {(lstCompareLoading || heatLstComparison) && activeTab === 'heat_island' && (
+            <div className="rounded-lg border border-emerald-500/25 bg-emerald-950/15 p-3">
+              <span className="text-[9px] font-extrabold uppercase tracking-wider text-emerald-200 block mb-2">
+                Observado × simulado — LST GeoReDUS vs Sinidu
+              </span>
+              {lstCompareLoading && (
+                <p className="text-[10px] text-zinc-400 italic">Consultando LST observada nos bairros críticos…</p>
+              )}
+              {heatLstComparison && !lstCompareLoading && (
+                <>
+                  <div className="grid grid-cols-2 gap-2 text-[10px]">
+                    <div className="rounded border border-zinc-800 bg-zinc-950/60 p-2">
+                      <span className="text-zinc-500 block">LST mediana (obs.)</span>
+                      <strong className="text-sky-200">
+                        {heatLstComparison.lst_mediana_c != null ? `${heatLstComparison.lst_mediana_c}°C` : '—'}
+                      </strong>
+                    </div>
+                    <div className="rounded border border-zinc-800 bg-zinc-950/60 p-2">
+                      <span className="text-zinc-500 block">Simulação mediana</span>
+                      <strong className="text-rose-200">
+                        {heatLstComparison.sim_temp_mediana_c != null ? `${heatLstComparison.sim_temp_mediana_c}°C` : '—'}
+                      </strong>
+                    </div>
+                    <div className="rounded border border-zinc-800 bg-zinc-950/60 p-2">
+                      <span className="text-zinc-500 block">Δ mediano</span>
+                      <strong className="text-emerald-200">
+                        {heatLstComparison.divergencia_mediana_c != null
+                          ? `${heatLstComparison.divergencia_mediana_c > 0 ? '+' : ''}${heatLstComparison.divergencia_mediana_c}°C`
+                          : '—'}
+                      </strong>
+                    </div>
+                    <div className="rounded border border-zinc-800 bg-zinc-950/60 p-2">
+                      <span className="text-zinc-500 block">Amostras LST</span>
+                      <strong className="text-emerald-200">
+                        {heatLstComparison.amostras_validas}/{heatLstComparison.amostras_total}
+                      </strong>
+                    </div>
+                  </div>
+                  <p className="mt-2 text-[10px] leading-relaxed text-zinc-300">{heatLstComparison.narrativa}</p>
+                  {heatLstComparison.bairros.length > 0 && heatLstComparison.disponivel && (
+                    <div className="mt-2 max-h-28 overflow-y-auto rounded border border-zinc-800/80 bg-zinc-950/50">
+                      <table className="w-full text-[9px]">
+                        <thead>
+                          <tr className="text-left text-zinc-500 border-b border-zinc-800">
+                            <th className="px-2 py-1 font-bold">Bairro</th>
+                            <th className="px-2 py-1 font-bold">LST</th>
+                            <th className="px-2 py-1 font-bold">Sim.</th>
+                            <th className="px-2 py-1 font-bold">Δ</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {heatLstComparison.bairros
+                            .filter((row) => row.lst_observada_c != null)
+                            .slice(0, 8)
+                            .map((row) => (
+                              <tr key={row.bairro} className="border-b border-zinc-900/80 text-zinc-300">
+                                <td className="px-2 py-1 truncate max-w-[90px]">{row.bairro}</td>
+                                <td className="px-2 py-1 text-sky-300">{row.lst_observada_c}°</td>
+                                <td className="px-2 py-1 text-rose-300">{row.temp_simulada_c}°</td>
+                                <td className="px-2 py-1 text-emerald-300">
+                                  {row.delta_c != null ? `${row.delta_c > 0 ? '+' : ''}${row.delta_c}°` : '—'}
+                                </td>
+                              </tr>
+                            ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                  {heatLstComparison.limites_metodologicos.length > 0 && (
+                    <ul className="mt-2 list-disc space-y-0.5 pl-4 text-[9px] italic text-zinc-500">
+                      {heatLstComparison.limites_metodologicos.slice(0, 3).map((item) => (
+                        <li key={item}>{item}</li>
+                      ))}
+                    </ul>
+                  )}
+                </>
+              )}
+            </div>
+          )}
+
           <div className="grid grid-cols-2 gap-3">
             <div className="bg-zinc-950/60 p-2.5 rounded-lg border border-zinc-800">
               <span className="text-[9px] text-zinc-400 font-bold uppercase tracking-wider block">Área Afetada</span>
@@ -991,12 +1213,66 @@ export default function SimulationPanel({
             <div className="bg-zinc-950/60 p-2.5 rounded-lg border border-zinc-800">
               <span className="text-[9px] text-zinc-400 font-bold uppercase tracking-wider block">Impacto Estimado</span>
               <span className="text-sm font-extrabold text-accent-rose">
-                {result.scenario_type === 'VegetationLoss' 
-                  ? `+${result.impact_value}°C` 
+                {result.scenario_type === 'VegetationLoss' || result.scenario_type === 'HeatIsland'
+                  ? `+${result.impact_value}°C`
                   : `${result.impact_value.toLocaleString()} hab`}
               </span>
             </div>
           </div>
+
+          {result.scenario_type === 'HeatIsland' && result.simulation_meta && (
+            <div className="grid grid-cols-3 gap-2">
+              <div className="rounded-lg border border-rose-500/20 bg-rose-950/10 p-2 text-center">
+                <span className="block text-[8px] uppercase text-zinc-500">Pico previsto</span>
+                <span className="text-xs font-bold text-rose-300">
+                  {result.simulation_meta.temperatura_pico_c ?? result.input_value}°C
+                </span>
+              </div>
+              <div className="rounded-lg border border-rose-500/20 bg-rose-950/10 p-2 text-center">
+                <span className="block text-[8px] uppercase text-zinc-500">Temp local máx</span>
+                <span className="text-xs font-bold text-rose-300">
+                  {result.simulation_meta.temp_pico_local_c ?? '—'}°C
+                </span>
+              </div>
+              <div className="rounded-lg border border-rose-500/20 bg-rose-950/10 p-2 text-center">
+                <span className="block text-[8px] uppercase text-zinc-500">Ilha de calor máx</span>
+                <span className="text-xs font-bold text-rose-300">
+                  +{result.simulation_meta.max_delta_t_c ?? result.impact_value}°C
+                </span>
+              </div>
+            </div>
+          )}
+
+          {result.scenario_type === 'HeatIsland'
+            && (result.simulation_meta?.ganho_vegetal_pct ?? 0) > 0
+            && (result.simulation_meta?.resfriamento_max_c ?? 0) > 0 && (
+            <div className="rounded-lg border border-lime-500/30 bg-lime-950/15 p-3">
+              <div className="flex items-center gap-1.5 mb-2">
+                <Thermometer size={13} className="text-lime-300" />
+                <span className="text-[10px] font-extrabold uppercase tracking-wide text-lime-200">
+                  Benefício da arborização (+{result.simulation_meta?.ganho_vegetal_pct}% de cobertura)
+                </span>
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <div className="rounded border border-lime-500/20 bg-zinc-950/50 p-2 text-center">
+                  <span className="block text-[8px] uppercase text-zinc-500">Resfriamento máx</span>
+                  <span className="text-sm font-extrabold text-lime-300">
+                    −{result.simulation_meta?.resfriamento_max_c}°C
+                  </span>
+                </div>
+                <div className="rounded border border-lime-500/20 bg-zinc-950/50 p-2 text-center">
+                  <span className="block text-[8px] uppercase text-zinc-500">Resfriamento médio</span>
+                  <span className="text-sm font-extrabold text-lime-300">
+                    −{result.simulation_meta?.resfriamento_medio_c}°C
+                  </span>
+                </div>
+              </div>
+              <p className="mt-2 text-[9px] leading-relaxed text-lime-200/70">
+                Redução da ilha de calor comparada ao mesmo cenário sem arborização — priorize
+                os bairros de maior ΔT e vulnerabilidade (IVC).
+              </p>
+            </div>
+          )}
 
           {result.simulation_meta?.dem_available && (
             <div className="grid grid-cols-3 gap-2">
@@ -1122,8 +1398,8 @@ export default function SimulationPanel({
           <div>
             <span className="text-[9px] text-zinc-400 font-bold uppercase tracking-wider block mb-1">Métricas de Consequência</span>
             <p className="text-xs text-zinc-300 bg-zinc-950/40 p-2 border border-zinc-800/80 rounded italic">
-              {result.metric_impact}: {result.scenario_type === 'VegetationLoss' 
-                ? `Elevação térmica superficial projetada em +${result.impact_value}°C nas áreas desprovidas de cobertura.` 
+              {result.metric_impact}: {result.scenario_type === 'VegetationLoss' || result.scenario_type === 'HeatIsland'
+                ? `Elevação térmica projetada em até +${result.impact_value}°C nos bairros mais expostos.`
                 : `Aproximadamente ${result.affected_population.toLocaleString()} cidadãos residem nos setores inundáveis afetados.`}
             </p>
           </div>

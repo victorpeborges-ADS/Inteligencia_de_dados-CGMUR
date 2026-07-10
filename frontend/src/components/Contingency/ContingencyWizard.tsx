@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import dynamic from 'next/dynamic';
 import { api, type ContingencyPlan, type RoutingStatus } from '@/utils/api';
-import { Save, ChevronRight, ChevronLeft, FileDown, Shield, Route, CheckCircle2 } from 'lucide-react';
+import { Save, ChevronRight, ChevronLeft, FileDown, Shield, Navigation, CheckCircle2 } from 'lucide-react';
 
 const ContingencyDrawMap = dynamic(() => import('./ContingencyDrawMap'), { ssr: false });
 
@@ -193,7 +193,7 @@ export default function ContingencyWizard({
               {osrmReady ? (
                 <CheckCircle2 size={16} className="mt-0.5 shrink-0 text-emerald-400" />
               ) : (
-                <Route size={16} className="mt-0.5 shrink-0 text-amber-300" />
+                <Navigation size={16} className="mt-0.5 shrink-0 text-amber-300" />
               )}
               <div>
                 <p className="text-[10px] font-extrabold uppercase tracking-wide text-zinc-200">

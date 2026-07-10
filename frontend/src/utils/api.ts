@@ -237,6 +237,9 @@ export interface ExecutiveIndicators {
   pib_per_capita?: number;
   pib_fonte?: string;
   pib_qualidade?: string;
+  pib_total_mil_reais?: number | null;
+  pib_ano?: number | null;
+  pib_serie?: Array<{ ano: number; valor_mil_reais: number }> | null;
   nota_capag?: string;
   capag_fonte?: string;
   receita_corrente_liquida?: number;
@@ -257,6 +260,24 @@ export interface ExecutiveIndicators {
   score_confiabilidade?: string;
   confiabilidade_geral?: string;
   malha_fonte?: string;
+  idh?: number | null;
+  idh_ano?: number | null;
+  idh_fonte?: string | null;
+  idh_qualidade?: string | null;
+  atlas_uf_context?: {
+    uf_sigla: string;
+    uf_nome: string;
+    referencia_ano: number;
+    atividades_economicas: number;
+    produtos: number;
+    matrizes: string[];
+    fonte: string;
+    escopo: string;
+    qualidade: string;
+    portal_url: string;
+    descricao: string;
+    kpis?: Array<{ label: string; valor: string }>;
+  } | null;
 }
 
 export interface IntegrationSourceStatus {
@@ -385,6 +406,35 @@ export interface RainfallComparison {
   from_cache?: boolean;
 }
 
+export interface BairroLstCompareRow {
+  bairro: string;
+  lst_observada_c?: number | null;
+  temp_simulada_c: number;
+  delta_c?: number | null;
+  faixa_calor?: string | null;
+}
+
+export interface HeatLstComparison {
+  disponivel: boolean;
+  municipio: string;
+  uf: string;
+  codigo_ibge: string;
+  lst_fonte: string;
+  lst_periodo: string;
+  lst_mediana_c?: number | null;
+  lst_max_c?: number | null;
+  lst_min_c?: number | null;
+  sim_temp_max_c?: number | null;
+  sim_temp_mediana_c?: number | null;
+  sim_delta_t_max_c?: number | null;
+  divergencia_mediana_c?: number | null;
+  amostras_validas: number;
+  amostras_total: number;
+  bairros: BairroLstCompareRow[];
+  narrativa: string;
+  limites_metodologicos: string[];
+}
+
 export interface SimulationJobProgress {
   job_id: string;
   type?: string;
@@ -399,7 +449,7 @@ export interface SimulationJobProgress {
 }
 
 export interface SimulationOutput {
-  scenario_type: 'Waterproofing' | 'VegetationLoss' | 'ExtremeRainfall' | 'DrainageDeficit';
+  scenario_type: 'Waterproofing' | 'VegetationLoss' | 'ExtremeRainfall' | 'DrainageDeficit' | 'HeatIsland';
   input_value: number;
   metric_impact: string;
   impact_value: number;
@@ -437,6 +487,19 @@ export interface SimulationOutput {
     max_flow_accumulation?: number;
     bairros_exposicao?: { bairro: string; exposicao_pct: number; populacao_exposta: number }[];
     bairros_atingidos_count?: number;
+    temperatura_pico_c?: number;
+    temp_pico_local_c?: number;
+    baseline_normal_c?: number;
+    baseline_temp_c?: number;
+    baseline_temp_fonte?: string;
+    heatwave_amplification?: number;
+    max_delta_t_c?: number;
+    faixas_contagem?: Record<string, number>;
+    ganho_vegetal_pct?: number;
+    perda_vegetal_pct?: number;
+    impermeabilizacao_extra_pct?: number;
+    resfriamento_max_c?: number;
+    resfriamento_medio_c?: number;
   };
   risk_context?: BairroRiskContext[];
   from_cache?: boolean;
@@ -611,6 +674,8 @@ export interface MunicipalAssistantContext {
   suggested_questions: string[];
   tem_diagnostico: boolean;
   tem_relatorio: boolean;
+  georedus_url?: string;
+  georedus_indicadores?: { id: string; label: string; group: string; source: string; description: string; sinidu_layer?: string | null }[];
 }
 
 export interface AIProviderOption {
@@ -874,7 +939,7 @@ export interface DataCatalogBase {
   nome: string;
   grupo: string;
   camada?: string | null;
-  status: 'Integrado' | 'Estimado' | 'Em integracao' | 'Ausente';
+  status: 'Integrado' | 'Estimado' | 'Em integracao' | 'Ausente' | 'Nao aplicavel';
   score: number;
   recomendacao: string;
   ultima_sync?: string | null;
@@ -1265,6 +1330,39 @@ export interface OnboardingStatus {
   pronto_para_uso: boolean;
 }
 
+export interface GeoportalPublicacao {
+  id: number;
+  tipo: string;
+  titulo: string;
+  url?: string | null;
+  arquivo_nome?: string | null;
+  feature_count?: number | null;
+  status: string;
+  mensagem?: string | null;
+  ativo: boolean;
+  publicado_em?: string | null;
+  importado_em?: string | null;
+}
+
+export interface GeoportalStatus {
+  codigo_ibge: string;
+  municipio: { nome: string; uf: string };
+  bairros_count: number;
+  malha_fonte?: string | null;
+  publicacao_ativa?: GeoportalPublicacao | null;
+  ctm_registry: {
+    disponivel: boolean;
+    nome?: string | null;
+    tipo?: string | null;
+    url?: string | null;
+    nota?: string | null;
+  };
+  catalog_status: string;
+  acoes_sugeridas: string[];
+  formatos_aceitos: string[];
+  tipos_api: string[];
+}
+
 export interface MunicipalMaturitySource {
   id: string;
   nome: string;
@@ -1343,11 +1441,148 @@ export const api = {
     return res.json();
   },
 
-  getLayerGeoJSON: async (layerName: string, codigoIbge?: string): Promise<any> => {
-    const qs = codigoIbge ? `?codigo_ibge=${encodeURIComponent(codigoIbge)}` : '';
+  getLayerGeoJSON: async (
+    layerName: string,
+    codigoIbge?: string,
+    extraParams?: Record<string, string | number | boolean>,
+  ): Promise<any> => {
+    const params = new URLSearchParams();
+    if (codigoIbge) params.set('codigo_ibge', codigoIbge);
+    if (extraParams) {
+      Object.entries(extraParams).forEach(([key, value]) => {
+        if (value !== '' && value != null) {
+          params.set(key, String(value));
+        }
+      });
+    }
+    const qs = params.toString() ? `?${params.toString()}` : '';
     const res = await apiFetch(`${getApiBaseUrl()}/api/v1/indicators/layers/${layerName}${qs}`);
     if (!res.ok) throw new Error(`Failed to load layer: ${layerName}`);
     return res.json();
+  },
+
+  getLayersTemporalOptions: async (codigoIbge?: string): Promise<{
+    codigo_ibge: string;
+    temas: Record<string, {
+      tema_id: string;
+      label: string;
+      layer_id: string | null;
+      anos: number[];
+      padrao: number | null;
+      context_only?: boolean;
+      nota?: string | null;
+    }>;
+  }> => {
+    const qs = codigoIbge ? `?codigo_ibge=${encodeURIComponent(codigoIbge)}` : '';
+    const res = await apiFetch(`${getApiBaseUrl()}/api/v1/indicators/layers/temporal-options${qs}`);
+    if (!res.ok) throw new Error('Failed to load temporal options');
+    return res.json();
+  },
+
+  getRegionalOverlay: async (
+    codigoIbge?: string,
+    escopo: 'regiao_imediata' | 'mesorregiao' = 'regiao_imediata',
+  ) => {
+    const params = new URLSearchParams();
+    if (codigoIbge) params.set('codigo_ibge', codigoIbge);
+    params.set('escopo', escopo);
+    const res = await apiFetch(`${getApiBaseUrl()}/api/v1/indicators/regional-overlay?${params}`);
+    if (!res.ok) throw new Error('Falha ao carregar overlay regional');
+    return res.json();
+  },
+
+  getExternalRastersCatalog: async (codigoIbge?: string): Promise<{
+    provider: string;
+    tile_server_pattern: string;
+    layers: {
+      layer_id: string;
+      label: string;
+      quality: string;
+      source: string;
+      description: string;
+      status: string;
+      provider: string;
+      min_zoom: number;
+      max_zoom: number;
+      unit: string;
+      periodo_label: string;
+      georedus_url: string;
+      default_rescale: { min: number; max: number };
+      rescale_bounds: { min: number; max: number };
+      colormap: string;
+    }[];
+  }> => {
+    const qs = codigoIbge ? `?codigo_ibge=${encodeURIComponent(codigoIbge)}` : '';
+    const res = await apiFetch(`${getApiBaseUrl()}/api/v1/map/external-rasters${qs}`);
+    if (!res.ok) throw new Error('Falha ao carregar catálogo raster externo');
+    return res.json();
+  },
+
+  getExternalRasterConfig: async (
+    layerId: string,
+    codigoIbge?: string,
+    rescaleMin?: number,
+    rescaleMax?: number,
+    ano?: number,
+  ): Promise<{
+    layer_id: string;
+    label: string;
+    quality: string;
+    source: string;
+    description: string;
+    tile_url_template: string;
+    min_zoom: number;
+    max_zoom: number;
+    rescale_min: number;
+    rescale_max: number;
+    rescale_min_c?: number;
+    rescale_max_c?: number;
+    unit: string;
+    colormap: string;
+    attribution: string;
+    georedus_url: string;
+    provider: string;
+    supports_point_query: boolean;
+  }> => {
+    const params = new URLSearchParams();
+    if (codigoIbge) params.set('codigo_ibge', codigoIbge);
+    if (rescaleMin != null) params.set('rescale_min', String(rescaleMin));
+    if (rescaleMax != null) params.set('rescale_max', String(rescaleMax));
+    if (ano != null) params.set('ano', String(ano));
+    const qs = params.toString() ? `?${params.toString()}` : '';
+    const res = await apiFetch(
+      `${getApiBaseUrl()}/api/v1/map/external-rasters/${encodeURIComponent(layerId)}/config${qs}`,
+    );
+    if (!res.ok) throw new Error(`Falha ao carregar raster externo: ${layerId}`);
+    return res.json();
+  },
+
+  getLstObservadaConfig: async (
+    codigoIbge?: string,
+    rescaleMin?: number,
+    rescaleMax?: number,
+    ano?: number,
+  ): Promise<{
+    layer_id: string;
+    label: string;
+    quality: string;
+    source: string;
+    description: string;
+    tile_url_template: string;
+    min_zoom: number;
+    max_zoom: number;
+    rescale_min_c: number;
+    rescale_max_c: number;
+    colormap: string;
+    attribution: string;
+    georedus_url: string;
+  }> => {
+    const cfg = await api.getExternalRasterConfig('lst_observada', codigoIbge, rescaleMin, rescaleMax, ano);
+    return {
+      ...cfg,
+      rescale_min_c: cfg.rescale_min_c ?? cfg.rescale_min,
+      rescale_max_c: cfg.rescale_max_c ?? cfg.rescale_max,
+    };
   },
 
   getLayersMeta: async (codigoIbge?: string): Promise<{
@@ -1362,6 +1597,9 @@ export const api = {
       source: string;
       disponivel?: boolean;
       tooltip_estimado?: string;
+      descricao?: string;
+      count?: number;
+      fontes_catalogo?: { id: string; nome: string; descricao_curta?: string }[];
       snis?: Record<string, unknown>;
     }>;
   }> => {
@@ -1491,6 +1729,40 @@ export const api = {
     return res.json();
   },
 
+  getSingedlabExposure: async (codigoIbge: string): Promise<Record<string, unknown>> => {
+    const res = await apiFetch(
+      `${getApiBaseUrl()}/api/v1/data-catalog/singedlab/${encodeURIComponent(codigoIbge)}`,
+    );
+    if (!res.ok) throw await httpError(res, 'Falha ao carregar exposição SINGED Lab');
+    return res.json();
+  },
+
+  importSingedlabCsv: async (
+    file: File,
+    syncDb = true,
+  ): Promise<{
+    filename: string;
+    imported_municipios: number;
+    codigos_ibge: string[];
+    target_csv: string;
+    sync?: { requested: number; processed: number; errors: unknown[] };
+  }> => {
+    const form = new FormData();
+    form.append('file', file);
+    const res = await apiFetch(
+      `${getApiBaseUrl()}/api/v1/data-catalog/singedlab/import-csv?sync_db=${syncDb ? 'true' : 'false'}`,
+      { method: 'POST', body: form },
+    );
+    if (!res.ok) throw await httpError(res, 'Falha ao importar CSV SINGED Lab');
+    return res.json();
+  },
+
+  syncSingedlabAll: async (): Promise<{ requested: number; processed: number; errors: unknown[] }> => {
+    const res = await apiFetch(`${getApiBaseUrl()}/api/v1/data-catalog/singedlab/sync-all`, { method: 'POST' });
+    if (!res.ok) throw await httpError(res, 'Falha ao sincronizar SINGED Lab');
+    return res.json();
+  },
+
   getSentinelScenes: async (): Promise<any> => {
     const res = await apiFetch(`${getApiBaseUrl()}/api/v1/analytics/sentinel-stac`);
     if (!res.ok) throw new Error('Failed to load Sentinel scenes');
@@ -1514,6 +1786,46 @@ export const api = {
       body: JSON.stringify({ taxa_desmatamento: pct, codigo_ibge: codigoIbge })
     });
     if (!res.ok) throw new Error('Vegetation loss simulation failed');
+    return res.json();
+  },
+
+  simulateHeatIsland: async (
+    params: {
+      temperaturaPicoC?: number;
+      perdaVegetalPct?: number;
+      ganhoVegetalPct?: number;
+      impermeabilizacaoExtraPct?: number;
+      codigoIbge?: string;
+    },
+  ): Promise<SimulationOutput> => {
+    const res = await apiFetch(`${getApiBaseUrl()}/api/v1/simulations/heat-island`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        temperatura_pico_c: params.temperaturaPicoC ?? 34,
+        perda_vegetal_pct: params.perdaVegetalPct ?? 0,
+        ganho_vegetal_pct: params.ganhoVegetalPct ?? 0,
+        impermeabilizacao_extra_pct: params.impermeabilizacaoExtraPct ?? 15,
+        codigo_ibge: params.codigoIbge,
+      }),
+    });
+    if (!res.ok) throw new Error('Heat island simulation failed');
+    return res.json();
+  },
+
+  compareHeatLst: async (
+    simulation: SimulationOutput,
+    codigoIbge?: string,
+  ): Promise<HeatLstComparison> => {
+    const res = await apiFetch(`${getApiBaseUrl()}/api/v1/simulations/heat-lst-compare`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        codigo_ibge: codigoIbge,
+        simulation,
+      }),
+    });
+    if (!res.ok) throw new Error('Falha na comparação LST × simulação');
     return res.json();
   },
 
@@ -1636,12 +1948,13 @@ export const api = {
   interpretSimulation: async (
     payload: {
       municipio_codigo: string;
-      tipo_simulacao: 'chuva' | 'asfalto' | 'vegetacao' | 'drenagem';
+      tipo_simulacao: 'chuva' | 'asfalto' | 'vegetacao' | 'drenagem' | 'calor';
       parametro_atual: number;
       parametro_referencia?: number;
       resultado_simulacao: SimulationOutput;
       resultado_referencia?: SimulationOutput;
       comparacao_delta?: RainfallComparison['delta'];
+      lst_comparison?: HeatLstComparison;
     },
   ): Promise<SimulationInterpret> => {
     const res = await apiFetch(`${getApiBaseUrl()}/api/v1/simulations/interpret`, {
@@ -2216,6 +2529,72 @@ export const api = {
       const err = await res.json().catch(() => ({}));
       throw new Error(err.detail || 'Falha no onboarding');
     }
+    return res.json();
+  },
+
+  getGeoportalStatus: async (codigoIbge: string): Promise<GeoportalStatus> => {
+    const code = codigoIbge.replace(/\D/g, '').padStart(7, '0').slice(-7);
+    const res = await apiFetch(`${getApiBaseUrl()}/api/v1/geoportal/${code}/status`);
+    if (!res.ok) throw await httpError(res, 'Falha ao carregar geoportal municipal');
+    return res.json();
+  },
+
+  uploadGeoportalMesh: async (
+    codigoIbge: string,
+    file: File,
+    titulo = 'Malha de bairros CTM',
+  ): Promise<{ feature_count: number; snapshot_stored: boolean; publicacao: GeoportalPublicacao }> => {
+    const code = codigoIbge.replace(/\D/g, '').padStart(7, '0').slice(-7);
+    const form = new FormData();
+    form.append('file', file);
+    form.append('titulo', titulo);
+    const res = await apiFetch(`${getApiBaseUrl()}/api/v1/geoportal/${code}/upload`, {
+      method: 'POST',
+      body: form,
+    });
+    if (!res.ok) throw await httpError(res, 'Falha no upload da malha CTM');
+    return res.json();
+  },
+
+  registerGeoportalApi: async (
+    codigoIbge: string,
+    payload: { tipo: 'geojson_url' | 'arcgis_rest'; url: string; titulo?: string; arcgis_where?: string },
+  ): Promise<{ publicacao: GeoportalPublicacao }> => {
+    const code = codigoIbge.replace(/\D/g, '').padStart(7, '0').slice(-7);
+    const res = await apiFetch(`${getApiBaseUrl()}/api/v1/geoportal/${code}/register-api`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        titulo: 'Malha de bairros CTM',
+        arcgis_where: '1=1',
+        ...payload,
+      }),
+    });
+    if (!res.ok) throw await httpError(res, 'Falha ao registrar API municipal');
+    return res.json();
+  },
+
+  importGeoportalMesh: async (
+    codigoIbge: string,
+    publicacaoId?: number,
+  ): Promise<{ bairros?: number; status?: string; error?: string }> => {
+    const code = codigoIbge.replace(/\D/g, '').padStart(7, '0').slice(-7);
+    const qs = publicacaoId != null ? `?publicacao_id=${publicacaoId}` : '';
+    const res = await apiFetch(`${getApiBaseUrl()}/api/v1/geoportal/${code}/import${qs}`, { method: 'POST' });
+    if (!res.ok) throw await httpError(res, 'Falha ao importar malha do geoportal');
+    return res.json();
+  },
+
+  syncGeoportalCtmRegistry: async (
+    codigoIbge: string,
+    force = false,
+  ): Promise<{ bairros?: number; error?: string; skipped?: boolean }> => {
+    const code = codigoIbge.replace(/\D/g, '').padStart(7, '0').slice(-7);
+    const qs = force ? '?force=true' : '';
+    const res = await apiFetch(`${getApiBaseUrl()}/api/v1/geoportal/${code}/sync-ctm-registry${qs}`, {
+      method: 'POST',
+    });
+    if (!res.ok) throw await httpError(res, 'Falha ao sincronizar CTM do catálogo');
     return res.json();
   },
 

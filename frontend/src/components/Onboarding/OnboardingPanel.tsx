@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api, type OnboardingStatus, type OnboardingValidateResult } from '@/utils/api';
 import { CheckCircle2, Loader2, MapPin, Play, RefreshCw, Search, AlertTriangle } from 'lucide-react';
+import GeoportalMunicipalPanel from './GeoportalMunicipalPanel';
 
 const STATUS_COLOR: Record<string, string> = {
   concluido: 'text-emerald-400 bg-emerald-950/50 border-emerald-800',
@@ -167,6 +168,8 @@ export default function OnboardingPanel({ onMunicipioOnboarded, selectedCodigoIb
           </p>
         )}
       </div>
+
+      <GeoportalMunicipalPanel codigoIbge={codigoInput.length === 7 ? codigoInput : selectedCodigoIbge} />
 
       {result && (
         <div className="rounded-xl border border-indigo-500/30 bg-indigo-950/20 p-3 space-y-2">

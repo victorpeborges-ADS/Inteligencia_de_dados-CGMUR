@@ -12,6 +12,7 @@ from app.data_connectors.ibge_collector import collect_ibge_municipality
 from app.data_connectors.siconfi_collector import collect_siconfi_municipality
 from app.data_connectors.snis_sinisa_collector import collect_snis_municipality
 from app.data_connectors.external_sources_collector import sync_external_sources_batch
+from app.data_connectors.singedlab_rs_collector import sync_singedlab_batch
 from app.models import IntegrationRun, Municipio, MunicipioFiscal, MunicipioFonteExterna, MunicipioIbge, MunicipioSaneamento
 
 
@@ -21,7 +22,7 @@ class IntegrationOrchestrator:
 
     def sync_all(self, codigos: List[str] | None = None) -> Dict[str, Any]:
         targets = codigos or TARGET_IBGE_CODES
-        summary = {"ibge": 0, "siconfi": 0, "capag": 0, "snis": 0, "fontes_externas": 0, "errors": []}
+        summary = {"ibge": 0, "siconfi": 0, "capag": 0, "snis": 0, "fontes_externas": 0, "singedlab": 0, "errors": []}
 
         for codigo in targets:
             try:
@@ -64,16 +65,28 @@ class IntegrationOrchestrator:
             summary["errors"].append({"source": "fontes_externas", "error": str(exc)})
             self._register_run("fontes_externas", "FALHA", 0, str(exc))
 
+        try:
+            sl = sync_singedlab_batch(self.db, targets)
+            summary["singedlab"] = sl.get("processed", 0)
+            if sl.get("errors"):
+                summary["errors"].extend(
+                    [{"source": "singedlab", **err} for err in sl["errors"][:20]]
+                )
+        except Exception as exc:
+            summary["errors"].append({"source": "singedlab", "error": str(exc)})
+            self._register_run("singedlab", "FALHA", 0, str(exc))
+
         self._register_run("ibge", "OK", summary["ibge"])
         self._register_run("siconfi", "OK", summary["siconfi"])
         self._register_run("capag", "OK", summary["capag"])
         self._register_run("snis", "OK", summary["snis"])
         self._register_run("fontes_externas", "OK", summary["fontes_externas"])
+        self._register_run("singedlab", "OK", summary["singedlab"])
         self.db.commit()
 
         from app.observability.metrics import record_integration_sync
 
-        for source in ("ibge", "siconfi", "capag", "snis", "fontes_externas"):
+        for source in ("ibge", "siconfi", "capag", "snis", "fontes_externas", "singedlab"):
             record_integration_sync(source, True, summary.get(source, 0))
         return summary
 
@@ -98,6 +111,8 @@ class IntegrationOrchestrator:
         row.area_ano = payload.get("area_ano")
         row.pib_per_capita = payload.get("pib_per_capita")
         row.pib_ano = payload.get("pib_ano")
+        row.pib_total_mil_reais = payload.get("pib_total_mil_reais")
+        row.pib_serie = payload.get("pib_serie") or []
         row.idh = payload.get("idh")
         row.idh_ano = payload.get("idh_ano")
         row.densidade_demografica = payload.get("densidade_demografica")

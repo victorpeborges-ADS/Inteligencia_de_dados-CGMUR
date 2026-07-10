@@ -5,7 +5,7 @@ import { api, DataCoverage, ExecutiveDiagnostic, ExecutiveDiagnosticHistoryItem,
 import { useAppStore } from '@/stores/useAppStore';
 import ActionPlanPanel from '@/components/Dashboard/ActionPlanPanel';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, LineChart, Line, CartesianGrid, Legend } from 'recharts';
-import { Users, Trees, ShieldAlert, DollarSign, Waves, FileDown, Loader2, Award, ListChecks } from 'lucide-react';
+import { Users, Trees, ShieldAlert, DollarSign, Waves, FileDown, Loader2, Award, ListChecks, Landmark } from 'lucide-react';
 import RotatingLoader, { PDF_DIAGNOSTIC_MESSAGES } from '@/components/UI/RotatingLoader';
 import TermTooltip from '@/components/UI/TermTooltip';
 import { KpiCard, PanelSection, SkeletonKpiGrid, SkeletonChart } from '@/design-system';
@@ -522,10 +522,18 @@ export default function ExecutiveDashboard({
 
   const avgIvc = indices?.vulnerabilidade.length
     ? indices.vulnerabilidade.reduce((sum, row) => sum + row.indice_vulnerabilidade, 0) / indices.vulnerabilidade.length
-    : null;
+    : indicators?.media_ivc ?? null;
   const avgIri = indices?.inundacao.length
     ? indices.inundacao.reduce((sum, row) => sum + row.indice_risco_inundacao, 0) / indices.inundacao.length
-    : null;
+    : indicators?.media_iri ?? null;
+  const avgAdaptacao = indices?.vulnerabilidade.length
+    ? indices.vulnerabilidade.reduce((sum, row) => sum + row.capacidade_adaptacao, 0) / indices.vulnerabilidade.length
+    : indicators?.media_adaptacao ?? null;
+  const scoreSinidu =
+    indicators?.score_sinidu ??
+    (avgIvc != null && avgIri != null && avgAdaptacao != null
+      ? Math.round((avgIvc * 0.45 + avgIri * 0.35 + (1 - avgAdaptacao) * 0.2) * 100)
+      : null);
   const formatIndex = (value: number | null) =>
     value != null ? `${Math.round(value * 100)}` : '—';
   const alertasCard = cards.find((c) => c.title === 'Risco Territorial Ativo');
@@ -583,11 +591,11 @@ export default function ExecutiveDashboard({
             tier="primary"
             className="col-span-2"
             title="Score Sinidu+Clima"
-            value={indicators?.score_sinidu != null ? String(Math.round(indicators.score_sinidu)) : '—'}
+            value={scoreSinidu != null ? String(Math.round(scoreSinidu)) : '—'}
             description="Prioridade territorial composta (0–100) · maior score = maior atenção"
             icon={Award}
             iconClassName="text-indigo-300"
-            quality={indicators?.score_sinidu != null ? 'DERIVADO' : 'LACUNA'}
+            quality={scoreSinidu != null ? 'DERIVADO' : 'LACUNA'}
           />
           <KpiCard
             tier="primary"
@@ -991,12 +999,117 @@ export default function ExecutiveDashboard({
         </div>
       )}
 
-      {indicators && indicators.pib_per_capita != null && (
-        <div className="rounded-xl border border-border bg-card/40 p-4">
-          <h4 className="mb-2 text-xs font-extrabold uppercase tracking-wide text-zinc-200">PIB Municipal</h4>
-          <p className="text-lg font-extrabold text-zinc-100">{formatCurrency(indicators.pib_per_capita)}</p>
-          <p className="text-[9px] text-emerald-300">{indicators.pib_qualidade === 'oficial' ? 'Oficial IBGE' : 'Estimado'}</p>
-        </div>
+      {(indicators?.pib_per_capita != null || indicators?.pib_total_mil_reais != null || indicators?.idh != null || indicators?.atlas_uf_context) && (
+        <PanelSection
+          title="Contexto socioeconômico"
+          tier="secondary"
+          description="Indicadores municipais (IBGE/Atlas DH) e referência estadual (Atlas Econômico IPEA/RFB)"
+        >
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 2xl:grid-cols-4">
+            {indicators?.pib_total_mil_reais != null && (
+              <KpiCard
+                tier="secondary"
+                title="PIB municipal"
+                value={formatCompactCurrency(indicators.pib_total_mil_reais * 1000)}
+                description={`Total a preços de mercado · IBGE ${indicators.pib_ano ?? 'série'}`}
+                icon={DollarSign}
+                iconClassName="text-emerald-300"
+                quality={kpiQuality(indicators.pib_qualidade)}
+              />
+            )}
+            {indicators?.pib_per_capita != null && (
+              <KpiCard
+                tier="secondary"
+                title="PIB per capita"
+                value={formatCurrency(indicators.pib_per_capita)}
+                description={indicators.pib_fonte || 'IBGE PIB Municipal'}
+                icon={DollarSign}
+                iconClassName="text-emerald-400"
+                quality={kpiQuality(indicators.pib_qualidade)}
+              />
+            )}
+            {indicators?.idh != null && (
+              <KpiCard
+                tier="secondary"
+                title="IDH Municipal"
+                value={indicators.idh.toFixed(3)}
+                description={`${indicators.idh_fonte || 'Atlas DH'}${indicators.idh_ano ? ` · ${indicators.idh_ano}` : ''}`}
+                icon={Award}
+                iconClassName="text-sky-400"
+                quality={kpiQuality(indicators.idh_qualidade)}
+              />
+            )}
+            {indicators?.atlas_uf_context && (
+              <KpiCard
+                tier="secondary"
+                className="col-span-full sm:col-span-2"
+                title={`Atlas Econômico · ${indicators.atlas_uf_context.uf_sigla}`}
+                value={`${indicators.atlas_uf_context.atividades_economicas} setores`}
+                description={indicators.atlas_uf_context.descricao}
+                icon={Landmark}
+                iconClassName="text-violet-400"
+                quality="REFERÊNCIA UF"
+              >
+                <div className="mt-3 space-y-2 border-t border-zinc-800 pt-2.5">
+                  <div className="grid grid-cols-1 gap-2 min-[420px]:grid-cols-3">
+                    {(indicators.atlas_uf_context.kpis || []).map((kpi) => (
+                      <div
+                        key={kpi.label}
+                        className="min-w-0 rounded-md border border-zinc-800/80 bg-zinc-950/50 px-2 py-1.5 text-center"
+                      >
+                        <span className="block text-[8px] uppercase leading-snug text-zinc-500 line-clamp-2">
+                          {kpi.label}
+                        </span>
+                        <span className="mt-0.5 block text-[11px] font-bold text-zinc-200">{kpi.valor}</span>
+                      </div>
+                    ))}
+                  </div>
+                  <p className="text-[9px] leading-snug text-zinc-500">
+                    Matrizes: {indicators.atlas_uf_context.matrizes.join(' · ')} · escopo estadual (NF-e{' '}
+                    {indicators.atlas_uf_context.referencia_ano})
+                  </p>
+                  <a
+                    href={indicators.atlas_uf_context.portal_url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex rounded-full border border-violet-500/30 bg-violet-500/10 px-2 py-0.5 text-[10px] font-bold text-violet-200 hover:bg-violet-500/20"
+                  >
+                    Abrir Atlas Econômico IPEA ↗
+                  </a>
+                </div>
+              </KpiCard>
+            )}
+          </div>
+          {indicators?.pib_serie && indicators.pib_serie.length >= 3 && (
+            <div className="mt-4 rounded-xl border border-zinc-800 bg-zinc-950/40 p-3">
+              <h5 className="mb-2 text-[10px] font-extrabold uppercase tracking-wide text-zinc-400">
+                Série histórica PIB municipal (mil R$)
+              </h5>
+              <div className="h-40">
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart
+                    data={indicators.pib_serie.map((p) => ({
+                      ano: String(p.ano),
+                      pib: p.valor_mil_reais / 1000,
+                    }))}
+                  >
+                    <CartesianGrid strokeDasharray="3 3" stroke="#27272a" />
+                    <XAxis dataKey="ano" tick={{ fill: '#71717a', fontSize: 9 }} />
+                    <YAxis tick={{ fill: '#71717a', fontSize: 9 }} width={42} />
+                    <Tooltip
+                      formatter={(value: number) => [`R$ ${value.toFixed(1)} bi`, 'PIB']}
+                      contentStyle={{ background: '#09090b', border: '1px solid #3f3f46', fontSize: 11 }}
+                    />
+                    <Line type="monotone" dataKey="pib" stroke="#34d399" strokeWidth={2} dot={false} />
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+              <p className="mt-1 text-[9px] text-zinc-500">
+                Fonte: IBGE SIDRA agregado 5938/37 · espelhado no Ipeadata (PIB_IBGE_5938_37)
+              </p>
+            </div>
+          )}
+        </PanelSection>
       )}
 
       {integrationStatus && (

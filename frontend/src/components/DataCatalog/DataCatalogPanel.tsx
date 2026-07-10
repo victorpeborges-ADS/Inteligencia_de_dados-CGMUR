@@ -8,6 +8,9 @@ import {
   type DataCatalogNational,
   type FonteImpactAnalysis,
 } from '@/utils/api';
+import InstitutionalGapsPanel from '@/components/DataCatalog/InstitutionalGapsPanel';
+import GeoReDusReferenceCard from '@/components/DataCatalog/GeoReDusReferenceCard';
+import SingedLabPanel from '@/components/DataCatalog/SingedLabPanel';
 import {
   Database,
   Eye,
@@ -30,12 +33,14 @@ const STATUS_STYLE: Record<string, string> = {
   Estimado: 'bg-amber-500/15 text-amber-300 border-amber-700/40',
   'Em integracao': 'bg-sky-500/15 text-sky-300 border-sky-700/40',
   Ausente: 'bg-rose-500/15 text-rose-300 border-rose-700/40',
+  'Nao aplicavel': 'bg-zinc-700/30 text-zinc-400 border-zinc-600/40',
 };
 
 function StatusPill({ status }: { status: string }) {
+  const label = status === 'Nao aplicavel' ? 'N/A' : status;
   return (
     <span className={`rounded border px-1.5 py-0.5 text-[8px] font-bold uppercase ${STATUS_STYLE[status] || 'bg-zinc-800 text-zinc-400'}`}>
-      {status}
+      {label}
     </span>
   );
 }
@@ -175,6 +180,11 @@ export default function DataCatalogPanel({ codigoIbge, isGestorOrAdmin }: DataCa
     }
   };
 
+  const openImpactByFonteId = (fonteId: string) => {
+    const base = coverage?.bases.find((b) => b.id === fonteId);
+    if (base) openImpact(base);
+  };
+
   if (loading && !coverage) {
     return (
       <div className="flex h-full items-center justify-center text-zinc-400">
@@ -266,6 +276,19 @@ export default function DataCatalogPanel({ codigoIbge, isGestorOrAdmin }: DataCa
           </div>
         </div>
       )}
+
+      <GeoReDusReferenceCard codigoIbge={codigoIbge} municipioNome={coverage.municipio.nome} />
+
+      <SingedLabPanel
+        codigoIbge={codigoIbge}
+        municipioNome={coverage.municipio.nome}
+        uf={coverage.municipio.uf}
+        isGestorOrAdmin={isGestorOrAdmin}
+        singedlabBase={coverage.bases.find((b) => b.id === 'ibge_singedlab_rs')}
+        onImported={load}
+      />
+
+      <InstitutionalGapsPanel bases={coverage.bases} onAnalyzeGap={openImpactByFonteId} />
 
       {/* Source cards */}
       <div className="rounded-xl border border-zinc-800 bg-zinc-950/60 p-3">

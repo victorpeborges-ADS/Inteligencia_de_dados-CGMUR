@@ -38,5 +38,13 @@ if curl -sf --max-time 3 "${API}/health/ready" >/dev/null 2>&1; then
 fi
 
 echo ""
+echo "--- Validação Recife (opcional, ~3 min) ---"
+if [[ "${RUN_RECIFE_VALIDATION:-0}" == "1" ]] && [[ -f scripts/validacao_recife_ui.py ]]; then
+  python3 scripts/validacao_recife_ui.py "$API" || SMOKE_EXIT=1
+else
+  echo "[INFO] Pulado — defina RUN_RECIFE_VALIDATION=1 para rodar validacao_recife_ui.py"
+fi
+
+echo ""
 echo "Roteiro UI: CHECKLIST_DEMO_MCID.md §4"
 exit "$SMOKE_EXIT"
