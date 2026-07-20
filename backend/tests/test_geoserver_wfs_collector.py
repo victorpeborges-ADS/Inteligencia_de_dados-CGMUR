@@ -6,8 +6,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from app.data_connectors.ctm_collector import fetch_ctm_geojson, fetch_geoserver_wfs_geojson
-from app.data_connectors.ctm_registry import CTM_BY_CODE, CTM_SOURCES
+from app.data_connectors.ctm_collector import fetch_ctm_geojson, fetch_geoserver_wfs_geojson, fetch_geojson_file
+from app.data_connectors.ctm_registry import CTM_BY_CODE, CTM_SOURCES, CAMPINAS_UTB_GEOJSON
 
 ARACAJU_WFS = {
     "type": "FeatureCollection",
@@ -75,7 +75,35 @@ def test_fetch_geoserver_wfs_geojson_builds_params(mock_get):
     assert params["typeName"] == "Limites_Municipais:bairros_2023"
     assert params["outputFormat"] == "application/json"
     assert params["srsName"] == "EPSG:4326"
+    assert "CQL_FILTER" not in params
     assert str(url[0]).endswith("/geoserver/wfs")
+
+
+@patch("app.data_connectors.ctm_collector.requests.get")
+def test_fetch_geoserver_wfs_passes_cql_filter(mock_get):
+    mock_resp = MagicMock()
+    mock_resp.json.return_value = ARACAJU_WFS
+    mock_resp.raise_for_status = MagicMock()
+    mock_get.return_value = mock_resp
+
+    source = CTM_BY_CODE["2602902"]
+    fetch_geoserver_wfs_geojson(source)
+    params = mock_get.call_args.kwargs["params"]
+    assert params["typeName"] == "CGMAT:qg_2022_650_bairro_agreg"
+    assert params["CQL_FILTER"] == "cd_mun='2602902'"
+
+
+def test_campinas_utb_geojson_file_loads():
+    fc = fetch_geojson_file(CAMPINAS_UTB_GEOJSON)
+    assert fc["type"] == "FeatureCollection"
+    assert len(fc["features"]) >= 80
+
+
+def test_fetch_campinas_ctm_dissolves_utb_names():
+    source = CTM_BY_CODE["3509502"]
+    out = fetch_ctm_geojson(source)
+    assert len(out["features"]) >= 80
+    assert any("Egídio" in (f["properties"].get("nome") or "") for f in out["features"])
 
 
 @patch("app.data_connectors.ctm_collector.fetch_geoserver_wfs_geojson")

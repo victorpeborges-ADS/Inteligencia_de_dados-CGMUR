@@ -18,7 +18,10 @@ def test_zona_multiplier_periferia():
 
 
 def test_tertile_classification():
+    # n=6 → p33=ordered[2]=3000, p66=ordered[4]=5000; classes usam >
     p33, p66 = classify_renda_tertiles([1000, 2000, 3000, 4000, 5000, 6000])
+    assert (p33, p66) == (3000, 5000)
     assert classe_renda_from_value(5500, p33, p66) == "ALTA"
-    assert classe_renda_from_value(2500, p33, p66) == "MEDIA"
+    assert classe_renda_from_value(3500, p33, p66) == "MEDIA"
+    assert classe_renda_from_value(2500, p33, p66) == "BAIXA"
     assert classe_renda_from_value(1200, p33, p66) == "BAIXA"

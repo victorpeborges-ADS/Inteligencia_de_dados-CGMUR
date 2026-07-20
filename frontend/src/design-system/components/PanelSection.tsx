@@ -11,12 +11,12 @@ type PanelSectionProps = {
 
 const TIER_BORDER: Record<NonNullable<PanelSectionProps['tier']>, string> = {
   primary: 'border-indigo-500/25 bg-indigo-950/10',
-  secondary: 'border-border bg-card/30',
-  action: 'border-zinc-800 bg-zinc-950/40',
+  secondary: 'border-border bg-card/50',
+  action: 'border-border bg-zinc-950/40',
 };
 
 const TIER_TITLE: Record<NonNullable<PanelSectionProps['tier']>, string> = {
-  primary: 'text-indigo-200',
+  primary: 'text-indigo-300',
   secondary: 'text-zinc-300',
   action: 'text-zinc-400',
 };

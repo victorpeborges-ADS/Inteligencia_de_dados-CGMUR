@@ -8,6 +8,7 @@ export type LayerStyle = {
   color: string;
   weight: number;
   radius?: number;
+  opacity?: number;
 };
 
 function deficitColor(pct: number, thresholds: [number, number], palette: [string, string, string]): string {

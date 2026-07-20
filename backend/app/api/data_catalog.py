@@ -21,6 +21,8 @@ from app.services.catalog_sync_service import (
 from app.data_connectors.singedlab_rs_collector import row_to_dict, sync_singedlab_batch
 from app.models import MunicipioSingedlabRs
 from app.services.singedlab_import_service import run_singedlab_csv_import
+from app.data_connectors.ctm_collector import catalog_ctm_targets
+from app.data_connectors.ctm_registry import ctm_registry_stats
 
 router = APIRouter()
 
@@ -116,6 +118,51 @@ def get_national_data_coverage(
         "municipios": sorted(municipio_rows, key=lambda row: row["maturidade_percentual"]),
         "resumo": f"Panorama de {total} municípios prioritários — maturidade média {media_maturidade}%.",
     }
+
+
+@router.get("/institutional-gaps")
+def get_institutional_gaps_national(
+    request: Request,
+    db: Session = Depends(get_db),
+    _user: User = Depends(require_role(Role.GESTOR)),
+):
+    """Panorama A.1–A.6: convênios, proxies ETL e cobertura CTM/UTB nos municípios prioritários."""
+    actor = resolve_actor(request)
+    query = db.query(MunicipioSeed).filter(MunicipioSeed.codigo_ibge.in_(settings.TARGET_IBGE_CODES))
+    query = filter_seed_query(query, actor)
+    seeds = query.order_by(MunicipioSeed.prioridade.asc()).all()
+
+    if not seeds:
+        raise HTTPException(status_code=404, detail="Nenhum município prioritário no escopo do perfil.")
+
+    codigos = [seed.codigo_ibge for seed in seeds]
+    return build_institutional_gaps_summary(db, codigos)
+
+
+@router.get("/ctm-inventory")
+def get_ctm_inventory(
+    probe: bool = Query(default=False, description="Sonda fontes ao vivo (lento)"),
+    _user: User = Depends(require_role(Role.GESTOR)),
+):
+    """Inventário CTM/UTB (A.6): registry estático + opcional probe das fontes cadastradas."""
+    stats = ctm_registry_stats()
+    payload: dict = {
+        "registry": stats,
+        "resumo": (
+            f"{stats['fontes_cadastradas']}/{stats['total_alvo']} municípios-alvo com fonte CTM cadastrada; "
+            f"{stats['sem_fonte']} aguardam geoportal ou cache manual."
+        ),
+    }
+    if probe:
+        rows = catalog_ctm_targets()
+        by_status: dict[str, int] = {}
+        for row in rows:
+            by_status[row.get("status", "desconhecido")] = by_status.get(row.get("status", "desconhecido"), 0) + 1
+        payload["probe"] = {
+            "por_status": by_status,
+            "municipios": rows,
+        }
+    return payload
 
 
 @router.get("/impact-analysis/{codigo_ibge}/{fonte_id}")

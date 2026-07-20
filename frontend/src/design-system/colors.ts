@@ -12,7 +12,7 @@ export const colors = {
     teal: '#14b8a6',
   },
   text: {
-    primary: '#fafafa',
+    primary: 'var(--sinidu-fg)',
     secondary: '#a1a1aa',
     muted: '#71717a',
   },

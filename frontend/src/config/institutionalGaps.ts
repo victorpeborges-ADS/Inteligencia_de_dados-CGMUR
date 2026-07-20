@@ -67,6 +67,17 @@ export const INSTITUTIONAL_GAPS: InstitutionalGap[] = [
     acao: 'Confirmar necessidade vs. dados IBGE/SICONFI já integrados',
     municipiosAfetados: 61,
   },
+  {
+    rank: 6,
+    fonteId: 'ctm_utb',
+    nome: 'CTM / UTB municipal',
+    impactoScore: '±2 pts',
+    dificuldade: 'Técnica + prefeitura',
+    responsavel: 'Prefeitura / GeoReDUS',
+    prazo: 'Contínuo',
+    acao: 'Importar malha poligonal oficial (CTM/UTB) ou cadastrar geoportal municipal aberto',
+    municipiosAfetados: 24,
+  },
 ];
 
 export function gapStatusFromCatalog(

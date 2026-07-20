@@ -55,11 +55,21 @@ class GenerateFromSimulation(BaseModel):
     risk_geojson: dict
     buffer_m: float = 500
     simulacao_ref: Optional[dict] = None
+    nivel_alerta: Optional[str] = None
 
 
 @router.get("/templates/acoes")
 def get_action_templates(cenario_tipo: str = "INUNDACAO"):
     return default_acoes_por_nivel(cenario_tipo.upper())
+
+
+@router.get("/municipio/{codigo_ibge}/alerta-vivo")
+def get_alerta_vivo(codigo_ibge: str, request: Request, db: Session = Depends(get_db)):
+    """Nível de alerta CEMADEN/monitoramento para pré-preencher o plano."""
+    get_accessible_municipio(db, codigo_ibge, request=request)
+    from app.services.live_alert_level import live_alert_snapshot
+
+    return live_alert_snapshot(db, codigo_ibge, hours=24)
 
 
 @router.get("/municipio/{codigo_ibge}")
@@ -146,6 +156,7 @@ def generate_from_simulation(body: GenerateFromSimulation, request: Request, db:
             body.risk_geojson,
             buffer_m=body.buffer_m,
             simulacao_ref=body.simulacao_ref,
+            nivel_alerta=body.nivel_alerta,
         )
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc

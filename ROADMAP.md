@@ -63,7 +63,7 @@
 
 | # | Item | Status | Notas |
 |---|------|--------|-------|
-| 3.1 | **CI/CD** — pytest, cobertura mínima 60% serviços críticos | ✅ | `pytest.ini` + CI ampliado |
+| 3.1 | **CI/CD** — pytest, cobertura mínima 70% serviços críticos | ✅ | `pytest.ini` + CI (`--cov-fail-under=70`) |
 | 3.2 | **Refator frontend** — App Router por módulo | ✅ | `/painel`, `/municipios`, `/simulacoes`… |
 | 3.3 | **Estado global** — Zustand ou React Context | ✅ | `stores/useAppStore.ts` |
 | 3.4 | **RAG eval set** — perguntas-resposta esperadas | ✅ | `rag/eval/dataset.yaml` + `/assistant/eval/retrieval` |
@@ -405,7 +405,7 @@ Consolidação do que **ainda falta**, cruzando roadmap, `PLANO_LACUNAS_INSTITUC
 | A.3 | **SIRENE / MCTI** (emissões) | Proxy per capita ativo | Credencial/extract anual via convênio MCTI |
 | A.4 | **AdaptaBrasil / INPE** | Proxy MapBiomas (status "Estimado") | Credencial API INPE para substituir proxy |
 | A.5 | **SINTER / Receita** | Estimado via SICONFI/IBGE | Avaliar necessidade real vs. IBGE já integrado |
-| A.6 | **CTM / UTB** (`ctm_registry.py`) | Cadastro pendente | Download manual do shapefile no portal DIDT |
+| A.6 | **CTM / UTB** (`ctm_registry.py`) | **24/24 fontes** · **24/24 malha** (8 oficial + 16 IBGE) · batch jul/2026 · painel Sistema | 🔄 jul/2026: Palmas/São Luís sem REST (IBGE setores); CONDER offline; IBGE bairros agregados = 0 para esses códigos — aguarda geoportal municipal |
 
 ### B. Itens técnicos adiados por decisão (➖ ativáveis) — P2
 | # | Item | Situação | O que falta |
@@ -413,29 +413,29 @@ Consolidação do que **ainda falta**, cruzando roadmap, `PLANO_LACUNAS_INSTITUC
 | B.1 | **OSRM malha viária real** | ✅ jul/2026 | Perfil `pe-se` ativo; `scripts/osrm-enable.sh` + `scripts/validacao_osrm.py` |
 | B.2 | **Google Street View 3D** | `Map3DGoogleContainer.tsx` existe, fora do fluxo | Decisão de custo de API para ativar |
 
-### C. Performance (metas não atingidas) — P1
-| # | Item | Atual | Meta |
-|---|------|-------|------|
-| C.1 | **Simulação pluvial 120 mm** | ✅ ~4s com cache (prewarm boot/UI) | < 10s com prewarm; 1ª execução fria ainda ~60s |
-| C.2 | **Agente contextual** | ✅ ~3s pergunta simples; contexto municipal <0.1s com cache | < 8s — bundle leve + fast-path sem tools |
+### C. Performance — P1
+| # | Item | Situação | Notas |
+|---|------|----------|-------|
+| C.1 | **Simulação pluvial 120 mm** | ✅ jul/2026 | Warm ~4s (Redis). Fria: bind `./data/dem` + LiDAR, OpenTopo fail-fast (12s / só com API key), `dem.tif` preferido, downsample hidro ≤512, `_smooth_dem` vetorizado |
+| C.2 | **Agente contextual** | ✅ ~3s pergunta simples; contexto municipal <0.1s com cache | Meta < 8s — bundle leve + fast-path sem tools |
 
 ### D. Operação e homologação — P1/P3
 | # | Item | Situação | O que falta |
 |---|------|----------|-------------|
 | D.1 | **Batch diagnósticos + PDFs (61)** | ✅ jul/2026 | 62/62 diagnóstico + PDF; painel Homologação em Sistema |
-| D.2 | **gov.br REAL** | 🔄 jul/2026 | Keycloak local OK; checklist `CHECKLIST_OIDC_GOVBR.md` + `validacao_oidc_govbr.sh` |
+| D.2 | **gov.br REAL** | ➖ protótipo | **Fora de escopo do protótipo (decisão jul/2026).** Keycloak local + JWT + checklist operacional bastam; gov.br só se MCID pedir depois |
 
 ### E. Metas de maturidade Fase 3 (dimensões abaixo da meta) — P2/P3
 | Dimensão | Atual (baseline) | Meta Fase 3 |
 |----------|------------------|-------------|
 | Integrações externas | 72% | 85% (depende de A.1/A.2) |
-| Análise e índices | 78% | 88% |
-| IA e RAG | 70% | 82% |
-| Visualização 2D/3D | 75% | 88% |
-| Contingência e alerta | 80% | 88% |
-| Testes automatizados | ~60% (mín. CI) | 70% |
-| Produção / deploy | 20% | 75% (depende de D.2) |
-| Infraestrutura | 88% | 95% |
+| Análise e índices | ✅ ~88% (preditiva 10 alvos + ML no monitor + explicabilidade) | 88% |
+| IA e RAG | ✅ ~82% (13 tools + eval 16 casos + alerta/ML) | 82% |
+| Visualização 2D/3D | ✅ ~88% (paridade 3D + basemap 2D satélite/claro + plano no mapa) | 88% |
+| Contingência e alerta | ✅ ~90% (plano ativo no mapa 2D/3D + hydrate wizard) | 88% |
+| Testes automatizados | ✅ ~76% (gate CI 70%) | 70% |
+| Produção / deploy | ✅ ~65% (`ready_for_demo` + smoke/JWT; gov.br ➖) | 75% (gov.br ➖ no protótipo) |
+| Infraestrutura | ✅ ~95% (Redis/scheduler/JWT no checklist) | 95% |
 
 ### F. Documentação — P2
 - [x] Registrar metodologia da **ilha de calor** e das novas fontes em `DOCUMENTACAO_TECNICA_COMPLETA.md` (§19–§20)
@@ -474,16 +474,16 @@ Referência Pro-Cidades: `Pro-cidades/README.md`, `Pro-cidades/automacao/README_
 
 | Dimensão | Baseline | Meta Fase 1 | Meta Fase 3 |
 |----------|----------|-------------|-------------|
-| Infraestrutura | 88% | 92% | 95% |
+| Infraestrutura | 88% | 92% | ✅ ~95% |
 | API e backend | 85% | 90% | 93% |
 | Integrações externas | 72% | 72% | 85% |
-| Análise e índices | 78% | 78% | 88% |
-| IA e RAG | 70% | 72% | 82% |
-| Visualização 2D/3D | 75% | 80% | 88% |
-| Contingência e alerta | 80% | 80% | 88% |
+| Análise e índices | 78% | 78% | ✅ ~88% |
+| IA e RAG | 70% | 72% | ✅ ~82% |
+| Visualização 2D/3D | 75% | 80% | ✅ ~88% |
+| Contingência e alerta | 80% | 80% | ✅ ~90% |
 | **Segurança e auth** | **8%** | **55%** | **80%** |
-| **Testes automatizados** | **40%** | **45%** | **70%** |
-| **Produção / deploy** | **20%** | **45%** | **75%** |
+| **Testes automatizados** | **40%** | **45%** | **✅ 70%** (medido ~76% escopo CI) |
+| **Produção / deploy** | **20%** | **45%** | ✅ ~65% → 75% (gov.br ➖) |
 
 ---
 

@@ -43,6 +43,7 @@ class Settings:
     SIMULATION_PREWARM_ENABLED: bool = _env_bool("SIMULATION_PREWARM_ENABLED", True)
     SIMULATION_PREWARM_MM: float = float(os.getenv("SIMULATION_PREWARM_MM", "120"))
     SIMULATION_PREWARM_BASELINE_MM: float = float(os.getenv("SIMULATION_PREWARM_BASELINE_MM", "80"))
+    DEM_PREWARM_ENABLED: bool = _env_bool("DEM_PREWARM_ENABLED", True)
     STALE_JOB_HOURS: int = int(os.getenv("STALE_JOB_HOURS", "6"))
 
     REDIS_URL: str = os.getenv("REDIS_URL", "redis://redis:6379/0")

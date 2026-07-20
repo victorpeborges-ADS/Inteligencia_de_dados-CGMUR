@@ -74,6 +74,37 @@ def test_find_local_dem_in_shared_dir(tmp_path, monkeypatch):
     assert find_local_dem("2611606") == shared
 
 
+def test_opentopography_disabled_without_key(monkeypatch):
+    monkeypatch.delenv("OPENTOPOGRAPHY_API_KEY", raising=False)
+    monkeypatch.delenv("OPENTOPOGRAPHY_ENABLED", raising=False)
+    assert dp._opentopography_enabled(None) is False
+    monkeypatch.setenv("OPENTOPOGRAPHY_ENABLED", "false")
+    monkeypatch.setenv("OPENTOPOGRAPHY_API_KEY", "fake")
+    assert dp._opentopography_enabled("fake") is False
+    monkeypatch.setenv("OPENTOPOGRAPHY_ENABLED", "true")
+    assert dp._opentopography_enabled("fake") is True
+
+
+def test_download_srtm_skips_when_disabled(monkeypatch):
+    monkeypatch.setenv("OPENTOPOGRAPHY_ENABLED", "false")
+    called = {"n": 0}
+
+    def _fake_get(*_a, **_k):
+        called["n"] += 1
+        raise AssertionError("httpx não deveria ser chamado")
+
+    monkeypatch.setattr(dp.httpx, "get", _fake_get)
+    assert dp._download_srtm(-9, -8, -35, -34, api_key=None) is None
+    assert called["n"] == 0
+
+
+def test_opentopography_timeout_default(monkeypatch):
+    monkeypatch.delenv("OPENTOPOGRAPHY_TIMEOUT_S", raising=False)
+    assert dp._opentopography_timeout_s() == 12.0
+    monkeypatch.setenv("OPENTOPOGRAPHY_TIMEOUT_S", "8")
+    assert dp._opentopography_timeout_s() == 8.0
+
+
 def test_dem_status_counts(tmp_path, monkeypatch):
     monkeypatch.setattr(dp, "DEM_BASE_DIR", tmp_path / "dem")
     monkeypatch.setattr(dp, "LOCAL_DEM_DIR", tmp_path / "local")

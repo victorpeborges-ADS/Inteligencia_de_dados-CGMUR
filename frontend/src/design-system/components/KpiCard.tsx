@@ -34,7 +34,7 @@ export default function KpiCard({
       className={`min-w-0 rounded-xl border backdrop-blur-md transition-all duration-300 ${
         isPrimary
           ? 'border-indigo-500/35 bg-indigo-950/20 p-4 shadow-lg shadow-indigo-950/20'
-          : 'border-border bg-card/50 p-3 hover:border-zinc-700'
+          : 'border-border bg-card/60 p-3 hover:border-zinc-700'
       } ${className}`}
     >
       <div className="flex items-start justify-between gap-2">
@@ -46,7 +46,7 @@ export default function KpiCard({
             {quality && <Badge tone={qualityToBadgeTone(quality)}>{quality}</Badge>}
             {badge && <Badge tone="success">{badge}</Badge>}
           </div>
-          <p className={`font-extrabold text-zinc-100 ${isPrimary ? 'mt-1 text-2xl' : 'mt-0.5 text-lg'}`}>
+          <p className={`font-extrabold text-foreground ${isPrimary ? 'mt-1 text-2xl' : 'mt-0.5 text-lg'}`}>
             {value}
           </p>
           {description && (

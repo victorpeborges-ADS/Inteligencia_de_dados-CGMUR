@@ -101,13 +101,30 @@ class FloodRiskPredictor:
         bairros = self._critical_neighborhoods(db, codigo_ibge, probability, row)
         geojson = self._flood_patch_geojson(db, codigo_ibge, bairros, probability)
 
+        threshold = float(meta.get("threshold_mm_24h", 65.0))
+        mm_acima = round(float(precip_24h) - threshold, 1)
+        top_features: list[dict[str, Any]] = []
+        importances = getattr(model, "feature_importances_", None)
+        if importances is not None and len(importances) == len(FEATURE_COLUMNS):
+            ranked = sorted(
+                zip(FEATURE_COLUMNS, importances),
+                key=lambda item: float(item[1]),
+                reverse=True,
+            )[:3]
+            top_features = [
+                {"feature": name, "importance": round(float(score), 3)}
+                for name, score in ranked
+            ]
+
         return {
             "codigo_ibge": codigo_ibge,
             "municipio_slug": SLUG_BY_IBGE.get(codigo_ibge, municipio_slug),
             "risk_probability": round(probability, 3),
             "risk_level": _risk_level(probability),
             "confidence": _confidence(meta),
-            "threshold_mm_24h": meta.get("threshold_mm_24h", 65.0),
+            "threshold_mm_24h": threshold,
+            "mm_acima_limiar": mm_acima,
+            "top_features": top_features,
             "critical_neighborhoods": bairros,
             "flood_geojson": geojson,
             "model_version": meta.get("model_version", MODEL_VERSION),

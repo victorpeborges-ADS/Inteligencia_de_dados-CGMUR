@@ -8,8 +8,11 @@ from fastapi.testclient import TestClient
 from app import config as config_module
 import app.security.auth as auth_module
 from main import app
+from tests.conftest import requires_postgres
 
 RECIFE_IBGE = "2611606"
+
+pytestmark = requires_postgres
 
 
 @pytest.fixture

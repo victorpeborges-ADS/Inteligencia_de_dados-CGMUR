@@ -3,12 +3,46 @@
 from __future__ import annotations
 
 import json
+import os
+import ssl
 import sys
 import time
 import urllib.error
 import urllib.request
 
 DEFAULT_IBGE = "2611606"
+_AUTH_HEADERS: dict[str, str] = {}
+
+
+def _ssl_context(base: str) -> ssl.SSLContext | None:
+    if not base.lower().startswith("https"):
+        return None
+    ctx = ssl.create_default_context()
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+    return ctx
+
+
+def _ensure_auth(base: str) -> None:
+    global _AUTH_HEADERS
+    if _AUTH_HEADERS:
+        return
+    token = os.getenv("HOMOLOG_TOKEN", "").strip()
+    if not token:
+        user = os.getenv("HOMOLOG_USER", os.getenv("AUTH_ADMIN_USER", "admin"))
+        password = os.getenv("HOMOLOG_PASSWORD", os.getenv("AUTH_ADMIN_PASSWORD", "admin"))
+        _, code, payload = call(
+            base,
+            "POST",
+            "/api/v1/auth/login",
+            {"username": user, "password": password},
+            timeout=15,
+            skip_auth=True,
+        )
+        if code == 200 and isinstance(payload, dict):
+            token = str(payload.get("access_token") or "")
+    if token:
+        _AUTH_HEADERS = {"Authorization": f"Bearer {token}"}
 
 
 def call(
@@ -17,18 +51,19 @@ def call(
     path: str,
     body: dict | None = None,
     timeout: int = 120,
+    *,
+    skip_auth: bool = False,
 ) -> tuple[float, int, dict | list | None]:
     url = f"{base.rstrip('/')}{path}"
     data = json.dumps(body).encode() if body else None
-    req = urllib.request.Request(
-        url,
-        data=data,
-        method=method,
-        headers={"Content-Type": "application/json"} if body else {},
-    )
+    headers: dict[str, str] = {"Content-Type": "application/json"} if body else {}
+    if not skip_auth:
+        _ensure_auth(base)
+        headers.update(_AUTH_HEADERS)
+    req = urllib.request.Request(url, data=data, method=method, headers=headers)
     t0 = time.time()
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
+        with urllib.request.urlopen(req, timeout=timeout, context=_ssl_context(base)) as resp:
             raw = resp.read().decode()
             elapsed = round(time.time() - t0, 2)
             return elapsed, resp.status, json.loads(raw) if raw else None
@@ -92,10 +127,19 @@ def validate_municipio(base: str, ibge: str, label: str | None = None) -> int:
         timeout=45,
     )
     reply = (chat or {}).get("response") or (chat or {}).get("reply") or (chat or {}).get("content") or ""
+    offline_demo = "modo demonstração" in reply.lower() or "mistral_api_key" in reply.lower()
+    llm_unavailable = code == 500 and not reply
     ok = code == 200 and len(reply) > 40 and elapsed < 20
-    warn = code == 200 and len(reply) > 40 and elapsed >= 20
+    warn = (
+        (code == 200 and len(reply) > 40 and elapsed >= 20)
+        or (code == 200 and offline_demo)
+        or llm_unavailable
+    )
     tag = "OK" if ok else ("WARN" if warn else "FAIL")
-    print(f"[{tag}] agente resposta ({elapsed}s) chars={len(reply)}")
+    detail = f"http={code}"
+    if llm_unavailable:
+        detail += " (LLM offline — rebuild backend ou MISTRAL_API_KEY)"
+    print(f"[{tag}] agente resposta ({elapsed}s) chars={len(reply)} {detail}")
     if tag == "FAIL":
         fails += 1
 

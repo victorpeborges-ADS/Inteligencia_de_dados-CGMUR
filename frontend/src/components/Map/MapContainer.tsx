@@ -19,8 +19,11 @@ import {
   type TerritorioTipoId,
 } from '@/config/territoriosEspeciais';
 import type { LayerOption } from '@/config/platformTabs';
+import type { TemporalTemaId } from '@/config/layerTemporal';
 import type { RegionalOverlayResponse } from '@/config/regionalContext';
 import { useAppStore } from '@/stores/useAppStore';
+import { MAP_TILE_URLS, type MapBasemapId } from '@/config/theme';
+import type { ContingencyMapOverlay } from '@/utils/contingencyGeo';
 import LayerMetaBlock from './LayerMetaBlock';
 import RegionalOverlayPanel from './RegionalOverlayPanel';
 import ActiveLayersPanel from './ActiveLayersPanel';
@@ -56,6 +59,8 @@ interface MapProps {
   simContours?: any;
   simFlowPaths?: any;
   simOverlays?: { showFlood: boolean; showContours: boolean; showFlow: boolean };
+  contingencyOverlay?: ContingencyMapOverlay | null;
+  showContingencyOnMap?: boolean;
   selectedMunicipio: string;
   simulating?: boolean;
   socioSubcamada?: SocioSubcamadaId;
@@ -219,6 +224,33 @@ function FitBoundsToBaseLayers({
   return null;
 }
 
+/** Enquadra o mapa na extensão das manchas de simulação. */
+function FitBoundsToSimulation({ simGeoJSON }: { simGeoJSON: any | null }) {
+  const map = useMap();
+  const simKeyRef = useRef<string>('');
+
+  useEffect(() => {
+    if (!simGeoJSON?.features?.length) {
+      simKeyRef.current = '';
+      return;
+    }
+    const key = `${simGeoJSON.features.length}:${JSON.stringify(simGeoJSON.features[0]?.properties ?? {}).slice(0, 40)}`;
+    if (simKeyRef.current === key) return;
+    simKeyRef.current = key;
+    try {
+      const layer = L.geoJSON(simGeoJSON);
+      const bounds = layer.getBounds();
+      if (bounds.isValid()) {
+        map.fitBounds(bounds, { padding: [48, 48], maxZoom: 15, animate: true });
+      }
+    } catch {
+      // geometria inválida
+    }
+  }, [map, simGeoJSON]);
+
+  return null;
+}
+
 export default function MapContainer({
   activeLayers,
   mapFocus,
@@ -227,6 +259,8 @@ export default function MapContainer({
   simContours,
   simFlowPaths,
   simOverlays = { showFlood: true, showContours: true, showFlow: true },
+  contingencyOverlay = null,
+  showContingencyOnMap = true,
   selectedMunicipio,
   socioSubcamada = 'renda',
   layerOptions = [],
@@ -238,6 +272,7 @@ export default function MapContainer({
 }: MapProps) {
   const [layerData, setLayerData] = useState<Record<string, any>>({});
   const [loading, setLoading] = useState(false);
+  const [basemap, setBasemap] = useState<MapBasemapId>('dark');
   const [rasterConfigs, setRasterConfigs] = useState<Record<string, RasterRuntimeConfig>>({});
   const [rasterRescale, setRasterRescale] = useState<Record<ExternalRasterId, { min: number; max: number }>>(() => {
     const init = {} as Record<ExternalRasterId, { min: number; max: number }>;
@@ -254,7 +289,15 @@ export default function MapContainer({
   const [regionalLoading, setRegionalLoading] = useState(false);
 
   const showRegionalOverlay = useAppStore((s) => s.showRegionalOverlay);
+  const colorMode = useAppStore((s) => s.colorMode);
   const regionalEscopo = useAppStore((s) => s.regionalEscopo);
+
+  useEffect(() => {
+    setBasemap((prev) => {
+      if (prev === 'satellite') return prev;
+      return colorMode === 'light' ? 'light' : 'dark';
+    });
+  }, [colorMode]);
   const setRegionalEscopo = useAppStore((s) => s.setRegionalEscopo);
   const setShowRegionalOverlay = useAppStore((s) => s.setShowRegionalOverlay);
   const setCompareModalOpen = useAppStore((s) => s.setCompareModalOpen);
@@ -820,11 +863,12 @@ export default function MapContainer({
           bairrosFc={layerData.bairros}
           regionalActive={showRegionalOverlay}
         />
+        <FitBoundsToSimulation simGeoJSON={simGeoJSON} />
         
-        {/* Custom Dark-Themed Basemap */}
         <TileLayer
-          attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>'
-          url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
+          key={basemap}
+          attribution={MAP_TILE_URLS[basemap].attribution}
+          url={MAP_TILE_URLS[basemap].url}
         />
 
         {activeRasterLayers.map((layerId) => {
@@ -977,7 +1021,96 @@ export default function MapContainer({
           />
         )}
 
+        {showContingencyOnMap && contingencyOverlay?.zonas?.features?.length ? (
+          <GeoJSON
+            key={`ctg-zonas-${contingencyOverlay.planId}-${contingencyOverlay.zonas.features.length}`}
+            data={contingencyOverlay.zonas as any}
+            style={() => ({
+              color: '#f97316',
+              fillColor: '#fb923c',
+              fillOpacity: 0.32,
+              weight: 2,
+            })}
+            onEachFeature={(feature, layer) => {
+              const nome = feature.properties?.nome || 'Zona de evacuação';
+              layer.bindPopup(`<div class="p-2 text-xs"><strong>${nome}</strong><p class="text-zinc-400">Plano ativo · ${contingencyOverlay.nivel}</p></div>`);
+            }}
+          />
+        ) : null}
+
+        {showContingencyOnMap && contingencyOverlay?.rotas?.features?.length ? (
+          <GeoJSON
+            key={`ctg-rotas-${contingencyOverlay.planId}-${contingencyOverlay.rotas.features.length}`}
+            data={contingencyOverlay.rotas as any}
+            style={(feature) => {
+              const approx = feature?.properties?.aproximada;
+              return {
+                color: approx ? '#fbbf24' : '#38bdf8',
+                weight: approx ? 3 : 4,
+                opacity: 0.95,
+                dashArray: approx ? '8 6' : undefined,
+                fillOpacity: 0,
+              };
+            }}
+            onEachFeature={(feature, layer) => {
+              const nome = feature.properties?.nome || 'Rota de fuga';
+              layer.bindPopup(`<div class="p-2 text-xs"><strong>${nome}</strong></div>`);
+            }}
+          />
+        ) : null}
+
+        {showContingencyOnMap && contingencyOverlay?.pontos?.features?.length ? (
+          <GeoJSON
+            key={`ctg-pontos-${contingencyOverlay.planId}-${contingencyOverlay.pontos.features.length}`}
+            data={contingencyOverlay.pontos as any}
+            pointToLayer={(_feature, latlng) =>
+              L.circleMarker(latlng, {
+                radius: 7,
+                color: '#f59e0b',
+                fillColor: '#fbbf24',
+                fillOpacity: 0.95,
+                weight: 2,
+              })
+            }
+            onEachFeature={(feature, layer) => {
+              const nome = feature.properties?.nome || 'Ponto de apoio';
+              layer.bindPopup(`<div class="p-2 text-xs"><strong>${nome}</strong></div>`);
+            }}
+          />
+        ) : null}
+
       </LeafletMap>
+
+      <div className="map-ui-chrome pointer-events-auto absolute left-4 top-4 z-[1100] flex gap-1 rounded-xl border border-zinc-700/80 bg-zinc-950/95 p-1 shadow-lg backdrop-blur-md">
+        {([
+          ['dark', 'Escuro'],
+          ['light', 'Claro'],
+          ['satellite', 'Satélite'],
+        ] as const).map(([id, label]) => (
+          <button
+            key={id}
+            type="button"
+            onClick={() => setBasemap(id)}
+            className={`rounded-lg px-2.5 py-1.5 text-[10px] font-bold uppercase tracking-wider ${
+              basemap === id
+                ? 'bg-indigo-600 text-white'
+                : 'text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200'
+            }`}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {showContingencyOnMap && contingencyOverlay && (
+        <div className="map-ui-chrome pointer-events-none absolute bottom-4 left-4 z-[1100] rounded-xl border border-orange-500/40 bg-zinc-950/95 px-3 py-2 text-[10px] text-orange-100 shadow-lg backdrop-blur-md">
+          <p className="font-extrabold uppercase tracking-wider text-orange-300">Plano ativo no mapa</p>
+          <p className="mt-0.5 text-zinc-400">
+            {contingencyOverlay.cenario} · {contingencyOverlay.nivel} ·{' '}
+            {contingencyOverlay.zonas.features.length} zona(s)
+          </p>
+        </div>
+      )}
 
       {showRegionalOverlay && (
         <RegionalOverlayPanel
@@ -1002,7 +1135,7 @@ export default function MapContainer({
           showRegionalOverlay={showRegionalOverlayStore}
         />
 
-        <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-zinc-700/80 bg-zinc-950/95 text-[11px] text-zinc-200 shadow-2xl shadow-black/50 backdrop-blur-md">
+        <div className="map-ui-chrome flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-zinc-700/80 bg-zinc-950/95 text-[11px] text-zinc-200 shadow-2xl shadow-black/50 backdrop-blur-md">
         <div className="shrink-0 border-b border-zinc-800 bg-zinc-950/95 px-4 py-3">
           <h5 className="text-sm font-extrabold text-zinc-50">Legenda Territorial</h5>
           <p className="mt-0.5 text-[10px] text-zinc-500">Camadas do município selecionado no header.</p>
@@ -1150,29 +1283,29 @@ export default function MapContainer({
           {simGeoJSON && (
             <div className="mt-3 border-t border-zinc-800 pt-3 flex flex-col gap-2">
               <p className="mb-1 text-[10px] font-extrabold uppercase tracking-wider text-indigo-300">Simulação hidrológica</p>
-              <div className="flex items-center gap-2"><span className="h-3 w-3 rounded-sm border border-sky-900 bg-sky-400/50" />Alagamento superficial</div>
-              <div className="flex items-center gap-2"><span className="h-3 w-3 rounded-sm border border-sky-800 bg-sky-600/60" />Alagamento moderado</div>
-              <div className="flex items-center gap-2"><span className="h-3 w-3 rounded-sm border border-indigo-950 bg-indigo-900/70" />Alagamento crítico</div>
-              <div className="flex items-center gap-2"><span className="h-3 w-3 rounded-sm border border-red-900 bg-red-600/55" />Deslizamento / ilha de calor</div>
+              <div className="flex items-center gap-2 text-zinc-400"><span className="h-3 w-3 rounded-sm border border-sky-900 bg-sky-400/50" />Alagamento superficial</div>
+              <div className="flex items-center gap-2 text-zinc-400"><span className="h-3 w-3 rounded-sm border border-sky-800 bg-sky-600/60" />Alagamento moderado</div>
+              <div className="flex items-center gap-2 text-zinc-400"><span className="h-3 w-3 rounded-sm border border-indigo-950 bg-indigo-900/70" />Alagamento crítico</div>
+              <div className="flex items-center gap-2 text-zinc-400"><span className="h-3 w-3 rounded-sm border border-red-900 bg-red-600/55" />Deslizamento / ilha de calor</div>
               {simContours?.features?.length > 0 && simOverlays.showContours && (
-                <div className="flex items-center gap-2"><span className="h-0.5 w-4 bg-lime-300" />Curvas indexadas (DEM)</div>
+                <div className="flex items-center gap-2 text-zinc-400"><span className="h-0.5 w-4 bg-lime-300" />Curvas indexadas (DEM)</div>
               )}
               {simContours?.features?.length > 0 && simOverlays.showContours && (
-                <div className="flex items-center gap-2"><span className="h-0.5 w-4 bg-lime-500" />Curvas intermediárias</div>
+                <div className="flex items-center gap-2 text-zinc-400"><span className="h-0.5 w-4 bg-lime-500" />Curvas intermediárias</div>
               )}
               {simFlowPaths?.features?.length > 0 && (
-                <div className="flex items-center gap-2"><span className="h-0.5 w-4 border-t-2 border-dashed border-cyan-400" />Escoamento superficial</div>
+                <div className="flex items-center gap-2 text-zinc-400"><span className="h-0.5 w-4 border-t-2 border-dashed border-cyan-400" />Escoamento superficial</div>
               )}
             </div>
           )}
           {showRegionalOverlay && (
             <div className="mt-3 border-t border-zinc-800 pt-3 flex flex-col gap-2">
               <p className="mb-1 text-[10px] font-extrabold uppercase tracking-wider text-teal-300">Contexto regional</p>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 text-zinc-400">
                 <span className="h-0.5 w-4 border-t-2 border-dashed border-cyan-400" />
                 Municípios do escopo
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 text-zinc-400">
                 <span className="h-0.5 w-4 border-t-2 border-dashed border-amber-400" />
                 Referência de comparação
               </div>

@@ -105,7 +105,7 @@ export default function WorkshopCenter({
   return (
     <>
       <div
-        className="absolute top-4 z-[1000] rounded-xl border border-indigo-500/30 bg-zinc-950/90 p-3 shadow-2xl backdrop-blur-md"
+        className="map-ui-chrome absolute top-4 z-[1000] rounded-xl border border-indigo-500/30 bg-zinc-950/90 p-3 shadow-2xl backdrop-blur-md"
         style={{ left: MAP_CENTER_LEFT, right: MAP_CENTER_RIGHT }}
       >
         <div className="flex items-center justify-between gap-3">
@@ -213,7 +213,7 @@ export default function WorkshopCenter({
                     <span className="rounded-full bg-rose-500/20 px-2 py-0.5 text-[10px] font-extrabold text-rose-200">{item.score_sinidu}</span>
                     {scoreConfiabilidade && (
                       <span className="text-[8px] text-amber-300" title={`Confiança: ${scoreConfiabilidade}`}>
-                        {scoreConfiabilidade === 'ALTA' ? '● Alta' : '○ Estimado'}
+                        {scoreConfiabilidade === 'ALTA' ? '● Alta' : '◐ Estimado'}
                       </span>
                     )}
                   </span>

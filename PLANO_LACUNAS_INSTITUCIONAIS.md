@@ -52,6 +52,7 @@ Este plano cobre fontes que **não se resolvem só com ETL técnico** — exigem
 - Ranking de lacunas no painel Catálogo
 - Projeção de maturidade se top 2 fontes forem integradas
 - Sync batch de fontes externas quando dados existem: `POST /system/jobs/fontes-externas-batch`
+- Import batch CTM/geoportal (24 municípios BAIXA/MÉDIA): `POST /system/jobs/ctm-batch`
 
 ---
 

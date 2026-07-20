@@ -5,10 +5,27 @@
 @tailwind components;
 @tailwind utilities;
 
-:root {
-  --foreground-rgb: 255, 255, 255;
+@import '../styles/theme-light.css';
+
+:root,
+[data-theme='dark'] {
+  --sinidu-bg: #09090b;
+  --sinidu-card: #18181b;
+  --sinidu-border: #27272a;
+  --sinidu-fg: #fafafa;
+  --foreground-rgb: 250, 250, 250;
   --background-start-rgb: 9, 9, 11;
   --background-end-rgb: 9, 9, 11;
+}
+
+[data-theme='light'] {
+  --sinidu-bg: #e8e8e8;
+  --sinidu-card: #f0f0f0;
+  --sinidu-border: #c4c4c4;
+  --sinidu-fg: #404040;
+  --foreground-rgb: 64, 64, 64;
+  --background-start-rgb: 232, 232, 232;
+  --background-end-rgb: 224, 224, 224;
 }
 
 body {

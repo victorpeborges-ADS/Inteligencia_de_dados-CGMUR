@@ -92,3 +92,69 @@ cases:
       - "Sinidu+Clima"
       - "Manual de Gestão de Riscos"
     min_retrieval_similarity: 0.25
+
+  - id: sinidu_contingencia
+    question: "O que o módulo de contingência do Sinidu registra sobre evacuação e rotas de fuga?"
+    expected_source_labels:
+      - "Sinidu+Clima — Módulos operacionais"
+      - "Sinidu+Clima"
+    expected_keywords:
+      - "evacu"
+      - "rota"
+      - "conting"
+    min_retrieval_similarity: 0.25
+
+  - id: sinidu_calor_lst
+    question: "Como o Sinidu compara simulação de ilha de calor com LST observada?"
+    expected_source_labels:
+      - "Sinidu+Clima — Módulos operacionais"
+      - "Sinidu+Clima"
+    expected_keywords:
+      - "lst"
+      - "calor"
+      - "simula"
+    min_retrieval_similarity: 0.25
+
+  - id: sinidu_maturidade
+    question: "Quais fontes entram no score de maturidade informacional do Sinidu?"
+    expected_source_labels:
+      - "Sinidu+Clima — Módulos operacionais"
+      - "Sinidu+Clima"
+    expected_keywords:
+      - "maturidade"
+      - "fonte"
+      - "ibge"
+    min_retrieval_similarity: 0.25
+
+  - id: sinidu_chuva_extrema
+    question: "O que a simulação pluvial extrema estima no Sinidu+Clima?"
+    expected_source_labels:
+      - "Sinidu+Clima — Módulos operacionais"
+      - "Sinidu+Clima"
+    expected_keywords:
+      - "inund"
+      - "chuva"
+      - "bairro"
+    min_retrieval_similarity: 0.25
+
+  - id: sinidu_alerta_vivo
+    question: "O que é o alerta vivo do Sinidu e como ele liga CEMADEN à contingência?"
+    expected_source_labels:
+      - "Sinidu+Clima — Módulos operacionais"
+      - "Sinidu+Clima"
+    expected_keywords:
+      - "alerta"
+      - "vivo"
+      - "cemaden"
+    min_retrieval_similarity: 0.25
+
+  - id: sinidu_ml_alagamento
+    question: "Como o modelo de machine learning estima risco de alagamento no Sinidu?"
+    expected_source_labels:
+      - "Sinidu+Clima — Módulos operacionais"
+      - "Sinidu+Clima"
+    expected_keywords:
+      - "alagamento"
+      - "precip"
+      - "modelo"
+    min_retrieval_similarity: 0.25

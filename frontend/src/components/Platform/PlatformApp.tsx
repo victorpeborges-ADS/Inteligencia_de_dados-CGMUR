@@ -3,7 +3,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import dynamic from 'next/dynamic';
 import { usePathname, useRouter } from 'next/navigation';
-import { api, getApiBaseUrl, type SocioeconomicRanking, type WorkshopDiagnostic } from '@/utils/api';
+import { api, getApiBaseUrl, type ContingencyPlan, type SocioeconomicRanking, type WorkshopDiagnostic } from '@/utils/api';
+import { contingencyPlanToOverlay } from '@/utils/contingencyGeo';
 import ExecutiveDashboard from '@/components/Dashboard/ExecutiveDashboard';
 import SimulationPanel, { DEFAULT_SIM_OVERLAYS, type SimOverlayOptions } from '@/components/Simulation/SimulationPanel';
 import AssistantPanel from '@/components/Assistant/AssistantPanel';
@@ -21,6 +22,7 @@ import {
   DEFAULT_MAP_LAYERS,
   getGeoJsonCenter,
   isMunicipalityInDatabase,
+  normalizeSimGeoJSON,
   resolveMunicipalityCenter,
 } from '@/utils/municipalitySync';
 import {
@@ -38,6 +40,7 @@ import WorkshopCenter from '@/components/Workshop/WorkshopCenter';
 import MunicipioLoadProgress from '@/components/Platform/MunicipioLoadProgress';
 import OnboardingBanner from '@/components/Onboarding/OnboardingBanner';
 import TabContextHint from '@/components/Platform/TabContextHint';
+import ThemeToggle from '@/components/UI/ThemeToggle';
 import { isInstitutionalMode } from '@/config/branding';
 import LayerPanel from '@/components/Map/LayerPanel';
 import { LAYER_PRESETS } from '@/components/Map/LayerPanel';
@@ -159,6 +162,13 @@ export default function PlatformApp({ initialTab }: PlatformAppProps) {
   const [mapMode, setMapMode] = useState<'2d' | '3d'>('2d');
   const [alertToast, setAlertToast] = useState<{ title: string; message: string } | null>(null);
   const [contingencyNivel, setContingencyNivel] = useState<string>('AMARELO');
+  const [alertaVivoChip, setAlertaVivoChip] = useState<{
+    nivel: string;
+    vivo: boolean;
+    cemaden: number;
+  } | null>(null);
+  const [activeContingencyPlan, setActiveContingencyPlan] = useState<ContingencyPlan | null>(null);
+  const [showContingencyOnMap, setShowContingencyOnMap] = useState(true);
   const [malhaIndisponivel, setMalhaIndisponivel] = useState(false);
   const [scoreConfiabilidade, setScoreConfiabilidade] = useState<string | null>(null);
   const [simulating, setSimulating] = useState(false);
@@ -314,29 +324,22 @@ export default function PlatformApp({ initialTab }: PlatformAppProps) {
   }, [selectedMunicipio, municipioEnsureError]);
 
   const handleSimulate = (payload: any) => {
-    const geojson = payload?.geometry ?? payload;
+    const geojson = normalizeSimGeoJSON(payload);
+    if (!geojson) {
+      console.warn('Simulação concluída sem geometria plotável', payload);
+      return;
+    }
     setSimGeoJSON(geojson);
     setSimContours(payload?.contours ?? null);
     setSimFlowPaths(payload?.flow_paths ?? null);
 
-    const isFlood =
-      geojson?.features?.some(
-        (f: { properties?: { layer_type?: string; depth_band?: string } }) =>
-          f.properties?.layer_type === 'flood_band' || f.properties?.depth_band,
-      ) ?? false;
-    const isHeat =
-      geojson?.features?.some(
-        (f: { properties?: { temp_increase_celsius?: number } }) =>
-          f.properties?.temp_increase_celsius != null,
-      ) ?? false;
+    // Manchas no mapa 2D (mais confiável); 3D permanece opcional via botão Terreno 3D
+    setMapMode('2d');
 
-    if ((isFlood || isHeat) && geojson?.features?.length > 0) {
-      setMapMode('3d');
-      setMapFocus(getGeoJsonCenter(geojson) || mapFocus);
+    const center = getGeoJsonCenter(geojson);
+    if (center) {
+      setMapFocus(center);
       setZoom(14);
-    } else if (geojson?.features?.length > 0) {
-      setMapFocus(getGeoJsonCenter(geojson) || mapFocus);
-      setZoom(13);
     }
   };
 
@@ -372,6 +375,57 @@ export default function PlatformApp({ initialTab }: PlatformAppProps) {
     api.prewarmExtremeRainfall(120, selectedMunicipio).catch(() => {});
     api.prewarmAgentContext(selectedMunicipio).catch(() => {});
   }, [selectedMunicipio, mapSpatialReady]);
+
+  useEffect(() => {
+    if (!selectedMunicipio) return;
+    let cancelled = false;
+    api
+      .getContingencyAlertaVivo(selectedMunicipio)
+      .then((snap) => {
+        if (cancelled) return;
+        setAlertaVivoChip({
+          nivel: snap.nivel_alerta,
+          vivo: snap.vivo,
+          cemaden: snap.cemaden_ativos_24h,
+        });
+        if (snap.vivo && snap.nivel_alerta) {
+          setContingencyNivel(snap.nivel_alerta);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setAlertaVivoChip(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedMunicipio]);
+
+  useEffect(() => {
+    if (!selectedMunicipio) return;
+    let cancelled = false;
+    setActiveContingencyPlan(null);
+    api
+      .getActiveContingencyPlan(selectedMunicipio)
+      .then((plan) => {
+        if (!cancelled) setActiveContingencyPlan(plan);
+      })
+      .catch(() => {
+        if (!cancelled) setActiveContingencyPlan(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedMunicipio]);
+
+  const contingencyOverlay = useMemo(
+    () => contingencyPlanToOverlay(activeContingencyPlan),
+    [activeContingencyPlan],
+  );
+
+  const handleContingencyActivated = useCallback((plan: ContingencyPlan) => {
+    setActiveContingencyPlan(plan);
+    setShowContingencyOnMap(true);
+  }, []);
 
   useEffect(() => {
     if (!mapSpatialReady) return;
@@ -479,7 +533,7 @@ export default function PlatformApp({ initialTab }: PlatformAppProps) {
   ];
 
   return (
-    <main className="min-h-screen bg-background text-zinc-100 flex flex-col font-sans select-none">
+    <main className="min-h-screen bg-background text-foreground flex flex-col font-sans select-none">
       {/* Premium Header */}
       <header
         className={`shrink-0 border-b border-border bg-card/65 backdrop-blur-md px-6 flex items-center justify-between z-50 transition-all duration-300 ${
@@ -515,6 +569,7 @@ export default function PlatformApp({ initialTab }: PlatformAppProps) {
         
         {/* Pilot Info Badge */}
         <div className="flex items-center gap-3">
+          <ThemeToggle compact={focusMode} />
           <button
             type="button"
             onClick={toggleFocusMode}
@@ -542,7 +597,22 @@ export default function PlatformApp({ initialTab }: PlatformAppProps) {
               </option>
             ))}
           </select>
-          {(alertNivel === 'LARANJA' || alertNivel === 'VERMELHO') && (
+          {alertaVivoChip?.vivo && (
+            <button
+              type="button"
+              onClick={() => navigateTab('contingency')}
+              className={`flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-semibold transition-colors ${
+                alertaVivoChip.nivel === 'VERMELHO' || alertaVivoChip.nivel === 'LARANJA'
+                  ? 'border-rose-500/60 bg-rose-950/40 text-rose-200 animate-pulse hover:bg-rose-900/50'
+                  : 'border-amber-500/50 bg-amber-950/40 text-amber-100 hover:bg-amber-900/50'
+              }`}
+              title={`CEMADEN 24h: ${alertaVivoChip.cemaden} alerta(s) · abrir contingência`}
+            >
+              <MapPin size={12} />
+              Vivo {alertaVivoChip.nivel}
+            </button>
+          )}
+          {!alertaVivoChip?.vivo && (alertNivel === 'LARANJA' || alertNivel === 'VERMELHO') && (
             <div className="flex items-center gap-2 rounded-full border border-rose-500/60 bg-rose-950/40 px-3 py-1.5 text-xs font-semibold text-rose-200 animate-pulse">
               <MapPin size={12} className="text-rose-400" />
               Alerta {alertNivel}
@@ -714,13 +784,15 @@ export default function PlatformApp({ initialTab }: PlatformAppProps) {
             )}
             {activeTab === 'contingency' && (
               <ContingencyWizard
-                key={`${selectedMunicipio}-${contingencyNivel}`}
+                key={`${selectedMunicipio}-${contingencyNivel}-${activeContingencyPlan?.id ?? 'novo'}`}
                 codigoIbge={selectedMunicipio}
                 municipioNome={selectedMunicipioInfo?.nome}
                 municipioUf={selectedMunicipioInfo?.uf}
                 mapFocus={mapFocus}
                 simGeoJSON={simGeoJSON}
                 initialNivel={contingencyNivel}
+                initialPlan={activeContingencyPlan}
+                onPlanActivated={handleContingencyActivated}
               />
             )}
             {activeTab === 'audit' && isAdmin && <AuditPanel codigoIbge={selectedMunicipio} />}
@@ -777,7 +849,7 @@ export default function PlatformApp({ initialTab }: PlatformAppProps) {
           )}
 
           {socioRanking && activeLayers.includes('socioeconomico') && !focusMode && (
-            <div className="absolute bottom-4 right-4 z-[998] w-72 rounded-xl border border-amber-500/30 bg-zinc-950/92 p-3 shadow-2xl backdrop-blur-md">
+            <div className="map-ui-chrome absolute bottom-4 right-4 z-[998] w-72 rounded-xl border border-amber-500/30 bg-zinc-950/92 p-3 shadow-2xl backdrop-blur-md">
               <p className="text-[10px] font-extrabold uppercase tracking-wider text-amber-200">
                 Desigualdade intra-municipal
               </p>
@@ -811,8 +883,8 @@ export default function PlatformApp({ initialTab }: PlatformAppProps) {
             </div>
           )}
 
-          {/* Toggle 2D / 3D */}
-          <div className="absolute right-4 top-4 z-[1200] flex gap-2 rounded-xl border border-zinc-800 bg-zinc-950/95 p-1 shadow-lg backdrop-blur-md">
+          {/* Toggle 2D / 3D + plano ativo */}
+          <div className="map-ui-chrome absolute right-4 top-4 z-[1200] flex gap-2 rounded-xl border border-zinc-800 bg-zinc-950/95 p-1 shadow-lg backdrop-blur-md">
             <button
               type="button"
               onClick={() => setMapMode('2d')}
@@ -836,6 +908,20 @@ export default function PlatformApp({ initialTab }: PlatformAppProps) {
               <Box size={12} />
               Terreno 3D
             </button>
+            {contingencyOverlay && (
+              <button
+                type="button"
+                onClick={() => setShowContingencyOnMap((v) => !v)}
+                className={`rounded-lg border px-3 py-2 text-[10px] font-bold uppercase tracking-wider ${
+                  showContingencyOnMap
+                    ? 'border-orange-400/50 bg-orange-500/20 text-orange-100'
+                    : 'border-zinc-700 bg-zinc-950/90 text-zinc-500'
+                }`}
+                title="Mostrar/ocultar plano de contingência ativo no mapa"
+              >
+                Plano
+              </button>
+            )}
           </div>
 
           {mapMode === '2d' ? (
@@ -847,6 +933,8 @@ export default function PlatformApp({ initialTab }: PlatformAppProps) {
             simContours={simContours}
             simFlowPaths={simFlowPaths}
             simOverlays={simOverlays}
+            contingencyOverlay={contingencyOverlay}
+            showContingencyOnMap={showContingencyOnMap}
             selectedMunicipio={selectedMunicipio}
             simulating={simulating}
             socioSubcamada={socioSubcamada}
@@ -863,6 +951,9 @@ export default function PlatformApp({ initialTab }: PlatformAppProps) {
             simGeoJSON={simGeoJSON}
             simContours={simContours}
             simFlowPaths={simFlowPaths}
+            simOverlays={simOverlays}
+            contingencyOverlay={contingencyOverlay}
+            showContingencyOnMap={showContingencyOnMap}
             selectedMunicipio={selectedMunicipio}
             mapFocus={mapFocus}
             simulating={simulating}

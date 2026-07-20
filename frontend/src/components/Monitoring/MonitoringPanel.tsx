@@ -73,6 +73,12 @@ export default function MonitoringPanel({ codigoIbge, municipioNome, onActivateC
   const [compareOpen, setCompareOpen] = useState(false);
   const [compareResult, setCompareResult] = useState<MonitoringCompareResult | null>(null);
   const [compareLoading, setCompareLoading] = useState(false);
+  const [alertaVivo, setAlertaVivo] = useState<{
+    nivel_alerta: string;
+    vivo: boolean;
+    cemaden_ativos_24h: number;
+    titulo_recente?: string | null;
+  } | null>(null);
 
   const pushAgenteProativo = useAppStore((s) => s.pushAgenteProativo);
   const setAgenteAberto = useAppStore((s) => s.setAgenteAberto);
@@ -90,6 +96,20 @@ export default function MonitoringPanel({ codigoIbge, municipioNome, onActivateC
       setLoading(false);
     }
   }, [codigoIbge, setAlertNivel]);
+
+  const loadAlertaVivo = useCallback(async () => {
+    try {
+      const snap = await api.getContingencyAlertaVivo(codigoIbge);
+      setAlertaVivo({
+        nivel_alerta: snap.nivel_alerta,
+        vivo: snap.vivo,
+        cemaden_ativos_24h: snap.cemaden_ativos_24h,
+        titulo_recente: snap.titulo_recente,
+      });
+    } catch {
+      setAlertaVivo(null);
+    }
+  }, [codigoIbge]);
 
   const loadScenario = useCallback(
     async (force = false) => {
@@ -112,6 +132,7 @@ export default function MonitoringPanel({ codigoIbge, municipioNome, onActivateC
       await api.syncMonitoring(codigoIbge);
       onToast?.('Monitoramento', 'OpenMeteo e CEMADEN sincronizados.');
       await load();
+      await loadAlertaVivo();
       await loadScenario(true);
     } catch (e) {
       onToast?.('Erro de sync', e instanceof Error ? e.message : 'Falha na sincronização');
@@ -123,9 +144,13 @@ export default function MonitoringPanel({ codigoIbge, municipioNome, onActivateC
   useEffect(() => {
     setLoading(true);
     load();
-    const id = setInterval(load, 5 * 60 * 1000);
+    loadAlertaVivo();
+    const id = setInterval(() => {
+      load();
+      loadAlertaVivo();
+    }, 5 * 60 * 1000);
     return () => clearInterval(id);
-  }, [load]);
+  }, [load, loadAlertaVivo]);
 
   useEffect(() => {
     if (!data) return;
@@ -263,10 +288,58 @@ export default function MonitoringPanel({ codigoIbge, municipioNome, onActivateC
         <Card icon={<Activity size={14} />} label="Risco atual" value={nivel} accent="amber" badgeClass={riskBadgeClass} />
       </div>
 
+      {alertaVivo && (
+        <div
+          className={`rounded-xl border p-3 ${
+            alertaVivo.vivo
+              ? 'border-rose-500/40 bg-rose-950/25'
+              : 'border-zinc-700/60 bg-zinc-900/40'
+          }`}
+        >
+          <div className="flex items-start justify-between gap-2">
+            <div>
+              <p className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">
+                Alerta vivo (contingência)
+              </p>
+              <p className="mt-1 text-sm font-extrabold text-zinc-100">
+                Nível {alertaVivo.nivel_alerta}
+                {alertaVivo.vivo ? (
+                  <span className="ml-2 rounded-full bg-rose-500/20 px-2 py-0.5 text-[9px] font-bold uppercase text-rose-200">
+                    Ativo 24h
+                  </span>
+                ) : (
+                  <span className="ml-2 rounded-full bg-zinc-700/50 px-2 py-0.5 text-[9px] font-bold uppercase text-zinc-400">
+                    Sem evento vivo
+                  </span>
+                )}
+              </p>
+              <p className="mt-1 text-[11px] text-zinc-400">
+                CEMADEN 24h: {alertaVivo.cemaden_ativos_24h}
+                {alertaVivo.titulo_recente ? ` · ${alertaVivo.titulo_recente}` : ''}
+              </p>
+            </div>
+            {onActivateContingency && (
+              <button
+                type="button"
+                onClick={() => onActivateContingency(alertaVivo.nivel_alerta, null)}
+                className="shrink-0 rounded-lg border border-amber-500/40 bg-amber-950/40 px-2.5 py-1.5 text-[9px] font-bold uppercase tracking-wider text-amber-100 hover:bg-amber-900/50"
+              >
+                Abrir contingência
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
       {data?.risk_probability != null && (
         <p className="text-xs text-zinc-400">
           Probabilidade de evento crítico:{' '}
           <strong className="text-amber-300">{(data.risk_probability * 100).toFixed(0)}%</strong>
+          {data.risk_source === 'ml' && (
+            <span className="ml-1 rounded bg-violet-500/15 px-1.5 py-0.5 text-[9px] font-bold uppercase text-violet-200">
+              ML
+            </span>
+          )}
           {data.precip_72h_mm != null && (
             <span className="text-zinc-600"> · Precip. 72h: {data.precip_72h_mm} mm</span>
           )}

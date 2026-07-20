@@ -142,7 +142,10 @@ def generate_plan_from_simulation(
     buffer_m: float = 500,
     criado_por: str = "simulacao",
     simulacao_ref: dict | None = None,
+    nivel_alerta: str | None = None,
 ) -> ContingencyPlan:
+    from app.services.live_alert_level import live_alert_snapshot, normalize_nivel
+
     muni = _municipio_by_ibge(db, codigo_ibge)
     if not muni:
         raise ValueError(f"Município {codigo_ibge} não encontrado")
@@ -151,10 +154,16 @@ def generate_plan_from_simulation(
     pontos = load_support_points(db, muni.id)
     rotas = routes_from_zones_to_support_points(zonas, pontos, uf=muni.uf)
 
+    if nivel_alerta:
+        nivel = normalize_nivel(nivel_alerta, default="AMARELO")
+    else:
+        live = live_alert_snapshot(db, codigo_ibge, hours=24)
+        nivel = live["nivel_alerta"] if live.get("vivo") else "AMARELO"
+
     plan = ContingencyPlan(
         municipio_id=muni.id,
         cenario_tipo=cenario_tipo.upper(),
-        nivel_alerta="AMARELO",
+        nivel_alerta=nivel,
         criado_por=criado_por,
         zonas_evacuacao=zonas,
         rotas_fuga=rotas,

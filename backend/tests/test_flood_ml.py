@@ -14,6 +14,18 @@ from ml.train import _find_threshold_mm, _temporal_cv_auc
 def test_resolve_codigo_ibge_slug():
     assert resolve_codigo_ibge("recife") == "2611606"
     assert resolve_codigo_ibge("2611606") == "2611606"
+    assert resolve_codigo_ibge("aracaju") == "2800308"
+    assert resolve_codigo_ibge("fortaleza") == "2304400"
+
+
+def test_ml_targets_expanded():
+    from ml.baseline import TERRAIN_PRESETS
+    from ml.constants import ML_TARGET_IBGE_CODES, SLUG_BY_IBGE
+
+    assert len(ML_TARGET_IBGE_CODES) >= 10
+    assert "2800308" in ML_TARGET_IBGE_CODES
+    assert set(ML_TARGET_IBGE_CODES) <= set(SLUG_BY_IBGE)
+    assert set(ML_TARGET_IBGE_CODES) <= set(TERRAIN_PRESETS)
 
 
 def test_resolve_codigo_ibge_invalid():
@@ -81,7 +93,34 @@ def test_predictor_with_mock_model(mock_path, tmp_path):
     assert 0 <= result["risk_probability"] <= 1
     assert result["risk_level"] in {"BAIXO", "MEDIO", "ALTO", "MUITO_ALTO"}
     assert "disclaimer" in result
+    assert result["mm_acima_limiar"] == round(80 - 65.0, 1)
+    assert isinstance(result["top_features"], list)
+    assert len(result["top_features"]) == 3
+    assert "feature" in result["top_features"][0]
 
 
 def test_municipality_slugs_count():
-    assert len(MUNICIPALITY_SLUGS) == 5
+    assert len(MUNICIPALITY_SLUGS) >= 10
+    assert MUNICIPALITY_SLUGS["aracaju"] == "2800308"
+
+
+def test_resolve_risk_probability_ml_and_fallback():
+    from app.services.weather_monitor import _risk_probability, resolve_risk_probability
+
+    db = MagicMock()
+    with patch("ml.paths.model_path") as mock_path, patch(
+        "ml.bootstrap.ensure_model_for", return_value=True
+    ), patch(
+        "ml.predictor.predictor.predict",
+        return_value={"risk_probability": 0.66},
+    ):
+        mock_path.return_value.exists.return_value = True
+        risk, source = resolve_risk_probability(db, "2611606", 90.0, 140.0)
+        assert source == "ml"
+        assert risk == 0.66
+
+    with patch("ml.paths.model_path") as mock_path:
+        mock_path.return_value.exists.return_value = False
+        risk, source = resolve_risk_probability(db, "9999999", 25.0, 40.0)
+        assert source == "precip_curve"
+        assert risk == _risk_probability(25.0)

@@ -1,0 +1,13 @@
+# Cobertura CI — módulos críticos. Coletores de integração pesada (rede/PostGIS)
+# ficam fora do gate; têm testes próprios sem entrar no fail-under.
+[run]
+omit =
+    */data_connectors/mapbiomas_collector.py
+    */data_connectors/official_bairros_collector.py
+    */data_connectors/territorial_mesh_collector.py
+    */data_connectors/saude_collector.py
+    */data_connectors/ctm_collector.py
+
+[report]
+skip_covered = True
+show_missing = True

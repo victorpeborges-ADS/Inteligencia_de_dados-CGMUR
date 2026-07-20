@@ -82,7 +82,7 @@ export function mergeMunicipalities(
       loaded: true,
     });
   });
-  const priorityRank = new Map(
+  const priorityRank = new Map<string, number>(
     BOOT_PRIORITY_IBGE_CODES.map((code, index) => [code, index]),
   );
   return Array.from(byCode.values()).sort((a, b) => {

@@ -75,18 +75,12 @@ def monitoring_dashboard(codigo_ibge: str, request: Request, db: Session = Depen
         .first()
     )
 
+    from app.services.live_alert_level import live_alert_snapshot, max_alert_level
+
     cemaden_active = [a for a in alerts if a.tipo == "CEMADEN_ALERT"]
     risk_alerts = [a for a in alerts if a.tipo == "RISK_THRESHOLD"]
-
-    nivel_atual = "VERDE"
-    for a in alerts:
-        if a.nivel == "VERMELHO":
-            nivel_atual = "VERMELHO"
-            break
-        if a.nivel == "LARANJA" and nivel_atual != "VERMELHO":
-            nivel_atual = "LARANJA"
-        elif a.nivel == "AMARELO" and nivel_atual == "VERDE":
-            nivel_atual = "AMARELO"
+    nivel_atual = max_alert_level([a.nivel for a in alerts])
+    _live = live_alert_snapshot(db, codigo_ibge, hours=24)
 
     active_plan = None
     if muni:
@@ -119,9 +113,15 @@ def monitoring_dashboard(codigo_ibge: str, request: Request, db: Session = Depen
         "nivel_risco_atual": nivel_atual,
         "cemaden_ativos": len(cemaden_active),
         "alertas_risco": len(risk_alerts),
+        "alerta_vivo": _live,
         "precip_24h_mm": float(weather.precip_24h_mm) if weather else None,
         "precip_72h_mm": float(weather.precip_72h_mm) if weather else None,
         "risk_probability": float(weather.risk_probability) if weather else None,
+        "risk_source": (
+            (weather.raw_payload or {}).get("_risk_source")
+            if weather and isinstance(weather.raw_payload, dict)
+            else None
+        ),
         "weather_updated_at": weather.fetched_at.isoformat() if weather else None,
         "weather_disponivel": weather is not None,
         "timeline": timeline_raw,

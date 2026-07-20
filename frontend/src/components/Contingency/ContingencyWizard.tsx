@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import dynamic from 'next/dynamic';
 import { api, type ContingencyPlan, type RoutingStatus } from '@/utils/api';
-import { Save, ChevronRight, ChevronLeft, FileDown, Shield, Navigation, CheckCircle2 } from 'lucide-react';
+import { Save, ChevronRight, ChevronLeft, FileDown, Shield, Navigation, CheckCircle2, Siren } from 'lucide-react';
 
 const ContingencyDrawMap = dynamic(() => import('./ContingencyDrawMap'), { ssr: false });
 
@@ -18,7 +18,40 @@ interface Props {
   mapFocus: [number, number];
   simGeoJSON?: any;
   initialNivel?: string;
+  initialPlan?: ContingencyPlan | null;
   onPlanActivated?: (plan: ContingencyPlan) => void;
+}
+
+function hydrateFromPlan(
+  plan: ContingencyPlan,
+  setters: {
+    setPlanId: (id: number) => void;
+    setCenario: (v: string) => void;
+    setNivel: (v: string) => void;
+    setZonas: (v: any[]) => void;
+    setRotas: (v: any[]) => void;
+    setPontos: (v: any[]) => void;
+    setContatos: (v: Array<{ nome: string; cargo: string; telefone: string; whatsapp: string }>) => void;
+    setAcoes: (v: Record<string, string[]>) => void;
+  },
+) {
+  setters.setPlanId(plan.id);
+  if (plan.cenario_tipo) setters.setCenario(plan.cenario_tipo);
+  if (plan.nivel_alerta) setters.setNivel(plan.nivel_alerta);
+  setters.setZonas(plan.zonas_evacuacao || []);
+  setters.setRotas(plan.rotas_fuga || []);
+  setters.setPontos(plan.pontos_apoio || []);
+  if (plan.contatos_defesa_civil?.length) {
+    setters.setContatos(
+      plan.contatos_defesa_civil.map((c) => ({
+        nome: c.nome,
+        cargo: c.cargo ?? '',
+        telefone: c.telefone ?? '',
+        whatsapp: c.whatsapp ?? '',
+      })),
+    );
+  }
+  if (plan.acoes_por_nivel) setters.setAcoes(plan.acoes_por_nivel);
 }
 
 export default function ContingencyWizard({
@@ -28,22 +61,39 @@ export default function ContingencyWizard({
   mapFocus,
   simGeoJSON,
   initialNivel = 'AMARELO',
+  initialPlan = null,
   onPlanActivated,
 }: Props) {
   const [step, setStep] = useState(1);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [planId, setPlanId] = useState<number | null>(null);
+  const [planId, setPlanId] = useState<number | null>(initialPlan?.id ?? null);
 
-  const [cenario, setCenario] = useState<string>('INUNDACAO');
-  const [nivel, setNivel] = useState(initialNivel);
-  const [zonas, setZonas] = useState<any[]>([]);
-  const [rotas, setRotas] = useState<any[]>([]);
-  const [pontos, setPontos] = useState<any[]>([]);
-  const [contatos, setContatos] = useState([
-    { nome: '', cargo: 'Coordenador DC', telefone: '', whatsapp: '' },
-  ]);
-  const [acoes, setAcoes] = useState<Record<string, string[]>>({});
+  const [cenario, setCenario] = useState<string>(initialPlan?.cenario_tipo || 'INUNDACAO');
+  const [nivel, setNivel] = useState(initialPlan?.nivel_alerta || initialNivel);
+  const [nivelManual, setNivelManual] = useState(false);
+  const [alertaVivo, setAlertaVivo] = useState<{
+    nivel_alerta: string;
+    cemaden_ativos_24h: number;
+    alertas_total_24h: number;
+    vivo: boolean;
+    fonte: string;
+    titulo_recente?: string | null;
+  } | null>(null);
+  const [zonas, setZonas] = useState<any[]>(initialPlan?.zonas_evacuacao || []);
+  const [rotas, setRotas] = useState<any[]>(initialPlan?.rotas_fuga || []);
+  const [pontos, setPontos] = useState<any[]>(initialPlan?.pontos_apoio || []);
+  const [contatos, setContatos] = useState(
+    initialPlan?.contatos_defesa_civil?.length
+      ? initialPlan.contatos_defesa_civil.map((c) => ({
+          nome: c.nome,
+          cargo: c.cargo ?? '',
+          telefone: c.telefone ?? '',
+          whatsapp: c.whatsapp ?? '',
+        }))
+      : [{ nome: '', cargo: 'Coordenador DC', telefone: '', whatsapp: '' }],
+  );
+  const [acoes, setAcoes] = useState<Record<string, string[]>>(initialPlan?.acoes_por_nivel || {});
   const [drawMode, setDrawMode] = useState<'zone' | 'support' | 'view'>('zone');
   const [routingStatus, setRoutingStatus] = useState<RoutingStatus | null>(null);
 
@@ -58,8 +108,49 @@ export default function ContingencyWizard({
   }, [cenario]);
 
   useEffect(() => {
-    if (initialNivel) setNivel(initialNivel);
-  }, [initialNivel]);
+    if (initialNivel && !initialPlan?.nivel_alerta) {
+      setNivel(initialNivel);
+      setNivelManual(false);
+    }
+  }, [initialNivel, initialPlan?.nivel_alerta]);
+
+  useEffect(() => {
+    if (!initialPlan?.id) return;
+    hydrateFromPlan(initialPlan, {
+      setPlanId,
+      setCenario,
+      setNivel,
+      setZonas,
+      setRotas,
+      setPontos,
+      setContatos,
+      setAcoes,
+    });
+  }, [initialPlan?.id]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setAlertaVivo(null);
+    setNivelManual(false);
+    api
+      .getContingencyAlertaVivo(codigoIbge)
+      .then((snap) => {
+        if (cancelled) return;
+        setAlertaVivo(snap);
+        if (
+          !initialPlan?.nivel_alerta &&
+          NIVEIS.includes(snap.nivel_alerta as (typeof NIVEIS)[number])
+        ) {
+          setNivel(snap.nivel_alerta);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setAlertaVivo(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [codigoIbge, initialPlan?.nivel_alerta]);
 
   const osrmCoveredUfs = routingStatus?.covered_ufs ?? DEFAULT_OSRM_UFS;
   const coveredSet = new Set(osrmCoveredUfs.map((uf) => uf.toUpperCase()));
@@ -84,11 +175,13 @@ export default function ContingencyWizard({
         cenario_tipo: cenario,
         risk_geojson: simGeoJSON,
         buffer_m: 500,
+        nivel_alerta: nivel,
       });
       setPlanId(plan.id);
       setZonas(plan.zonas_evacuacao || []);
       setRotas(plan.rotas_fuga || []);
       setPontos(plan.pontos_apoio || []);
+      if (plan.nivel_alerta) setNivel(plan.nivel_alerta);
       setContatos(
         plan.contatos_defesa_civil?.length
           ? plan.contatos_defesa_civil.map((c) => ({
@@ -223,8 +316,41 @@ export default function ContingencyWizard({
               <option key={c} value={c}>{c}</option>
             ))}
           </select>
+          {alertaVivo && (
+            <div
+              className={`rounded-lg border px-3 py-2 ${
+                alertaVivo.vivo
+                  ? 'border-rose-500/40 bg-rose-950/20'
+                  : 'border-emerald-500/30 bg-emerald-950/15'
+              }`}
+            >
+              <div className="flex items-start gap-2">
+                <Siren
+                  size={16}
+                  className={`mt-0.5 shrink-0 ${alertaVivo.vivo ? 'text-rose-300' : 'text-emerald-400'}`}
+                />
+                <div>
+                  <p className="text-[10px] font-extrabold uppercase tracking-wide text-zinc-200">
+                    Alerta vivo · {alertaVivo.nivel_alerta}
+                  </p>
+                  <p className="mt-1 text-[10px] leading-relaxed text-zinc-400">
+                    {alertaVivo.cemaden_ativos_24h} CEMADEN · {alertaVivo.alertas_total_24h} alertas/24h
+                    {alertaVivo.titulo_recente ? ` · ${alertaVivo.titulo_recente}` : ''}
+                    {!nivelManual ? ' — nível pré-preenchido no plano' : ' — você ajustou o nível manualmente'}
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
           <label className="block text-[10px] font-bold uppercase text-zinc-500">Nível de alerta referência</label>
-          <select value={nivel} onChange={(e) => setNivel(e.target.value)} className="w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-xs">
+          <select
+            value={nivel}
+            onChange={(e) => {
+              setNivelManual(true);
+              setNivel(e.target.value);
+            }}
+            className="w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-xs"
+          >
             {NIVEIS.map((n) => <option key={n} value={n}>{n}</option>)}
           </select>
           {simGeoJSON && (

@@ -34,7 +34,10 @@ def flood_model_status():
         "ready_count": sum(1 for m in models if m["ready"]),
         "total": len(models),
         "on_demand_baseline": True,
-        "note": "Qualquer município carregado no banco recebe modelo baseline on-demand; os 5 acima têm treino dedicado.",
+        "note": (
+            f"Qualquer município no banco recebe baseline on-demand; "
+            f"{len(ML_TARGET_IBGE_CODES)} alvos têm artefato dedicado (treino full via etl_flood_ml)."
+        ),
         "models": models,
     }
 

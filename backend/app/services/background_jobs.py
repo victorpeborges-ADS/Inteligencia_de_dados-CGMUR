@@ -329,6 +329,25 @@ def run_bairros_batch_job(limit: int = 61, force: bool = False) -> str:
     return job_id
 
 
+def run_ctm_batch_job(*, force: bool = False, codigos: list[str] | None = None) -> str:
+    from app.data_connectors.ctm_registry import CTM_BY_CODE, CTM_TARGET_CODES
+
+    targets = codigos or [c for c in CTM_TARGET_CODES if c in CTM_BY_CODE]
+    job_id = create_job("ctm_batch", label=f"CTM / geoportal ({len(targets)})")
+
+    def _task() -> dict[str, Any]:
+        from app.data_connectors.ctm_collector import collect_ctm_batch
+
+        db = SessionLocal()
+        try:
+            return collect_ctm_batch(db, codigos=targets or None, force=force)
+        finally:
+            db.close()
+
+    run_in_background(job_id, _task)
+    return job_id
+
+
 def run_dem_batch_job(limit: int = 61, force: bool = False) -> str:
     job_id = create_job("dem_batch", label=f"DEM LiDAR/SRTM ({limit})")
 

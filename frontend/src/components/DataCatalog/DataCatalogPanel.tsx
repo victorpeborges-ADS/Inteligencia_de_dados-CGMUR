@@ -7,6 +7,7 @@ import {
   type DataCoverage,
   type DataCatalogNational,
   type FonteImpactAnalysis,
+  type InstitutionalGapsNational,
 } from '@/utils/api';
 import InstitutionalGapsPanel from '@/components/DataCatalog/InstitutionalGapsPanel';
 import GeoReDusReferenceCard from '@/components/DataCatalog/GeoReDusReferenceCard';
@@ -68,6 +69,7 @@ type DataCatalogPanelProps = {
 export default function DataCatalogPanel({ codigoIbge, isGestorOrAdmin }: DataCatalogPanelProps) {
   const [coverage, setCoverage] = useState<DataCoverage | null>(null);
   const [national, setNational] = useState<DataCatalogNational | null>(null);
+  const [institutionalGaps, setInstitutionalGaps] = useState<InstitutionalGapsNational | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [modal, setModal] = useState<ModalState>(null);
@@ -85,12 +87,19 @@ export default function DataCatalogPanel({ codigoIbge, isGestorOrAdmin }: DataCa
       setCoverage(municipal);
       if (isGestorOrAdmin) {
         try {
-          setNational(await api.getNationalDataCatalog());
+          const [nat, gaps] = await Promise.all([
+            api.getNationalDataCatalog(),
+            api.getInstitutionalGapsNational(),
+          ]);
+          setNational(nat);
+          setInstitutionalGaps(gaps);
         } catch {
           setNational(null);
+          setInstitutionalGaps(null);
         }
       } else {
         setNational(null);
+        setInstitutionalGaps(null);
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Falha ao carregar catálogo');
@@ -288,7 +297,13 @@ export default function DataCatalogPanel({ codigoIbge, isGestorOrAdmin }: DataCa
         onImported={load}
       />
 
-      <InstitutionalGapsPanel bases={coverage.bases} onAnalyzeGap={openImpactByFonteId} />
+      <InstitutionalGapsPanel
+        bases={coverage.bases}
+        nacional={institutionalGaps}
+        isGestorOrAdmin={isGestorOrAdmin}
+        onAnalyzeGap={openImpactByFonteId}
+        onBatchComplete={load}
+      />
 
       {/* Source cards */}
       <div className="rounded-xl border border-zinc-800 bg-zinc-950/60 p-3">

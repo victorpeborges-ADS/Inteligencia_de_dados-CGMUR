@@ -43,3 +43,8 @@ documents:
     label: "Manual de Gestão de Riscos e Desastres — SEDEC/MI"
     path: "corpus/texts/manual_gestao_riscos_sedec.md"
     category: guias
+
+  - id: sinidu_modulos
+    label: "Sinidu+Clima — Módulos operacionais"
+    path: "corpus/texts/sinidu_modulos_operacionais.md"
+    category: sinidu

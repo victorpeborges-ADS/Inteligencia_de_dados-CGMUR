@@ -9,9 +9,10 @@ module.exports = {
   theme: {
     extend: {
       colors: {
-        background: "#09090b", // zinc-950
-        card: "#18181b",       // zinc-900
-        border: "#27272a",     // zinc-800
+        background: "var(--sinidu-bg)",
+        card: "var(--sinidu-card)",
+        border: "var(--sinidu-border)",
+        foreground: "var(--sinidu-fg)",
         accent: {
           emerald: "#10b981",  // vegetation/cooling
           sky: "#0ea5e9",      // flooding/water

@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 from app import config as config_module
 import app.security.auth as auth_module
 from main import app
+from tests.conftest import requires_postgres
 
 
 @pytest.fixture
@@ -23,6 +24,7 @@ def reset_auth(monkeypatch):
     auth_module._USER_STORE = None
 
 
+@requires_postgres
 def test_system_overview_auth_off(client: TestClient):
     res = client.get("/api/v1/system/overview")
     assert res.status_code == 200
@@ -31,10 +33,12 @@ def test_system_overview_auth_off(client: TestClient):
     assert "checks" in body
     assert "integrations" in body
     assert "batch_coverage" in body
-    assert "com_relatorio" in body["batch_coverage"]
+    assert "homologation" in body
+    assert "score_pct" in body["homologation"]
     assert body["auth"]["enabled"] is False
 
 
+@requires_postgres
 def test_system_overview_requires_admin_when_auth_on(client: TestClient, monkeypatch):
     monkeypatch.setattr(config_module.settings, "AUTH_ENABLED", True)
     monkeypatch.setattr(config_module.settings, "AUTH_ADMIN_PASSWORD", "admin")
@@ -86,6 +90,15 @@ def test_background_jobs_lifecycle(client: TestClient):
     assert any(item["id"] == job_id for item in listing.json()["items"])
 
 
+def test_ctm_batch_job_enqueue(client: TestClient):
+    res = client.post("/api/v1/system/jobs/ctm-batch")
+    assert res.status_code == 200
+    body = res.json()
+    assert body["job_id"]
+    assert body["job"]["type"] == "ctm_batch"
+
+
+@requires_postgres
 def test_data_catalog_national_auth_off(client: TestClient):
     res = client.get("/api/v1/data-catalog/national")
     # Sem seeds no banco de teste pode retornar 404; com seeds retorna 200

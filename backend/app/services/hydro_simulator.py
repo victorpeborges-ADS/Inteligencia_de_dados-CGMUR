@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from pathlib import Path
 from typing import Any
 
@@ -100,6 +101,40 @@ def _normalize_masked(values: np.ndarray, mask: np.ndarray, percentile: float = 
     return np.clip(values / vmax, 0.0, 1.0)
 
 
+def _hydro_max_grid_dim() -> int:
+    try:
+        return max(128, int(os.getenv("HYDRO_MAX_GRID_DIM", "512")))
+    except ValueError:
+        return 512
+
+
+def _downsample_elevation_grid(
+    elev: np.ndarray,
+    west: float,
+    south: float,
+    res_x: float,
+    res_y: float,
+    max_dim: int | None = None,
+) -> tuple[np.ndarray, float, float, float, float]:
+    """Reduz grelha LiDAR/SRTM para o cálculo hidro (D8/manchas) sem perder o envelope."""
+    limit = max_dim if max_dim is not None else _hydro_max_grid_dim()
+    rows, cols = elev.shape
+    if max(rows, cols) <= limit:
+        return elev, west, south, res_x, res_y
+    factor = int(np.ceil(max(rows, cols) / limit))
+    new_rows = max(1, rows // factor)
+    new_cols = max(1, cols // factor)
+    trimmed = elev[: new_rows * factor, : new_cols * factor]
+    block = trimmed.reshape(new_rows, factor, new_cols, factor)
+    with np.errstate(all="ignore"):
+        down = np.nanmean(block, axis=(1, 3))
+    logger.info(
+        "DEM hidro downsample %sx%s → %sx%s (factor=%s)",
+        rows, cols, down.shape[0], down.shape[1], factor,
+    )
+    return down, west, south, res_x * factor, res_y * factor
+
+
 def _load_elevation_grid(
     db: Session,
     codigo_ibge: str,
@@ -107,6 +142,20 @@ def _load_elevation_grid(
 ) -> tuple[np.ndarray, float, float, float, float, dict[str, Any]] | None:
     meta = load_meta(codigo_ibge)
     tif = dem_dir(codigo_ibge) / "dem.tif"
+
+    # Preferir dem.tif já processado (evita re-clip do LiDAR a cada simulação fria)
+    if tif.exists():
+        try:
+            import rasterio
+
+            with rasterio.open(tif) as src:
+                elev = src.read(1).astype(np.float64)
+                west, south, east, north = src.bounds
+                res_x = (east - west) / src.width
+                res_y = (north - south) / src.height
+                return elev, west, south, res_x, res_y, meta or {}
+        except Exception as exc:
+            logger.warning("Falha ao ler DEM %s: %s", tif, exc)
 
     clip_bounds: tuple[float, float, float, float] | None = None
     try:
@@ -204,19 +253,25 @@ def _lon_grid(cols: int, west: float, res_x: float) -> np.ndarray:
 
 
 def _smooth_dem(elev: np.ndarray, mask: np.ndarray, passes: int = 2) -> np.ndarray:
-    """Suaviza ruído do SRTM preservando o relevo geral."""
+    """Suaviza ruído do SRTM preservando o relevo geral (convolução vetorizada)."""
     if not mask.any():
         return elev
     mean_elev = float(np.nanmean(elev[mask]))
     work = np.where(mask, np.nan_to_num(elev, nan=mean_elev), mean_elev)
-    kernel = np.array([[1, 2, 1], [2, 4, 2], [1, 2, 1]], dtype=np.float64) / 16.0
+    k = np.array([[1, 2, 1], [2, 4, 2], [1, 2, 1]], dtype=np.float64) / 16.0
     for _ in range(passes):
         padded = np.pad(work, 1, mode="edge")
-        smoothed = np.zeros_like(work)
-        for r in range(work.shape[0]):
-            for c in range(work.shape[1]):
-                smoothed[r, c] = float(np.sum(padded[r : r + 3, c : c + 3] * kernel))
-        work = smoothed
+        work = (
+            k[0, 0] * padded[:-2, :-2]
+            + k[0, 1] * padded[:-2, 1:-1]
+            + k[0, 2] * padded[:-2, 2:]
+            + k[1, 0] * padded[1:-1, :-2]
+            + k[1, 1] * padded[1:-1, 1:-1]
+            + k[1, 2] * padded[1:-1, 2:]
+            + k[2, 0] * padded[2:, :-2]
+            + k[2, 1] * padded[2:, 1:-1]
+            + k[2, 2] * padded[2:, 2:]
+        )
     return np.where(mask, work, np.nan)
 
 
@@ -796,6 +851,9 @@ def enrich_rainfall_simulation(
         }
 
     elev, west, south, res_x, res_y, meta = grid
+    elev, west, south, res_x, res_y = _downsample_elevation_grid(
+        elev, west, south, res_x, res_y,
+    )
     muni_geom = shape(json.loads(db.scalar(muni.geom.ST_AsGeoJSON())))
 
     rivers = db.query(CoberturaVegetalMapBiomas.geom).filter(

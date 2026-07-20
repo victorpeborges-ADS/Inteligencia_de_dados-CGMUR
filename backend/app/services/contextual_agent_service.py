@@ -115,6 +115,26 @@ def _is_simple_question(message: str) -> bool:
     return not _DATA_QUESTION_RE.search(message) and len(message.split()) <= 12
 
 
+def _offline_contextual_reply(dados_municipio: dict[str, Any], message: str) -> str:
+    """Resposta determinística quando o LLM não está configurado (demo/homolog)."""
+    lower = message.lower()
+    nome = dados_municipio.get("nome") or "município"
+    uf = dados_municipio.get("uf") or ""
+    label = f"{nome}/{uf}" if uf else str(nome)
+    score = dados_municipio.get("score_sinidu")
+    if score is not None and ("score" in lower or "sinidu" in lower):
+        return (
+            f"No município de {label}, o **Score Sinidu+Clima** consolidado é **{score}** "
+            "(escala 0–100). O índice agrega vulnerabilidade climática (IVC), risco de inundação (IRI) "
+            "e capacidade de adaptação municipal. Consulte o painel executivo e a camada de vulnerabilidade "
+            "para detalhar bairros críticos."
+        )
+    return (
+        "O assistente contextual está em modo demonstração (MISTRAL_API_KEY não configurada no servidor). "
+        "Use o painel, simulações e diagnóstico automático para explorar os indicadores do município."
+    )
+
+
 def _resolve_model(ai_model: str | None, provider: Any) -> str:
     if ai_model:
         return ai_model
@@ -218,16 +238,20 @@ def contextual_chat_stream(
 
     try:
         provider = resolve_chat_provider_with_fallback(ai_provider, api_key=ai_api_key)
-    except ValueError as exc:
+    except (ValueError, RuntimeError) as exc:
         yield _sse({"type": "error", "content": str(exc)})
         yield _sse({"type": "done", "response": str(exc), "response_time_ms": 0})
         return
 
     model = _resolve_model(ai_model, provider)
     if not provider.is_available():
-        msg = "MISTRAL_API_KEY não configurada no servidor."
-        yield _sse({"type": "error", "content": msg})
-        yield _sse({"type": "done", "response": msg, "response_time_ms": 0})
+        answer = (
+            _offline_contextual_reply(dados_municipio, message)
+            if _is_simple_question(message)
+            else "MISTRAL_API_KEY não configurada no servidor."
+        )
+        elapsed = int((time.time() - start) * 1000)
+        yield _sse({"type": "done", "response": answer, "response_time_ms": elapsed, "ai_provider": None})
         return
 
     messages: list[dict[str, Any]] = [{"role": "system", "content": system_content}]

@@ -46,6 +46,8 @@ class SystemOverview(BaseModel):
     audit: dict
     routing: dict
     batch_coverage: dict
+    ctm: dict
+    homologation: dict
 
 
 @router.get("/overview", response_model=SystemOverview)
@@ -87,6 +89,35 @@ def system_overview(
 
     from app.services.dem_processor import dem_status
     from app.services.batch_export_service import batch_coverage_summary
+    from app.services.homologation_readiness_service import build_homologation_readiness
+    from app.services.institutional_gaps_service import build_ctm_operational_summary
+
+    batch_cov = batch_coverage_summary(db)
+    ctm_summary = build_ctm_operational_summary(db)
+    dem_meta = dem_status(limit=61)
+    boot_codes = settings.BOOT_PRIORITY_IBGE_CODES
+    from app.services.dem_processor import is_processed
+
+    dem_meta["boot_processed"] = sum(1 for code in boot_codes if is_processed(code))
+    dem_meta["boot_total"] = len(boot_codes)
+    tls_meta = _inspect_tls_cert(os.getenv("TLS_FULLCHAIN", "/etc/nginx/certs/fullchain.pem"))
+    routing_meta = _routing_overview()
+    from app.services.gotify_notifier import gotify_status
+    from app.services.postgis_backup import latest_backup_status
+
+    sched_meta = scheduler_status()
+    homologation = build_homologation_readiness(
+        db,
+        oidc_meta=oidc_meta,
+        tls_meta=tls_meta,
+        batch_coverage=batch_cov,
+        ctm_summary=ctm_summary,
+        dem_summary=dem_meta,
+        osrm_meta=routing_meta,
+        backup_meta=latest_backup_status(),
+        gotify_meta=gotify_status(),
+        scheduler_meta=sched_meta,
+    )
 
     return SystemOverview(
         timestamp=datetime.now(timezone.utc).isoformat(),
@@ -130,15 +161,17 @@ def system_overview(
             "sources": sources,
         },
         mapbiomas=mapbiomas_status(db),
-        dem=dem_status(limit=61),
-        tls=_inspect_tls_cert(os.getenv("TLS_FULLCHAIN", "/etc/nginx/certs/fullchain.pem")),
-        scheduler=scheduler_status(),
+        dem=dem_meta,
+        tls=tls_meta,
+        scheduler=sched_meta,
         audit={
             "total_eventos": audit_total,
             "top_acoes": [{"action": action, "count": count} for action, count in audit_recent],
         },
-        routing=_routing_overview(),
-        batch_coverage=batch_coverage_summary(db),
+        routing=routing_meta,
+        batch_coverage=batch_cov,
+        ctm=ctm_summary,
+        homologation=homologation,
     )
 
 
@@ -265,6 +298,24 @@ def start_bairros_batch_job(
 
     job_id = run_bairros_batch_job(limit=min(limit, 61), force=force)
     return {"job_id": job_id, "job": get_job(job_id)}
+
+
+@router.post("/jobs/ctm-batch")
+def start_ctm_batch_job(
+    force: bool = False,
+    codigos: str | None = None,
+    _admin: User = Depends(require_role(Role.ADMIN)),
+):
+    """Importa malhas CTM dos geoportais cadastrados (A.6 — escopo BAIXA/MÉDIA)."""
+    from app.services.background_jobs import find_active_job, get_job, run_ctm_batch_job
+
+    existing = find_active_job("ctm_batch")
+    if existing:
+        return {"job_id": existing["id"], "job": existing, "reused": True}
+
+    codes = [c.strip().zfill(7)[:7] for c in codigos.split(",") if c.strip()] if codigos else None
+    job_id = run_ctm_batch_job(force=force, codigos=codes)
+    return {"job_id": job_id, "job": get_job(job_id), "reused": False}
 
 
 @router.post("/jobs/dem-batch")

@@ -6,13 +6,18 @@ from datetime import datetime
 from pathlib import Path
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
-from weasyprint import HTML
 
 from app.config import settings
 from app.models import DiagnosticoExecutivo, Municipio
 from app.services.executive_diagnostic_engine import _fmt_currency, _fmt_num
 
 TEMPLATE_DIR = Path(__file__).resolve().parent.parent / "reports" / "templates"
+
+
+def _html_to_pdf(html: str, path: Path, *, base_url: str | None = None) -> None:
+    from weasyprint import HTML
+
+    HTML(string=html, base_url=base_url).write_pdf(str(path))
 
 
 def diagnostic_pdf_dir() -> Path:
@@ -58,7 +63,7 @@ def generate_diagnostic_pdf(record: DiagnosticoExecutivo, muni: Municipio) -> Pa
         or [],
     )
     path = diagnostic_pdf_path(record.codigo_ibge, record.versao)
-    HTML(string=html, base_url=str(TEMPLATE_DIR)).write_pdf(str(path))
+    _html_to_pdf(html, path, base_url=str(TEMPLATE_DIR))
     return path
 
 

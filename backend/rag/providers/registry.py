@@ -129,14 +129,9 @@ def resolve_chat_provider_with_fallback(
     provider_id: str | None = None,
     api_key: str | None = None,
 ) -> ChatProvider:
-    """Resolve provedor Mistral — sem fallback para Ollama/Gemini."""
+    """Resolve provedor Mistral; retorna instância mesmo sem API key (checar is_available())."""
     preferred = (provider_id or default_chat_provider_id() or "mistral").strip().lower()
-    provider = get_chat_provider(preferred, api_key)
-    if not provider.is_available():
-        raise RuntimeError(
-            "Mistral AI não está configurado. Defina MISTRAL_API_KEY no ambiente."
-        )
-    return provider
+    return get_chat_provider(preferred, api_key)
 
 
 def test_chat_provider(

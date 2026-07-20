@@ -5,7 +5,7 @@ import type { TemporalTemaId, TemporalTemaOption } from '@/config/layerTemporal'
 type TemporalYearPanelProps = {
   activeTemas: TemporalTemaOption[];
   layerAnoByTema: Partial<Record<TemporalTemaId, number>>;
-  setLayerAnoForTema: (temaId: TemporalTemaId, ano: number) => void;
+  setLayerAnoForTema: (temaId: TemporalTemaId, ano: number | null) => void;
 };
 
 export default function TemporalYearPanel({

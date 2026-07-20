@@ -23,6 +23,24 @@ DEM_BASE_DIR = Path(os.getenv("DEM_DIR", "/data/dem"))
 LOCAL_DEM_DIR = Path(os.getenv("LOCAL_DEM_DIR", "/data/dem/local"))
 SLOPE_CRITICAL_DEG = 30.0
 FLOOD_ELEVATION_M = 2.0
+
+
+def _opentopography_enabled(api_key: str | None = None) -> bool:
+    """OpenTopo só quando explicitamente ligado ou com API key (evita wait frio sem rede)."""
+    flag = os.getenv("OPENTOPOGRAPHY_ENABLED", "").strip().lower()
+    if flag in ("0", "false", "no", "off"):
+        return False
+    if flag in ("1", "true", "yes", "on"):
+        return True
+    key = (api_key if api_key is not None else os.getenv("OPENTOPOGRAPHY_API_KEY", "")).strip()
+    return bool(key)
+
+
+def _opentopography_timeout_s() -> float:
+    try:
+        return max(3.0, float(os.getenv("OPENTOPOGRAPHY_TIMEOUT_S", "12")))
+    except ValueError:
+        return 12.0
 TERRARIUM_DECODER = {
     "rScaler": 256,
     "gScaler": 1,
@@ -341,6 +359,9 @@ def _download_srtm(
     east: float,
     api_key: str | None = None,
 ) -> tuple[np.ndarray, float, float, float, float] | None:
+    if not _opentopography_enabled(api_key):
+        logger.info("OpenTopography desligado (sem API key / OPENTOPOGRAPHY_ENABLED=false)")
+        return None
     params: dict[str, Any] = {
         "demtype": "SRTMGL1",
         "south": south,
@@ -351,8 +372,9 @@ def _download_srtm(
     }
     if api_key:
         params["API_Key"] = api_key
+    timeout = _opentopography_timeout_s()
     try:
-        response = httpx.get(OPENTOPOGRAPHY_URL, params=params, timeout=120.0)
+        response = httpx.get(OPENTOPOGRAPHY_URL, params=params, timeout=timeout)
         if response.status_code != 200 or len(response.content) < 1000:
             logger.warning("OpenTopography HTTP %s (%s bytes)", response.status_code, len(response.content))
             return None
@@ -365,7 +387,7 @@ def _download_srtm(
                 data[data == nodata] = np.nan
             return data, src.res[0], src.res[1], src.bounds.left, src.bounds.bottom
     except Exception as exc:
-        logger.warning("Falha download SRTM: %s", exc)
+        logger.warning("Falha download SRTM (timeout=%.0fs): %s", timeout, exc)
         return None
 
 
@@ -543,6 +565,7 @@ def process_municipality_dem(
                 dem_source = "LiDAR/DSM local"
             else:
                 dem_source = "DEM local"
+            logger.info("DEM %s: usando arquivo local %s", codigo_ibge, local_path.name)
 
     if result is None:
         result = _download_srtm(south, north, west, east, api_key)

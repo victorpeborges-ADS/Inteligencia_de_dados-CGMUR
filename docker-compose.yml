@@ -107,7 +107,8 @@ services:
       - reports_data:/data/reports
       - models_data:/data/models
       - ml_data:/data/ml
-      - dem_data:/data/dem
+      # Bind local: inclui LiDAR seed (data/dem/local/*.tif) — evita OpenTopo na 1ª simulação
+      - ./data/dem:/data/dem
       - ./mapbiomas:/data/mapbiomas
       - ibge_mesh_cache:/data/ibge
       - backups_data:/data/backups
@@ -178,7 +179,6 @@ volumes:
   reports_data:
   models_data:
   ml_data:
-  dem_data:
   gotify_data:
   backups_data:
   ibge_mesh_cache:

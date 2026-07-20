@@ -6,8 +6,6 @@ from pathlib import Path
 from typing import Any, List
 
 import yaml
-from langchain_community.document_loaders import PyPDFLoader, TextLoader
-from langchain_text_splitters import RecursiveCharacterTextSplitter
 from sqlalchemy.orm import Session
 
 from rag.config import CHUNK_OVERLAP_CHARS, CHUNK_SIZE_CHARS
@@ -21,6 +19,8 @@ RAG_ROOT = Path(__file__).resolve().parent
 
 
 def _load_document(path: Path) -> str:
+    from langchain_community.document_loaders import PyPDFLoader, TextLoader
+
     suffix = path.suffix.lower()
     if suffix == ".pdf":
         loader = PyPDFLoader(str(path))
@@ -32,6 +32,25 @@ def _load_document(path: Path) -> str:
 
 
 def _split_text(text: str) -> List[str]:
+    try:
+        from langchain_text_splitters import RecursiveCharacterTextSplitter
+    except ImportError:
+        # Fallback sem langchain (testes/host leve)
+        size = CHUNK_SIZE_CHARS
+        overlap = CHUNK_OVERLAP_CHARS
+        if size <= 0:
+            return [text] if text else []
+        chunks: List[str] = []
+        start = 0
+        n = len(text)
+        while start < n:
+            end = min(n, start + size)
+            chunks.append(text[start:end])
+            if end >= n:
+                break
+            start = max(0, end - overlap)
+        return chunks
+
     splitter = RecursiveCharacterTextSplitter(
         chunk_size=CHUNK_SIZE_CHARS,
         chunk_overlap=CHUNK_OVERLAP_CHARS,

@@ -6,7 +6,9 @@ from shapely.geometry import Polygon, box
 from app.services.hydro_simulator import (
     _adaptive_contour_interval,
     _compute_d8_accumulation,
+    _downsample_elevation_grid,
     _lat_grid,
+    _smooth_dem,
     contours_geojson,
     flood_bands_geojson,
 )
@@ -64,6 +66,29 @@ def test_flood_bands_produce_depth_with_rasterio():
 def test_adaptive_contour_interval_low_relief():
     assert _adaptive_contour_interval(2.0, 12.0, 30.0) == 2.0
     assert _adaptive_contour_interval(5.0, 45.0, 30.0) == 10.0
+
+
+def test_smooth_dem_preserves_shape_and_mask():
+    elev = np.arange(100, dtype=np.float64).reshape(10, 10)
+    mask = np.ones_like(elev, dtype=bool)
+    mask[0, :] = False
+    out = _smooth_dem(elev, mask, passes=2)
+    assert out.shape == elev.shape
+    assert np.isnan(out[0, 0])
+    assert np.isfinite(out[5, 5])
+
+
+def test_downsample_elevation_grid_caps_dim():
+    elev = np.arange(120 * 120, dtype=np.float64).reshape(120, 120)
+    down, west, south, rx, ry = _downsample_elevation_grid(
+        elev, -1.0, -2.0, 0.001, 0.001, max_dim=40,
+    )
+    assert max(down.shape) <= 40
+    assert west == -1.0 and south == -2.0
+    assert rx > 0.001 and ry > 0.001
+    # Sem necessidade de downsample
+    same, *_ = _downsample_elevation_grid(elev[:20, :20], 0, 0, 0.01, 0.01, max_dim=40)
+    assert same.shape == (20, 20)
 
 
 def test_contours_respect_north_up_orientation():

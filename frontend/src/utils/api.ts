@@ -4,15 +4,11 @@ export function getApiBaseUrl(): string {
   if (typeof window === 'undefined') {
     return env || 'http://localhost:8000';
   }
-  // Dev direto no Next (:3000) → backend em :8000, ou proxy TLS se NEXT_PUBLIC_API_URL apontar para ele
+  // Frontend direto na porta 3000 — API no backend :8000 (evita fetch cross-origin para HTTPS autoassinado)
   if (window.location.port === '3000') {
-    if (env && env.startsWith('https://')) return env;
-    return env || 'http://localhost:8000';
+    return 'http://localhost:8000';
   }
-  // Proxy nginx (HTTPS/HTTP na borda) — evita mixed content http://localhost:8000
-  if (env && !env.includes(':8000')) {
-    return env;
-  }
+  // Proxy nginx (HTTPS/HTTP na borda) — same-origin
   return window.location.origin;
 }
 
@@ -209,6 +205,34 @@ export interface SystemOverview {
     sem_relatorio: { codigo_ibge: string; nome: string; uf: string }[];
     diagnosticos_ok: boolean;
     relatorios_ok: boolean;
+  };
+  ctm?: {
+    total_alvo: number;
+    fontes_cadastradas: number;
+    sem_fonte: number;
+    importado_prefeitura: number;
+    malha_operacional: number;
+    lacuna_municipios: number;
+    progress_label: string;
+    escopo_label: string;
+  };
+  homologation?: {
+    score_pct: number;
+    ready_for_demo?: boolean;
+    ready_for_sso_test: boolean;
+    ready_for_production: boolean;
+    govbr_required?: boolean;
+    note?: string;
+    pending_count: number;
+    checklist_doc: string;
+    next_steps: string[];
+    items: Array<{
+      id: string;
+      label: string;
+      status: 'ok' | 'warn' | 'fail' | 'na';
+      detail: string;
+      group: string;
+    }>;
   };
 }
 
@@ -1056,6 +1080,41 @@ export interface DataCatalogNational {
   resumo: string;
 }
 
+export interface InstitutionalGapNationalRow {
+  rank: number;
+  fonte_id: string;
+  nome: string;
+  total_municipios: number;
+  integrado_count: number;
+  integrado_pct: number;
+  lacuna_municipios: number;
+  status_totals: Record<string, number>;
+  etl_ready: boolean;
+  impacto_score_pts?: number;
+  dificuldade?: string;
+  requisito?: string;
+  proxy_ativo?: boolean;
+  progress_label: string;
+  ctm_cadastrada_count?: number;
+  ctm_sem_fonte_count?: number;
+  ctm_por_kind?: Record<string, number>;
+  malha_operacional_count?: number;
+  importado_prefeitura_count?: number;
+  escopo_label?: string;
+}
+
+export interface InstitutionalGapsNational {
+  total_municipios: number;
+  gaps: InstitutionalGapNationalRow[];
+  meta_maturidade: {
+    baseline_pct: number;
+    target_pct: number;
+    label: string;
+  };
+  etl_ready_fontes: number;
+  resumo: string;
+}
+
 export interface MunicipalReportRecord {
   id: number;
   municipio_id: number;
@@ -1225,6 +1284,8 @@ export interface FloodRiskPrediction {
   risk_level: string;
   confidence: string;
   threshold_mm_24h: number;
+  mm_acima_limiar?: number;
+  top_features?: Array<{ feature: string; importance: number }>;
   critical_neighborhoods: CriticalNeighborhood[];
   flood_geojson: { features?: unknown[] } | null;
   model_version: string;
@@ -1261,6 +1322,7 @@ export interface MonitoringDashboard {
   precip_24h_mm: number | null;
   precip_72h_mm: number | null;
   risk_probability: number | null;
+  risk_source?: string | null;
   weather_updated_at: string | null;
   weather_disponivel?: boolean;
   timeline: MonitoringAlertItem[];
@@ -1428,14 +1490,6 @@ export interface MonitoringMapItem {
   lng?: number | null;
 }
 
-const IBGE_TO_SLUG: Record<string, string> = {
-  '2611606': 'recife',
-  '2927408': 'salvador',
-  '4314902': 'porto_alegre',
-  '2507507': 'joao_pessoa',
-  '4113700': 'londrina',
-};
-
 export const api = {
   getMunicipalities: async (): Promise<MunicipalityOption[]> => {
     const res = await apiFetch(`${getApiBaseUrl()}/api/v1/indicators/municipalities`);
@@ -1484,18 +1538,7 @@ export const api = {
     return res.json();
   },
 
-  getLayersTemporalOptions: async (codigoIbge?: string): Promise<{
-    codigo_ibge: string;
-    temas: Record<string, {
-      tema_id: string;
-      label: string;
-      layer_id: string | null;
-      anos: number[];
-      padrao: number | null;
-      context_only?: boolean;
-      nota?: string | null;
-    }>;
-  }> => {
+  getLayersTemporalOptions: async (codigoIbge?: string): Promise<import('@/config/layerTemporal').TemporalOptionsResponse> => {
     const qs = codigoIbge ? `?codigo_ibge=${encodeURIComponent(codigoIbge)}` : '';
     const res = await apiFetch(`${getApiBaseUrl()}/api/v1/indicators/layers/temporal-options${qs}`);
     if (!res.ok) throw new Error('Failed to load temporal options');
@@ -1749,6 +1792,27 @@ export const api = {
   getNationalDataCatalog: async (): Promise<DataCatalogNational> => {
     const res = await apiFetch(`${getApiBaseUrl()}/api/v1/data-catalog/national`);
     if (!res.ok) throw await httpError(res, 'Falha ao carregar panorama nacional');
+    return res.json();
+  },
+
+  getInstitutionalGapsNational: async (): Promise<InstitutionalGapsNational> => {
+    const res = await apiFetch(`${getApiBaseUrl()}/api/v1/data-catalog/institutional-gaps`);
+    if (!res.ok) throw await httpError(res, 'Falha ao carregar lacunas institucionais');
+    return res.json();
+  },
+
+  getCtmInventory: async (probe = false): Promise<{
+    registry: {
+      total_alvo: number;
+      fontes_cadastradas: number;
+      sem_fonte: number;
+      por_kind: Record<string, number>;
+    };
+    resumo: string;
+  }> => {
+    const qs = probe ? '?probe=1' : '';
+    const res = await apiFetch(`${getApiBaseUrl()}/api/v1/data-catalog/ctm-inventory${qs}`);
+    if (!res.ok) throw await httpError(res, 'Falha ao carregar inventário CTM');
     return res.json();
   },
 
@@ -2347,15 +2411,11 @@ export const api = {
     precip48h: number,
     precip72h: number,
   ): Promise<FloodRiskPrediction> => {
-    const slug = IBGE_TO_SLUG[codigoIbge];
-    if (!slug) {
-      throw new Error('Análise preditiva disponível apenas para Recife, Salvador, Porto Alegre, João Pessoa e Londrina.');
-    }
     const res = await apiFetch(`${getApiBaseUrl()}/api/v1/predictions/flood-risk`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        municipio_id: slug,
+        municipio_id: codigoIbge,
         precip_24h: precip24h,
         precip_48h: precip48h,
         precip_72h: precip72h,
@@ -2381,7 +2441,18 @@ export const api = {
     return res.json();
   },
 
-  getFloodModelStatus: async (): Promise<{ ready_count: number; total: number; models: Array<{ codigo_ibge: string; ready: boolean }> }> => {
+  getFloodModelStatus: async (): Promise<{
+    ready_count: number;
+    total: number;
+    note?: string;
+    models: Array<{
+      codigo_ibge: string;
+      ready: boolean;
+      model_kind?: string | null;
+      auc_roc_cv?: number | null;
+      threshold_mm_24h?: number | null;
+    }>;
+  }> => {
     const res = await apiFetch(`${getApiBaseUrl()}/api/v1/predictions/flood-risk/status`);
     if (!res.ok) throw new Error('Falha ao consultar status dos modelos ML');
     return res.json();
@@ -2400,12 +2471,31 @@ export const api = {
     return res.json();
   },
 
+  getContingencyAlertaVivo: async (codigoIbge: string): Promise<{
+    codigo_ibge: string;
+    nivel_alerta: string;
+    cemaden_ativos_24h: number;
+    alertas_risco_24h: number;
+    alertas_total_24h: number;
+    camada_cemaden_count: number;
+    fonte: string;
+    vivo: boolean;
+    titulo_recente?: string | null;
+  }> => {
+    const res = await apiFetch(
+      `${getApiBaseUrl()}/api/v1/contingency/municipio/${encodeURIComponent(codigoIbge)}/alerta-vivo`,
+    );
+    if (!res.ok) throw new Error('Falha ao carregar alerta vivo');
+    return res.json();
+  },
+
   generateContingencyFromSimulation: async (payload: {
     codigo_ibge: string;
     cenario_tipo: string;
     risk_geojson: Record<string, unknown>;
     buffer_m?: number;
     simulacao_ref?: Record<string, unknown>;
+    nivel_alerta?: string;
   }): Promise<ContingencyPlan> => {
     const res = await apiFetch(`${getApiBaseUrl()}/api/v1/contingency/generate-from-simulation`, {
       method: 'POST',
@@ -2826,6 +2916,17 @@ export const api = {
   startExternalSourcesBatchJob: async (limit = 61): Promise<{ job_id: string; job: BackgroundJob }> => {
     const res = await apiFetch(`${getApiBaseUrl()}/api/v1/system/jobs/fontes-externas-batch?limit=${limit}`, { method: 'POST' });
     if (!res.ok) throw await httpError(res, 'Falha ao sincronizar fontes externas');
+    return res.json();
+  },
+
+  startCtmBatchJob: async (
+    force = false,
+    codigos?: string[],
+  ): Promise<{ job_id: string; job: BackgroundJob; reused?: boolean }> => {
+    const qs = new URLSearchParams({ force: String(force) });
+    if (codigos?.length) qs.set('codigos', codigos.join(','));
+    const res = await apiFetch(`${getApiBaseUrl()}/api/v1/system/jobs/ctm-batch?${qs}`, { method: 'POST' });
+    if (!res.ok) throw await httpError(res, 'Falha ao iniciar batch CTM');
     return res.json();
   },
 

@@ -4,9 +4,13 @@ import { useEffect, useRef, useState } from 'react';
 import { Droplets, Thermometer, MapPin } from 'lucide-react';
 import { api } from '@/utils/api';
 import { syncThematicLayers, setInspectMarker, clearInspectMarker, simulationLayerIds } from './maplibreLayers';
+import ActiveLayersPanel from './ActiveLayersPanel';
 import { buildInspectResult, formatElevation, type FloodInspectResult } from '@/utils/floodInspect';
+import { MAPLIBRE_BASEMAPS } from '@/config/theme';
+import { useAppStore } from '@/stores/useAppStore';
+import type { ContingencyMapOverlay } from '@/utils/contingencyGeo';
 
-type BasemapId = 'satellite' | 'dark';
+type BasemapId = 'satellite' | 'dark' | 'light';
 type MapLibreMap = any;
 
 const MAPLIBRE_VERSION = '4.7.1';
@@ -21,6 +25,9 @@ interface Props {
   simGeoJSON: any;
   simContours?: any;
   simFlowPaths?: any;
+  simOverlays?: { showFlood: boolean; showContours: boolean; showFlow: boolean };
+  contingencyOverlay?: ContingencyMapOverlay | null;
+  showContingencyOnMap?: boolean;
   selectedMunicipio: string;
   mapFocus: [number, number];
   simulating?: boolean;
@@ -42,8 +49,12 @@ const BASEMAPS: Record<BasemapId, { tiles: string[]; attribution: string }> = {
     attribution: 'Esri, Maxar, Earthstar Geographics',
   },
   dark: {
-    tiles: ['https://basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png'],
-    attribution: '© OpenStreetMap © CARTO',
+    tiles: MAPLIBRE_BASEMAPS.dark.tiles,
+    attribution: MAPLIBRE_BASEMAPS.dark.attribution,
+  },
+  light: {
+    tiles: MAPLIBRE_BASEMAPS.light.tiles,
+    attribution: MAPLIBRE_BASEMAPS.light.attribution,
   },
 };
 
@@ -175,6 +186,9 @@ export default function Map3DMapLibreContainer({
   simGeoJSON,
   simContours,
   simFlowPaths,
+  simOverlays = { showFlood: true, showContours: true, showFlow: true },
+  contingencyOverlay = null,
+  showContingencyOnMap = true,
   selectedMunicipio,
   mapFocus,
   simulating = false,
@@ -188,7 +202,24 @@ export default function Map3DMapLibreContainer({
   const simGeoJSONRef = useRef<any>(simGeoJSON);
   const simContoursRef = useRef<any>(simContours);
   const simFlowPathsRef = useRef<any>(simFlowPaths);
+  const simOverlaysRef = useRef(simOverlays);
+  const contingencyRef = useRef(
+    showContingencyOnMap && contingencyOverlay
+      ? {
+          zonas: contingencyOverlay.zonas,
+          rotas: contingencyOverlay.rotas,
+          pontos: contingencyOverlay.pontos,
+        }
+      : null,
+  );
 
+  const colorMode = useAppStore((s) => s.colorMode);
+  const layerOpacityById = useAppStore((s) => s.layerOpacityById);
+  const layerOptions = useAppStore((s) => s.layerOptions);
+  const setLayerOpacity = useAppStore((s) => s.setLayerOpacity);
+  const moveActiveLayer = useAppStore((s) => s.moveActiveLayer);
+  const toggleLayer = useAppStore((s) => s.toggleLayer);
+  const layerOpacityRef = useRef(layerOpacityById);
   const [basemap, setBasemap] = useState<BasemapId>('satellite');
   const [exaggeration, setExaggeration] = useState(1.8);
   const [pitch, setPitch] = useState(62);
@@ -198,7 +229,7 @@ export default function Map3DMapLibreContainer({
   const [layersLoading, setLayersLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [inspect, setInspect] = useState<FloodInspectResult | null>(null);
-  const hasSimulation = Boolean(simGeoJSON?.features?.length);
+  const hasSimulation = Boolean(simGeoJSON?.features?.length) && simOverlays.showFlood;
   const isHeatSim =
     simGeoJSON?.features?.some(
       (f: { properties?: { temp_increase_celsius?: number } }) =>
@@ -209,7 +240,25 @@ export default function Map3DMapLibreContainer({
   simGeoJSONRef.current = simGeoJSON;
   simContoursRef.current = simContours;
   simFlowPathsRef.current = simFlowPaths;
+  simOverlaysRef.current = simOverlays;
+  contingencyRef.current =
+    showContingencyOnMap && contingencyOverlay
+      ? {
+          zonas: contingencyOverlay.zonas,
+          rotas: contingencyOverlay.rotas,
+          pontos: contingencyOverlay.pontos,
+        }
+      : null;
   layerDataRef.current = layerData;
+  layerOpacityRef.current = layerOpacityById;
+
+  useEffect(() => {
+    setBasemap((prev) => {
+      if (colorMode === 'light' && prev === 'dark') return 'light';
+      if (colorMode === 'dark' && prev === 'light') return 'dark';
+      return prev;
+    });
+  }, [colorMode]);
 
   const applyThematicLayers = (map: MapLibreMap) => {
     syncThematicLayers(
@@ -219,6 +268,11 @@ export default function Map3DMapLibreContainer({
       simGeoJSONRef.current,
       simContoursRef.current,
       simFlowPathsRef.current,
+      {
+        layerOpacityById: layerOpacityRef.current,
+        simOverlays: simOverlaysRef.current,
+        contingency: contingencyRef.current,
+      },
     );
   };
 
@@ -318,7 +372,18 @@ export default function Map3DMapLibreContainer({
     const map = mapRef.current;
     if (!map || !mapReady) return;
     applyThematicLayers(map);
-  }, [mapReady, layerData, activeLayers, simGeoJSON, simContours, simFlowPaths]);
+  }, [
+    mapReady,
+    layerData,
+    activeLayers,
+    simGeoJSON,
+    simContours,
+    simFlowPaths,
+    simOverlays,
+    layerOpacityById,
+    contingencyOverlay,
+    showContingencyOnMap,
+  ]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -460,7 +525,19 @@ export default function Map3DMapLibreContainer({
       )}
 
       {!focusMode && (
-      <div className="absolute right-4 top-24 z-10 w-48 rounded-xl border border-teal-500/30 bg-zinc-950/95 p-3 shadow-2xl backdrop-blur-md transition-opacity duration-300">
+      <ActiveLayersPanel
+        className="pointer-events-auto absolute left-4 top-24 z-10 w-64"
+        activeLayers={activeLayers}
+        layerOptions={layerOptions}
+        layerOpacityById={layerOpacityById}
+        setLayerOpacity={setLayerOpacity}
+        moveActiveLayer={moveActiveLayer}
+        toggleLayer={toggleLayer}
+      />
+      )}
+
+      {!focusMode && (
+      <div className="map-ui-chrome absolute right-4 top-24 z-10 w-52 rounded-xl border border-teal-500/30 bg-zinc-950/95 p-3 shadow-2xl backdrop-blur-md transition-opacity duration-300">
         <p className="mb-2 text-[10px] font-extrabold uppercase text-teal-300">Basemap</p>
         <div className="flex gap-1">
           <button
@@ -484,6 +561,17 @@ export default function Map3DMapLibreContainer({
             }`}
           >
             Escuro
+          </button>
+          <button
+            type="button"
+            onClick={() => setBasemap('light')}
+            className={`flex-1 rounded-lg py-2 text-[10px] font-bold uppercase ${
+              basemap === 'light'
+                ? 'bg-teal-600 text-white'
+                : 'bg-zinc-800 text-zinc-400 hover:text-zinc-200'
+            }`}
+          >
+            Claro
           </button>
         </div>
 
@@ -519,8 +607,20 @@ export default function Map3DMapLibreContainer({
       </div>
       )}
 
+      {showContingencyOnMap && contingencyOverlay && !focusMode && (
+        <div className="map-ui-chrome absolute bottom-6 left-6 z-10 rounded-xl border border-orange-500/40 bg-zinc-950/95 px-3 py-2 text-[10px] text-orange-100 shadow-lg backdrop-blur-md">
+          <p className="font-extrabold uppercase tracking-wider text-orange-300">Plano ativo no mapa</p>
+          <p className="mt-0.5 text-zinc-400">
+            {contingencyOverlay.cenario} · {contingencyOverlay.nivel} ·{' '}
+            {contingencyOverlay.zonas.features.length} zona(s)
+          </p>
+        </div>
+      )}
+
       {hasSimulation && !focusMode && (
-        <div className="absolute bottom-6 left-6 z-10 max-w-sm rounded-xl border border-sky-500/40 bg-zinc-950/95 p-4 shadow-2xl backdrop-blur-md transition-opacity duration-300">
+        <div className={`map-ui-chrome absolute z-10 max-w-sm rounded-xl border border-sky-500/40 bg-zinc-950/95 p-4 shadow-2xl backdrop-blur-md transition-opacity duration-300 ${
+          showContingencyOnMap && contingencyOverlay ? 'bottom-24 left-6' : 'bottom-6 left-6'
+        }`}>
           <p className="flex items-center gap-1.5 text-[10px] font-extrabold uppercase tracking-wider text-sky-300">
             {isHeatSim ? (
               <>

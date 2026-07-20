@@ -3,6 +3,8 @@
 import { useEffect, useState } from 'react';
 import { MapContainer, TileLayer, CircleMarker, Popup, useMap } from 'react-leaflet';
 import { api, type MonitoringMapItem } from '@/utils/api';
+import { MAP_BASEMAPS } from '@/config/theme';
+import { useAppStore } from '@/stores/useAppStore';
 
 const NIVEL_HEX: Record<string, string> = {
   VERDE: '#22c55e',
@@ -35,6 +37,7 @@ interface Props {
 }
 
 export default function MonitoringMiniMap({ highlightIbge, onSelect }: Props) {
+  const colorMode = useAppStore((s) => s.colorMode);
   const [items, setItems] = useState<MonitoringMapItem[]>([]);
   const [stats, setStats] = useState({ total: 0, comGeometria: 0, comCoordenadas: 0 });
 
@@ -64,7 +67,7 @@ export default function MonitoringMiniMap({ highlightIbge, onSelect }: Props) {
     <div>
       <div className="h-[200px] w-full overflow-hidden rounded-xl border border-zinc-700">
         <MapContainer center={center} zoom={5} className="h-full w-full" scrollWheelZoom={false}>
-          <TileLayer url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png" />
+          <TileLayer url={MAP_BASEMAPS[colorMode]} />
           <FitBrazil items={items} />
           {items.map((m) => {
             if (m.lat == null || m.lng == null) return null;

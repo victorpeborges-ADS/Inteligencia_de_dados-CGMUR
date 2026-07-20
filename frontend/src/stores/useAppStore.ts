@@ -106,6 +106,9 @@ type AppStore = {
   focusMode: boolean;
   setFocusMode: (value: boolean) => void;
   toggleFocusMode: () => void;
+  colorMode: 'dark' | 'light';
+  setColorMode: (mode: 'dark' | 'light') => void;
+  toggleColorMode: () => void;
 };
 
 export const FOCUS_MODE_STORAGE_KEY = 'sinidu-focus-mode';
@@ -287,4 +290,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
   focusMode: false,
   setFocusMode: (value) => set({ focusMode: value }),
   toggleFocusMode: () => set((state) => ({ focusMode: !state.focusMode })),
+  colorMode: 'dark',
+  setColorMode: (mode) => set({ colorMode: mode }),
+  toggleColorMode: () =>
+    set((state) => ({ colorMode: state.colorMode === 'dark' ? 'light' : 'dark' })),
 }));

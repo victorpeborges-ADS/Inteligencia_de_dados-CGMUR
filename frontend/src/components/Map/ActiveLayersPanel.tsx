@@ -62,7 +62,7 @@ export default function ActiveLayersPanel({
         <button
           type="button"
           onClick={() => setCollapsed(false)}
-          className="flex w-full items-center justify-between rounded-xl border border-indigo-500/30 bg-zinc-950/95 px-3 py-2 text-[10px] font-bold uppercase tracking-wider text-indigo-200 shadow-lg backdrop-blur-md hover:border-indigo-400/50"
+          className="map-ui-chrome flex w-full items-center justify-between rounded-xl border border-indigo-500/30 bg-zinc-950/95 px-3 py-2 text-[10px] font-bold uppercase tracking-wider text-indigo-200 shadow-lg backdrop-blur-md hover:border-indigo-400/50"
         >
           <span className="flex items-center gap-1.5">
             <Layers size={12} />
@@ -76,7 +76,7 @@ export default function ActiveLayersPanel({
 
   return (
     <div
-      className={`flex max-h-44 flex-col overflow-hidden rounded-xl border border-indigo-500/25 bg-zinc-950/95 shadow-lg backdrop-blur-md ${className}`}
+      className={`map-ui-chrome flex max-h-44 flex-col overflow-hidden rounded-xl border border-indigo-500/25 bg-zinc-950/95 shadow-lg backdrop-blur-md ${className}`}
     >
       <div className="flex shrink-0 items-center justify-between border-b border-zinc-800 px-3 py-2">
         <span className="flex items-center gap-1.5 text-[10px] font-extrabold uppercase tracking-wider text-indigo-200">

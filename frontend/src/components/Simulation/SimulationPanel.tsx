@@ -255,7 +255,11 @@ export default function SimulationPanel({
         data = await api.simulateExtremeRainfallAsync(rainfallMm, codigoIbge, onJobProgress);
       }
       setResult(data);
-      onSimulate(data);
+      if (data?.geometry?.features?.length || (data as { features?: unknown[] })?.features?.length) {
+        onSimulate(data);
+      } else {
+        setSimError('Simulação concluída, mas sem manchas para exibir no mapa.');
+      }
       void runInterpret(
         data,
         compareRainfall && activeTab === 'rainfall' ? comparison : null,

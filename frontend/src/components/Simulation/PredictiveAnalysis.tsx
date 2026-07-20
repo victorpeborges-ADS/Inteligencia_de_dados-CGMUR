@@ -96,8 +96,8 @@ export default function PredictiveAnalysis({
 
       {ready && (
         <p className="rounded-lg border border-violet-500/20 bg-violet-950/15 px-3 py-2 text-[10px] text-violet-200/90">
-          Modelo gerado on-demand se necessário. Municípios prioritários (Recife, Salvador, POA, JP, Londrina) usam
-          artefato dedicado; demais recebem baseline calibrado pelo terreno local.
+          10 alvos com artefato dedicado (Recife, Salvador, POA, JP, Londrina, Aracaju, Fortaleza, Belém, Curitiba, Rio);
+          demais municípios geram baseline on-demand pelo terreno local.
         </p>
       )}
 
@@ -168,6 +168,41 @@ export default function PredictiveAnalysis({
               )}
             </div>
           </div>
+          <div className="mt-2 grid grid-cols-2 gap-2 text-[10px]">
+            <div className="rounded-lg border border-zinc-700/60 bg-zinc-950/40 px-2 py-1.5">
+              <p className="text-[9px] uppercase tracking-wider text-zinc-500">Limiar 24h</p>
+              <p className="font-bold text-zinc-200">{result.threshold_mm_24h} mm</p>
+            </div>
+            <div className="rounded-lg border border-zinc-700/60 bg-zinc-950/40 px-2 py-1.5">
+              <p className="text-[9px] uppercase tracking-wider text-zinc-500">vs. cenário</p>
+              <p
+                className={`font-bold ${
+                  (result.mm_acima_limiar ?? 0) > 0 ? 'text-rose-300' : 'text-emerald-300'
+                }`}
+              >
+                {result.mm_acima_limiar == null
+                  ? '—'
+                  : result.mm_acima_limiar > 0
+                    ? `+${result.mm_acima_limiar} mm`
+                    : `${result.mm_acima_limiar} mm`}
+              </p>
+            </div>
+          </div>
+          {result.top_features && result.top_features.length > 0 && (
+            <div className="mt-2">
+              <p className="mb-1 text-[9px] font-bold uppercase tracking-wider text-zinc-500">
+                Variáveis mais influentes
+              </p>
+              <ul className="space-y-0.5">
+                {result.top_features.map((f) => (
+                  <li key={f.feature} className="flex justify-between text-[10px] text-zinc-400">
+                    <span className="font-mono text-violet-200/90">{f.feature}</span>
+                    <span>{(f.importance * 100).toFixed(0)}%</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
           <p className="mt-2 text-[9px] leading-relaxed text-zinc-500">{result.disclaimer}</p>
           {result.critical_neighborhoods?.length > 0 && (
             <ul className="mt-3 space-y-1">

@@ -23,6 +23,11 @@ TERRAIN_PRESETS: dict[str, dict[str, float]] = {
     "4314902": {"impermeabilizacao_pct": 48.0, "cobertura_vegetal_pct": 18.0, "declividade_media": 3.2}, # Porto Alegre
     "2507507": {"impermeabilizacao_pct": 58.0, "cobertura_vegetal_pct": 10.0, "declividade_media": 2.5},  # João Pessoa
     "4113700": {"impermeabilizacao_pct": 52.0, "cobertura_vegetal_pct": 14.0, "declividade_media": 3.8},  # Londrina
+    "2800308": {"impermeabilizacao_pct": 57.0, "cobertura_vegetal_pct": 11.0, "declividade_media": 2.2},  # Aracaju
+    "2304400": {"impermeabilizacao_pct": 60.0, "cobertura_vegetal_pct": 9.0, "declividade_media": 2.0},   # Fortaleza
+    "1501402": {"impermeabilizacao_pct": 50.0, "cobertura_vegetal_pct": 16.0, "declividade_media": 1.8},  # Belém
+    "4106902": {"impermeabilizacao_pct": 54.0, "cobertura_vegetal_pct": 15.0, "declividade_media": 4.2},  # Curitiba
+    "3304557": {"impermeabilizacao_pct": 68.0, "cobertura_vegetal_pct": 7.0, "declividade_media": 5.5},   # Rio de Janeiro
 }
 
 

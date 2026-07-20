@@ -73,6 +73,24 @@ class BootStatus:
 
 boot_status = BootStatus()
 
+_DEFAULT_JWT_SECRET = "sinidu-dev-secret-trocar-em-producao"
+
+
+def validate_auth_secrets_for_environment() -> None:
+    """Avisa (e em production falha) se AUTH_JWT_SECRET for fraco."""
+    import os
+
+    env = (os.getenv("ENVIRONMENT") or "development").strip().lower()
+    secret = settings.AUTH_JWT_SECRET or ""
+    weak = secret == _DEFAULT_JWT_SECRET or len(secret) < 32
+    if not weak:
+        return
+    msg = "AUTH_JWT_SECRET default/curto — defina secret >=32 chars"
+    logger.warning(msg)
+    boot_status.errors.append(msg)
+    if env == "production" and settings.AUTH_ENABLED:
+        raise RuntimeError(msg)
+
 
 def _run_sql_file(path: Path, label: str) -> bool:
     if not path.exists():
@@ -95,6 +113,13 @@ def _run_sql_file(path: Path, label: str) -> bool:
 
 def initialize_database() -> None:
     """Best-effort: falhas individuais não impedem a API de subir."""
+    try:
+        validate_auth_secrets_for_environment()
+    except RuntimeError:
+        raise
+    except Exception as exc:
+        boot_status.errors.append(f"auth_secrets: {exc}")
+
     migrations_dir = Path(__file__).resolve().parent.parent / "migrations"
 
     try:
@@ -216,6 +241,8 @@ def _run_boot_background_pipeline() -> None:
     # Deixa a API atender o mapa/painel antes do sync externo.
     time.sleep(8)
     _ensure_boot_priority_municipalities()
+    if settings.DEM_PREWARM_ENABLED:
+        _prewarm_priority_dem()
     if settings.SIMULATION_PREWARM_ENABLED:
         time.sleep(3)
         _prewarm_priority_simulations()
@@ -225,6 +252,21 @@ def _run_boot_background_pipeline() -> None:
     time.sleep(2)
     _bootstrap_monitoring()
     _bootstrap_flood_models()
+
+
+def _prewarm_priority_dem() -> None:
+    from app.services.dem_prewarm import prewarm_boot_priority_dem
+
+    try:
+        outcomes = prewarm_boot_priority_dem()
+        logger.info(
+            "Pré-aquecimento DEM concluído para %s: %s",
+            settings.BOOT_PRIORITY_IBGE_CODES,
+            outcomes,
+        )
+    except Exception as exc:
+        logger.warning("Pré-aquecimento DEM falhou: %s", exc)
+        boot_status.errors.append(f"dem_prewarm: {exc}")
 
 
 def _prewarm_priority_simulations() -> None:

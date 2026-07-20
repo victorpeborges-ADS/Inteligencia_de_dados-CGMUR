@@ -1,0 +1,27 @@
+{
+  "codigo_ibge": "2304400",
+  "model_version": "1.0",
+  "model_kind": "baseline_synthetic",
+  "auc_roc_cv": 0.993,
+  "n_samples": 900,
+  "n_positive": 806,
+  "threshold_mm_24h": 30.0,
+  "terrain": {
+    "impermeabilizacao_pct": 60.0,
+    "cobertura_vegetal_pct": 9.0,
+    "declividade_media": 2.0
+  },
+  "feature_columns": [
+    "precip_24h",
+    "precip_48h",
+    "precip_72h",
+    "precip_7d",
+    "mes_do_ano",
+    "impermeabilizacao_pct",
+    "cobertura_vegetal_pct",
+    "declividade_media"
+  ],
+  "trained_at": "2026-07-20T18:12:55Z",
+  "training_seconds": 0.84,
+  "note": "Modelo baseline sintético. Execute etl/etl_flood_ml.py --municipio 2304400 para retreinar com OpenMeteo + S2ID."
+}

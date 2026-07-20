@@ -38,6 +38,7 @@ export default function SystemPanel() {
   const [pipelineRunning, setPipelineRunning] = useState(false);
   const [exportsRunning, setExportsRunning] = useState(false);
   const [fontesRunning, setFontesRunning] = useState(false);
+  const [ctmRunning, setCtmRunning] = useState(false);
   const [homologationRunning, setHomologationRunning] = useState(false);
   const [demBatchRunning, setDemBatchRunning] = useState(false);
   const [demUploading, setDemUploading] = useState(false);
@@ -45,17 +46,32 @@ export default function SystemPanel() {
   const [recentJobs, setRecentJobs] = useState<BackgroundJob[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [syncMessage, setSyncMessage] = useState<string | null>(null);
+  const [mlStatus, setMlStatus] = useState<{
+    ready_count: number;
+    total: number;
+    note?: string;
+    models?: Array<{
+      codigo_ibge: string;
+      ready: boolean;
+      model_kind?: string | null;
+      auc_roc_cv?: number | null;
+      threshold_mm_24h?: number | null;
+    }>;
+  } | null>(null);
+  const [mlBootstrapping, setMlBootstrapping] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const [data, jobs] = await Promise.all([
+      const [data, jobs, flood] = await Promise.all([
         api.getSystemOverview(),
         api.listBackgroundJobs(8).catch(() => ({ items: [] as BackgroundJob[] })),
+        api.getFloodModelStatus().catch(() => null),
       ]);
       setOverview(data);
       setRecentJobs(jobs.items);
+      setMlStatus(flood);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Falha ao carregar visão do sistema');
       setOverview(null);
@@ -248,6 +264,29 @@ export default function SystemPanel() {
     }
   };
 
+  const runCtmBatch = async (force = false) => {
+    setCtmRunning(true);
+    setSyncMessage(null);
+    try {
+      const { job_id } = await api.startCtmBatchJob(force);
+      setSyncMessage(`CTM / geoportal${force ? ' (forçar)' : ''} (job ${job_id})…`);
+      const job = await pollJob(job_id);
+      if (job?.status === 'completed') {
+        const result = job.result as { ok?: number; erro?: number; pulados?: number };
+        setSyncMessage(
+          `CTM concluído — ${result?.ok ?? 0} importados, ${result?.pulados ?? 0} pulados, ${result?.erro ?? 0} erros`,
+        );
+        await load();
+      } else if (job?.status === 'failed') {
+        setSyncMessage(job.error || 'Batch CTM falhou');
+      }
+    } catch (e) {
+      setSyncMessage(e instanceof Error ? e.message : 'Falha no batch CTM');
+    } finally {
+      setCtmRunning(false);
+    }
+  };
+
   const runMapBiomasBatch = async () => {
     setMapbiomasSyncing(true);
     setSyncMessage(null);
@@ -385,6 +424,24 @@ export default function SystemPanel() {
           </button>
           <button
             type="button"
+            onClick={() => runCtmBatch(false)}
+            disabled={ctmRunning}
+            className="inline-flex items-center gap-1 rounded-lg border border-violet-800 bg-violet-950/40 px-2 py-1 text-xs text-violet-200 hover:bg-violet-900/40 disabled:opacity-50"
+          >
+            {ctmRunning ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Building2 className="h-3.5 w-3.5" />}
+            CTM (24)
+          </button>
+          <button
+            type="button"
+            onClick={() => runCtmBatch(true)}
+            disabled={ctmRunning}
+            title="Reimporta mesmo com malha densa existente"
+            className="inline-flex items-center gap-1 rounded-lg border border-violet-900/60 px-2 py-1 text-[10px] text-violet-300/80 hover:bg-violet-950/30 disabled:opacity-50"
+          >
+            CTM forçar
+          </button>
+          <button
+            type="button"
             onClick={runMapBiomasBatch}
             disabled={mapbiomasSyncing}
             className="inline-flex items-center gap-1 rounded-lg border border-emerald-800 bg-emerald-950/40 px-2 py-1 text-xs text-emerald-200 hover:bg-emerald-900/40 disabled:opacity-50"
@@ -473,6 +530,64 @@ export default function SystemPanel() {
         </div>
       )}
 
+      {mlStatus && (
+        <div className="rounded-xl border border-zinc-800 bg-zinc-950/60 p-3">
+          <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+            <span className="text-[10px] font-bold uppercase text-zinc-500">ML alagamento</span>
+            <div className="flex items-center gap-2">
+              <StatusBadge
+                ok={mlStatus.ready_count >= mlStatus.total}
+                label={`${mlStatus.ready_count}/${mlStatus.total}`}
+              />
+              <button
+                type="button"
+                disabled={mlBootstrapping}
+                onClick={async () => {
+                  setMlBootstrapping(true);
+                  try {
+                    await api.bootstrapFloodModels();
+                    const flood = await api.getFloodModelStatus();
+                    setMlStatus(flood);
+                    setSyncMessage('Modelos ML de alagamento preparados.');
+                  } catch (e) {
+                    setError(e instanceof Error ? e.message : 'Falha no bootstrap ML');
+                  } finally {
+                    setMlBootstrapping(false);
+                  }
+                }}
+                className="inline-flex items-center gap-1 rounded border border-zinc-700 px-2 py-0.5 text-[10px] font-bold uppercase text-zinc-300 hover:bg-zinc-800 disabled:opacity-50"
+              >
+                {mlBootstrapping ? <Loader2 className="h-3 w-3 animate-spin" /> : <Zap className="h-3 w-3" />}
+                Bootstrap
+              </button>
+            </div>
+          </div>
+          <p className="text-[10px] leading-relaxed text-zinc-500">
+            {mlStatus.note || `${mlStatus.total} municípios-alvo com artefato dedicado; demais on-demand.`}
+          </p>
+          {mlStatus.models && mlStatus.models.length > 0 && (
+            <ul className="mt-2 max-h-36 space-y-1 overflow-y-auto text-[10px] text-zinc-400">
+              {mlStatus.models.map((m) => (
+                <li
+                  key={m.codigo_ibge}
+                  className="flex flex-wrap items-center justify-between gap-1 rounded border border-zinc-800/80 bg-zinc-900/40 px-2 py-1"
+                >
+                  <span className="font-mono text-zinc-300">{m.codigo_ibge}</span>
+                  <span className={m.ready ? 'text-emerald-400' : 'text-zinc-600'}>
+                    {m.ready ? 'pronto' : 'pendente'}
+                  </span>
+                  <span className="text-zinc-500">
+                    {m.model_kind || '—'}
+                    {m.threshold_mm_24h != null ? ` · limiar ${m.threshold_mm_24h} mm` : ''}
+                    {m.auc_roc_cv != null ? ` · AUC ${Number(m.auc_roc_cv).toFixed(2)}` : ''}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+
       <div className="rounded-xl border border-amber-900/40 bg-amber-950/20 p-3">
         <div className="mb-1 flex items-center justify-between gap-2">
           <span className="text-[10px] font-bold uppercase text-amber-600/80">Ecossistema MCID</span>
@@ -509,10 +624,68 @@ export default function SystemPanel() {
             <li>JWT: {overview.auth.enabled ? 'ligado' : 'desligado'}</li>
             <li>Multi-tenant: {overview.auth.multi_tenant ? 'sim' : 'não'}</li>
             <li>OIDC: {overview.auth.oidc_enabled ? 'sim' : 'não'}</li>
+            {overview.checks.oidc.configured && (
+              <li className={overview.checks.oidc.reachable ? 'text-emerald-300' : 'text-amber-300'}>
+                IdP: {overview.checks.oidc.reachable ? 'acessível' : 'offline'}
+              </li>
+            )}
             <li className="truncate text-zinc-500">URL: {overview.auth.public_base_url}</li>
           </ul>
         </div>
       </div>
+
+      {overview.homologation && (
+        <div className="rounded-xl border border-sky-900/40 bg-sky-950/10 p-3">
+          <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+            <span className="text-[10px] font-bold uppercase text-sky-300">
+              Prontidão homologação (protótipo)
+            </span>
+            <div className="flex flex-wrap gap-2">
+              <StatusBadge
+                ok={Boolean(overview.homologation.ready_for_demo)}
+                label={overview.homologation.ready_for_demo ? 'Demo OK' : 'Demo pendente'}
+              />
+              <StatusBadge
+                ok={overview.homologation.ready_for_sso_test}
+                label={overview.homologation.ready_for_sso_test ? 'SSO Keycloak' : 'Auth local'}
+              />
+              <StatusBadge
+                ok={overview.homologation.score_pct >= 70}
+                label={`${overview.homologation.score_pct}%`}
+              />
+            </div>
+          </div>
+          {overview.homologation.note ? (
+            <p className="mb-2 text-[10px] text-zinc-500">{overview.homologation.note}</p>
+          ) : null}
+          <ul className="grid gap-1 sm:grid-cols-2">
+            {overview.homologation.items
+              .filter((i) => i.status !== 'na')
+              .map((item) => (
+                <li
+                  key={item.id}
+                  className={`rounded border px-2 py-1 text-[11px] ${
+                    item.status === 'ok'
+                      ? 'border-emerald-900/40 text-emerald-200'
+                      : item.status === 'warn'
+                        ? 'border-amber-900/40 text-amber-200'
+                        : 'border-rose-900/40 text-rose-200'
+                  }`}
+                >
+                  <span className="font-medium">{item.label}</span>
+                  {item.detail ? (
+                    <span className="block truncate text-[10px] opacity-80">{item.detail}</span>
+                  ) : null}
+                </li>
+              ))}
+          </ul>
+          {overview.homologation.next_steps.length > 0 && (
+            <p className="mt-2 text-[10px] text-zinc-500">
+              Próximo: {overview.homologation.next_steps[0]}
+            </p>
+          )}
+        </div>
+      )}
 
       <div className="rounded-xl border border-zinc-800 bg-zinc-950/60 p-3">
         <div className="mb-2 flex items-center gap-1 text-[10px] font-bold uppercase text-zinc-500">
@@ -616,6 +789,34 @@ export default function SystemPanel() {
               </button>
             </div>
           )}
+        </div>
+      )}
+
+      {overview.ctm && (
+        <div className="rounded-xl border border-violet-900/40 bg-violet-950/10 p-3">
+          <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+            <span className="text-[10px] font-bold uppercase text-violet-300">CTM / UTB — malha municipal</span>
+            <div className="flex flex-wrap gap-2">
+              <StatusBadge
+                ok={
+                  overview.ctm.importado_prefeitura + overview.ctm.malha_operacional >=
+                  Math.floor(overview.ctm.total_alvo * 0.6)
+                }
+                label={`Malha ${
+                  overview.ctm.importado_prefeitura + overview.ctm.malha_operacional
+                }/${overview.ctm.total_alvo}`}
+              />
+              <StatusBadge
+                ok={overview.ctm.fontes_cadastradas >= overview.ctm.total_alvo}
+                label={`Fontes ${overview.ctm.fontes_cadastradas}/${overview.ctm.total_alvo}`}
+              />
+            </div>
+          </div>
+          <p className="text-xs text-zinc-400">
+            {overview.ctm.progress_label} · {overview.ctm.malha_operacional} com malha operacional ·{' '}
+            {overview.ctm.sem_fonte} sem REST · {overview.ctm.lacuna_municipios} lacunas
+          </p>
+          <p className="mt-1 text-[10px] text-zinc-600">{overview.ctm.escopo_label}</p>
         </div>
       )}
 

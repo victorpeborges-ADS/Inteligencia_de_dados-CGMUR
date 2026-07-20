@@ -542,6 +542,11 @@ class CriticalNeighborhood(BaseModel):
     impermeabilizacao_pct: float
 
 
+class FloodFeatureImportance(BaseModel):
+    feature: str
+    importance: float
+
+
 class FloodRiskPredictionResponse(BaseModel):
     codigo_ibge: str
     municipio_slug: str
@@ -549,6 +554,8 @@ class FloodRiskPredictionResponse(BaseModel):
     risk_level: str
     confidence: str
     threshold_mm_24h: float
+    mm_acima_limiar: Optional[float] = None
+    top_features: Optional[List[FloodFeatureImportance]] = None
     critical_neighborhoods: List[CriticalNeighborhood]
     flood_geojson: dict
     model_version: str

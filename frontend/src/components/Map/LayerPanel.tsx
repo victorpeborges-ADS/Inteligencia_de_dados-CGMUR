@@ -201,7 +201,7 @@ export default function LayerPanel({
 
   return (
     <div
-      className={`absolute top-4 bottom-4 left-4 z-[999] flex w-72 max-h-[calc(100%-2rem)] flex-col gap-2 overflow-hidden rounded-xl border border-border bg-card/85 p-3 shadow-2xl backdrop-blur-md transition-all duration-300 ${className}`}
+      className={`map-ui-chrome absolute top-4 bottom-4 left-4 z-[999] flex w-72 max-h-[calc(100%-2rem)] flex-col gap-2 overflow-hidden rounded-xl border border-border bg-card/85 p-3 shadow-2xl backdrop-blur-md transition-all duration-300 ${className}`}
     >
       <div className="flex items-center justify-between border-b border-zinc-800 pb-1.5">
         <span className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-zinc-400">

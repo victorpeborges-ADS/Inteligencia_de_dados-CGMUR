@@ -136,5 +136,10 @@ async def websocket_alerts(websocket: WebSocket, codigo_ibge: str):
 
 
 _dem_static = Path(os.getenv("DEM_DIR", "/data/dem"))
-_dem_static.mkdir(parents=True, exist_ok=True)
+try:
+    _dem_static.mkdir(parents=True, exist_ok=True)
+except OSError:
+    # Host local / pytest sem volume Docker: fallback gravável
+    _dem_static = Path(__file__).resolve().parent / ".data" / "dem"
+    _dem_static.mkdir(parents=True, exist_ok=True)
 app.mount("/static/dem", StaticFiles(directory=str(_dem_static)), name="dem_static")

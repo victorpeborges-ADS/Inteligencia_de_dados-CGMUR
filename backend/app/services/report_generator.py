@@ -10,8 +10,6 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-import folium
-import matplotlib.pyplot as plt
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 from shapely.geometry import shape
 from sqlalchemy import func
@@ -229,6 +227,8 @@ def _capag_interpretation(nota: str | None) -> str:
 
 
 def _matplotlib_map_fallback(muni_geojson: dict, bairros: List[dict]) -> bytes:
+    import matplotlib.pyplot as plt
+
     fig, ax = plt.subplots(figsize=(8, 6), facecolor="#0f172a")
     ax.set_facecolor("#0f172a")
 
@@ -258,7 +258,7 @@ def _matplotlib_map_fallback(muni_geojson: dict, bairros: List[dict]) -> bytes:
     return buf.getvalue()
 
 
-def _folium_to_png_bytes(m: folium.Map) -> bytes:
+def _folium_to_png_bytes(m: Any) -> bytes:
     with tempfile.TemporaryDirectory() as tmp:
         html_path = Path(tmp) / "map.html"
         png_path = Path(tmp) / "map.png"
@@ -277,6 +277,8 @@ def _folium_to_png_bytes(m: folium.Map) -> bytes:
 
 
 def render_municipality_map(db: Session, muni: Municipio, ranking: List[dict]) -> str:
+    import folium
+
     geojson = json.loads(db.scalar(muni.geom.ST_AsGeoJSON()))
     sh = shape(geojson)
     lat, lon = sh.centroid.y, sh.centroid.x

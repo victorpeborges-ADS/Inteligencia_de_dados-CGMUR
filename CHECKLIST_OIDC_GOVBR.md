@@ -1,6 +1,9 @@
 # Checklist — OIDC gov.br produção (D.2)
 
-**Objetivo:** migrar de Keycloak local (homologação) para **gov.br / IdP institucional MCID** em produção.  
+> **Status no protótipo (jul/2026):** ➖ **fora de escopo**. O MVP usa Keycloak local e/ou login por senha.  
+> Este checklist só vale se o MCID pedir gov.br depois — não bloqueia demo.
+
+**Objetivo (futuro):** migrar de Keycloak local para **gov.br / IdP institucional MCID**.  
 **Pré-requisito:** homologação local validada com `./scripts/homolog-up.sh` + `./scripts/validacao_oidc_govbr.sh`.
 
 ## 1. Credenciais e cadastro no IdP

@@ -12,7 +12,7 @@ export type TemporalTemaOption = {
 
 export type TemporalOptionsResponse = {
   codigo_ibge: string;
-  temas: Record<TemporalTemaId, TemporalTemaOption>;
+  temas: Partial<Record<TemporalTemaId, TemporalTemaOption>>;
 };
 
 /** Camada ativa → tema temporal */

@@ -3,6 +3,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { MapContainer, TileLayer, GeoJSON, useMapEvents, Marker, Popup } from 'react-leaflet';
 import L from 'leaflet';
+import { MAP_BASEMAPS } from '@/config/theme';
+import { useAppStore } from '@/stores/useAppStore';
 
 interface Props {
   mapFocus: [number, number];
@@ -42,27 +44,46 @@ export default function ContingencyDrawMap({
   onPontosChange,
   drawMode,
 }: Props) {
+  const colorMode = useAppStore((s) => s.colorMode);
   const mapRef = useRef<L.Map | null>(null);
-  const drawLoaded = useRef(false);
+  const [drawReady, setDrawReady] = useState(
+    () => typeof window !== 'undefined' && Boolean((window as any).L?.Draw || (L as any).Draw),
+  );
+  const zonasRef = useRef(zonas);
+  zonasRef.current = zonas;
 
   useEffect(() => {
-    if (drawLoaded.current || drawMode !== 'zone') return;
-    const css = document.createElement('link');
-    css.rel = 'stylesheet';
-    css.href = 'https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.css';
-    document.head.appendChild(css);
+    if (drawReady || drawMode !== 'zone') return;
+    if ((L as any).Draw || (window as any).L?.Draw) {
+      setDrawReady(true);
+      return;
+    }
+    if (!document.querySelector('link[data-leaflet-draw-css]')) {
+      const css = document.createElement('link');
+      css.rel = 'stylesheet';
+      css.href = 'https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.css';
+      css.setAttribute('data-leaflet-draw-css', '1');
+      document.head.appendChild(css);
+    }
+
+    const existing = document.querySelector('script[data-leaflet-draw-js]') as HTMLScriptElement | null;
+    if (existing) {
+      if ((L as any).Draw) setDrawReady(true);
+      else existing.addEventListener('load', () => setDrawReady(true), { once: true });
+      return;
+    }
 
     const script = document.createElement('script');
     script.src = 'https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.js';
-    script.onload = () => {
-      drawLoaded.current = true;
-    };
+    script.setAttribute('data-leaflet-draw-js', '1');
+    script.onload = () => setDrawReady(true);
     document.head.appendChild(script);
-  }, [drawMode]);
+  }, [drawMode, drawReady]);
 
   useEffect(() => {
     const map = mapRef.current;
-    if (!map || !drawLoaded.current || drawMode !== 'zone') return;
+    if (!map || !drawReady || drawMode !== 'zone') return;
+    if (!(L as any).Control?.Draw && !(L as any).Draw) return;
 
     const drawn = new (L as any).FeatureGroup();
     map.addLayer(drawn);
@@ -84,12 +105,13 @@ export default function ContingencyDrawMap({
       const layer = e.layer;
       drawn.addLayer(layer);
       const geo = layer.toGeoJSON();
+      const current = zonasRef.current;
       onZonasChange([
-        ...zonas,
+        ...current,
         {
-          nome: `Zona ${zonas.length + 1}`,
+          nome: `Zona ${current.length + 1}`,
           capacidade: 300,
-          prioridade: zonas.length + 1,
+          prioridade: current.length + 1,
           geometry: geo.geometry,
         },
       ]);
@@ -102,7 +124,7 @@ export default function ContingencyDrawMap({
       map.removeControl(drawControl);
       map.removeLayer(drawn);
     };
-  }, [drawMode, drawLoaded.current]);
+  }, [drawMode, drawReady, onZonasChange]);
 
   const handlePoint = useCallback(
     (lat: number, lng: number) => {
@@ -151,7 +173,7 @@ export default function ContingencyDrawMap({
         className="h-full w-full"
         ref={mapRef}
       >
-        <TileLayer url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png" />
+        <TileLayer url={MAP_BASEMAPS[colorMode]} />
         <DrawHandler drawMode={drawMode} onZone={() => {}} onPoint={handlePoint} />
         {zonas.length > 0 && (
           <GeoJSON

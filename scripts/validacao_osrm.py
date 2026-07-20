@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import json
+import os
+import ssl
 import sys
+import urllib.error
 import urllib.request
 
 BASE = sys.argv[1] if len(sys.argv) > 1 else "http://localhost:8000"
 RECIFE = "2611606"
-ARACAJU = "2800308"
 
 # Polígono simplificado no centro de Recife (Boa Viagem / Pina)
 RISK_RECIFE = {
@@ -33,22 +35,73 @@ RISK_RECIFE = {
     ],
 }
 
+_AUTH_HEADERS: dict[str, str] = {}
+
+
+def _ssl_context() -> ssl.SSLContext | None:
+    if not BASE.lower().startswith("https"):
+        return None
+    ctx = ssl.create_default_context()
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+    return ctx
+
+
+def _ensure_auth() -> None:
+    global _AUTH_HEADERS
+    if _AUTH_HEADERS:
+        return
+    token = os.getenv("HOMOLOG_TOKEN", "").strip()
+    if not token:
+        user = os.getenv("HOMOLOG_USER", os.getenv("AUTH_ADMIN_USER", "admin"))
+        password = os.getenv("HOMOLOG_PASSWORD", os.getenv("AUTH_ADMIN_PASSWORD", "admin"))
+        code, payload = _request(
+            "POST",
+            "/api/v1/auth/login",
+            {"username": user, "password": password},
+            skip_auth=True,
+        )
+        if code == 200 and isinstance(payload, dict):
+            token = str(payload.get("access_token") or "")
+    if token:
+        _AUTH_HEADERS = {"Authorization": f"Bearer {token}"}
+
+
+def _request(
+    method: str,
+    path: str,
+    body: dict | None = None,
+    *,
+    skip_auth: bool = False,
+    timeout: int = 120,
+) -> tuple[int, dict | list | None]:
+    url = f"{BASE.rstrip('/')}{path}"
+    data = json.dumps(body).encode() if body else None
+    headers: dict[str, str] = {"Content-Type": "application/json"} if body else {}
+    if not skip_auth:
+        _ensure_auth()
+        headers.update(_AUTH_HEADERS)
+    req = urllib.request.Request(url, data=data, method=method, headers=headers)
+    try:
+        with urllib.request.urlopen(req, timeout=timeout, context=_ssl_context()) as resp:
+            raw = resp.read().decode()
+            return resp.status, json.loads(raw) if raw else None
+    except urllib.error.HTTPError as exc:
+        try:
+            detail = json.loads(exc.read().decode())
+        except Exception:
+            detail = {"error": str(exc)}
+        return exc.code, detail
+
 
 def get(path: str) -> tuple[int, dict | None]:
-    with urllib.request.urlopen(f"{BASE.rstrip('/')}{path}", timeout=30) as resp:
-        return resp.status, json.loads(resp.read().decode())
+    code, payload = _request("GET", path, timeout=30)
+    return code, payload if isinstance(payload, dict) else None
 
 
 def post(path: str, body: dict) -> tuple[int, dict | None]:
-    data = json.dumps(body).encode()
-    req = urllib.request.Request(
-        f"{BASE.rstrip('/')}{path}",
-        data=data,
-        method="POST",
-        headers={"Content-Type": "application/json"},
-    )
-    with urllib.request.urlopen(req, timeout=120) as resp:
-        return resp.status, json.loads(resp.read().decode())
+    code, payload = _request("POST", path, body, timeout=120)
+    return code, payload if isinstance(payload, dict) else None
 
 
 def main() -> int:
@@ -57,7 +110,10 @@ def main() -> int:
 
     code, status = get("/api/v1/routing/status")
     ok = code == 200 and status and status.get("available")
-    print(f"[{'OK' if ok else 'FAIL'}] routing/status available={status.get('available') if status else None} region={status.get('region') if status else None}")
+    print(
+        f"[{'OK' if ok else 'FAIL'}] routing/status available={status.get('available') if status else None} "
+        f"region={status.get('region') if status else None}"
+    )
     fails += 0 if ok else 1
 
     if status:
@@ -75,7 +131,11 @@ def main() -> int:
         },
     )
     rotas = (plan or {}).get("rotas_fuga") or []
-    osrm_routes = [r for r in rotas if (r.get("fonte_rota") or (r.get("geojson") or {}).get("properties", {}).get("fonte")) == "osrm"]
+    osrm_routes = [
+        r
+        for r in rotas
+        if (r.get("fonte_rota") or (r.get("geojson") or {}).get("properties", {}).get("fonte")) == "osrm"
+    ]
     ok = code == 200 and len(rotas) > 0 and len(osrm_routes) > 0
     print(f"[{'OK' if ok else 'FAIL'}] contingência Recife rotas={len(rotas)} osrm={len(osrm_routes)}")
     if rotas:

@@ -49,6 +49,7 @@ def _precip_sums(data: dict) -> tuple[float, float]:
 
 
 def _risk_probability(precip_24h: float) -> float:
+    """Fallback heurístico quando o modelo ML não está disponível."""
     if precip_24h <= 20:
         return 0.15
     if precip_24h <= 50:
@@ -56,6 +57,38 @@ def _risk_probability(precip_24h: float) -> float:
     if precip_24h <= 100:
         return 0.55 + (precip_24h - 50) / 120
     return min(0.95, 0.75 + (precip_24h - 100) / 200)
+
+
+def resolve_risk_probability(
+    db: Session,
+    codigo_ibge: str,
+    precip_24h: float,
+    precip_72h: float,
+) -> tuple[float, str]:
+    """Preferência: modelo ML (alvos ou artefato local); senão curva de precipitação."""
+    try:
+        from ml.constants import ML_TARGET_IBGE_CODES
+        from ml.paths import model_path
+        from ml.predictor import predictor
+
+        use_ml = codigo_ibge in ML_TARGET_IBGE_CODES or model_path(codigo_ibge).exists()
+        if use_ml:
+            if codigo_ibge in ML_TARGET_IBGE_CODES:
+                from ml.bootstrap import ensure_model_for
+
+                ensure_model_for(codigo_ibge, db)
+            p48 = (float(precip_24h) + float(precip_72h)) / 2.0
+            out = predictor.predict(
+                db,
+                codigo_ibge,
+                float(precip_24h),
+                p48,
+                float(precip_72h),
+            )
+            return float(out["risk_probability"]), "ml"
+    except Exception as exc:
+        logger.info("ML risk fallback %s: %s", codigo_ibge, exc)
+    return _risk_probability(float(precip_24h)), "precip_curve"
 
 
 async def _emit_proactive_risk_events(
@@ -106,7 +139,7 @@ async def sync_weather_for_municipalities(db: Session, codigos: list[str] | None
             continue
 
         p24, p72 = _precip_sums(raw)
-        risk = _risk_probability(p24)
+        risk, risk_source = resolve_risk_probability(db, muni.codigo_ibge, p24, p72)
 
         prev = (
             db.query(WeatherForecastCache)
@@ -116,6 +149,9 @@ async def sync_weather_for_municipalities(db: Session, codigos: list[str] | None
         )
         prev_risk = float(prev.risk_probability) if prev else 0.0
 
+        payload = dict(raw) if isinstance(raw, dict) else {"openmeteo": raw}
+        payload["_risk_source"] = risk_source
+
         db.add(WeatherForecastCache(
             codigo_ibge=muni.codigo_ibge,
             lat=lat,
@@ -123,7 +159,7 @@ async def sync_weather_for_municipalities(db: Session, codigos: list[str] | None
             precip_24h_mm=p24,
             precip_72h_mm=p72,
             risk_probability=risk,
-            raw_payload=raw,
+            raw_payload=payload,
         ))
         updated += 1
 

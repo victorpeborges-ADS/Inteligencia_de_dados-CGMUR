@@ -6,7 +6,6 @@ from datetime import datetime
 from pathlib import Path
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
-from weasyprint import HTML
 
 from app.config import settings
 from app.models import ContingencyPlan, Municipio
@@ -15,6 +14,8 @@ TEMPLATE_DIR = Path(__file__).resolve().parent.parent / "reports" / "templates"
 
 
 def generate_contingency_pdf(plan: ContingencyPlan, muni: Municipio | None) -> Path:
+    from weasyprint import HTML
+
     env = Environment(
         loader=FileSystemLoader(str(TEMPLATE_DIR)),
         autoescape=select_autoescape(["html"]),

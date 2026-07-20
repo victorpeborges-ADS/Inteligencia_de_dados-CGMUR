@@ -43,3 +43,8 @@ echo "App:  $BASE"
 echo "API:  $BASE/api/v1/"
 echo "TLS:  $BASE/health/tls"
 echo "OIDC: $BASE/health/oidc"
+echo ""
+echo "Smoke de prontidão…"
+python3 "$ROOT/scripts/homolog_smoke_test.py" "$BASE" || {
+  echo "WARN: smoke reportou falhas — revise AUTH_JWT_SECRET, DEM e batch no painel Sistema" >&2
+}

@@ -10,10 +10,23 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.api.data_catalog import coverage_for_code
-from app.models import AlertaCemaden, HistoricoDesastreS2ID, MonitoringAlert, Municipio, PlanoAcaoMunicipal
+from app.models import (
+    AlertaCemaden,
+    ContingencyPlan,
+    HistoricoDesastreS2ID,
+    MonitoringAlert,
+    Municipio,
+    PlanoAcaoMunicipal,
+)
 from app.services.action_plan_engine import action_plan_to_dict
 from app.services.analytical_engine import AnalyticalEngine
+from app.services.contingency_planner import plan_to_dict
+from app.services.georedus_lst_service import get_lst_observada_config
 from app.services.georedus_reference_service import build_georedus_referencia
+from app.services.heat_simulator import run_heat_island_simulation
+from app.services.lst_heat_comparator import compare_heat_simulation_with_lst
+from app.services.live_alert_level import live_alert_snapshot
+from app.services.maturity_engine import compute_maturity
 from app.services.municipio_audit_service import audit_municipio
 from app.services.report_generator import build_bairro_ranking
 
@@ -192,6 +205,154 @@ def get_simulacao_resultado(db: Session, codigo_ibge: str, precipitacao_mm: floa
         return {"codigo_ibge": codigo_ibge, "error": str(exc)[:200]}
 
 
+def get_plano_contingencia(db: Session, codigo_ibge: str) -> dict[str, Any]:
+    """Plano de contingência municipal (evacuação, rotas, ações por nível)."""
+    muni = db.query(Municipio).filter(Municipio.codigo_ibge == codigo_ibge).first()
+    if not muni:
+        return {"error": "Município não encontrado"}
+    plan = (
+        db.query(ContingencyPlan)
+        .filter(ContingencyPlan.municipio_id == muni.id)
+        .order_by(ContingencyPlan.updated_at.desc())
+        .first()
+    )
+    if not plan:
+        return {
+            "codigo_ibge": codigo_ibge,
+            "disponivel": False,
+            "mensagem": "Nenhum plano de contingência cadastrado. Use o módulo Contingência para criar.",
+        }
+    payload = plan_to_dict(plan, muni)
+    acoes = payload.get("acoes_por_nivel") or {}
+    return {
+        "codigo_ibge": codigo_ibge,
+        "disponivel": True,
+        "status": payload.get("status"),
+        "cenario_tipo": payload.get("cenario_tipo"),
+        "nivel_alerta": payload.get("nivel_alerta"),
+        "versao": payload.get("versao"),
+        "zonas_evacuacao_count": len(payload.get("zonas_evacuacao") or []),
+        "rotas_fuga_count": len(payload.get("rotas_fuga") or []),
+        "pontos_apoio_count": len(payload.get("pontos_apoio") or []),
+        "contatos_defesa_civil": (payload.get("contatos_defesa_civil") or [])[:5],
+        "acoes_resumo": {
+            nivel: (itens[:3] if isinstance(itens, list) else itens)
+            for nivel, itens in list(acoes.items())[:4]
+        },
+    }
+
+
+def get_comparador_calor_lst(
+    db: Session,
+    codigo_ibge: str,
+    temperatura_pico_c: float = 38.0,
+) -> dict[str, Any]:
+    """Compara simulação de ilha de calor Sinidu com LST observada (GeoReDUS)."""
+    muni = db.query(Municipio).filter(Municipio.codigo_ibge == codigo_ibge).first()
+    if not muni:
+        return {"error": "Município não encontrado"}
+    lst_cfg = get_lst_observada_config()
+    try:
+        sim = run_heat_island_simulation(
+            db,
+            muni.id,
+            temperatura_pico_c=float(temperatura_pico_c),
+        )
+        cmp = compare_heat_simulation_with_lst(db, muni, sim, max_bairros=8)
+        return {
+            "codigo_ibge": codigo_ibge,
+            "disponivel": bool(cmp.get("disponivel")),
+            "lst_fonte": cmp.get("lst_fonte") or lst_cfg.get("source"),
+            "lst_periodo": cmp.get("lst_periodo") or lst_cfg.get("periodo_mosaico"),
+            "lst_mediana_c": cmp.get("lst_mediana_c"),
+            "sim_temp_mediana_c": cmp.get("sim_temp_mediana_c"),
+            "divergencia_mediana_c": cmp.get("divergencia_mediana_c"),
+            "amostras_validas": cmp.get("amostras_validas"),
+            "bairros": (cmp.get("bairros") or [])[:5],
+            "narrativa": (cmp.get("narrativa") or "")[:500],
+            "limites_metodologicos": cmp.get("limites_metodologicos"),
+        }
+    except Exception as exc:
+        return {
+            "codigo_ibge": codigo_ibge,
+            "disponivel": False,
+            "lst_fonte": lst_cfg.get("source"),
+            "lst_periodo": lst_cfg.get("periodo_mosaico"),
+            "mensagem": "Comparador indisponível agora; use o módulo Simulações → Calor / LST.",
+            "error": str(exc)[:200],
+        }
+
+
+def get_maturidade_detalhe(db: Session, codigo_ibge: str) -> dict[str, Any]:
+    """Score de maturidade informacional por fonte (IBGE, SICONFI, S2ID, etc.)."""
+    try:
+        result = compute_maturity(db, codigo_ibge)
+    except Exception as exc:
+        return {"codigo_ibge": codigo_ibge, "error": str(exc)[:200]}
+    fontes = result.get("fontes") or []
+    return {
+        "codigo_ibge": result.get("codigo_ibge"),
+        "nome": result.get("nome"),
+        "uf": result.get("uf"),
+        "score": result.get("score"),
+        "completeness_score": result.get("completeness_score"),
+        "classificacao": result.get("classificacao"),
+        "resumo": result.get("resumo"),
+        "fontes": [
+            {
+                "id": f.get("id"),
+                "nome": f.get("nome"),
+                "status": f.get("status"),
+                "detail": f.get("detail"),
+            }
+            for f in fontes
+        ],
+        "fontes_faltantes": result.get("fontes_faltantes") or [],
+        "fontes_parciais": result.get("fontes_parciais") or [],
+    }
+
+
+def get_alerta_vivo(db: Session, codigo_ibge: str) -> dict[str, Any]:
+    """Nível CEMADEN/monitoramento das últimas 24h para contingência."""
+    return live_alert_snapshot(db, codigo_ibge, hours=24)
+
+
+def get_risco_alagamento_ml(
+    db: Session,
+    codigo_ibge: str,
+    precip_24h: float = 80.0,
+) -> dict[str, Any]:
+    """Probabilidade de alagamento via modelo ML (baseline ou treinado)."""
+    try:
+        from ml.bootstrap import ensure_model_for
+        from ml.predictor import predictor
+
+        ensure_model_for(codigo_ibge, db)
+        p24 = float(precip_24h)
+        result = predictor.predict(
+            db,
+            codigo_ibge,
+            p24,
+            p24 * 1.4,
+            p24 * 1.7,
+        )
+        return {
+            "codigo_ibge": codigo_ibge,
+            "precip_24h_mm": p24,
+            "risk_probability": result.get("risk_probability"),
+            "risk_level": result.get("risk_level"),
+            "threshold_mm_24h": result.get("threshold_mm_24h"),
+            "model_kind": result.get("model_kind") or result.get("model_version"),
+            "disclaimer": (result.get("disclaimer") or "")[:280],
+        }
+    except Exception as exc:
+        return {
+            "codigo_ibge": codigo_ibge,
+            "error": str(exc)[:200],
+            "mensagem": "Modelo ML indisponível — use Bootstrap no painel Sistema ou simulação pluvial.",
+        }
+
+
 TOOL_DEFINITIONS: list[dict[str, Any]] = [
     {
         "type": "function",
@@ -302,6 +463,95 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_plano_contingencia",
+            "description": (
+                "Plano de contingência municipal: zonas de evacuação, rotas de fuga, "
+                "pontos de apoio e ações por nível de alerta (CEMADEN)."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {"cod_ibge": {"type": "string"}},
+                "required": ["cod_ibge"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_comparador_calor_lst",
+            "description": (
+                "Compara simulação de ilha de calor Sinidu com LST observada (GeoReDUS). "
+                "Útil para perguntas sobre calor urbano, temperatura de superfície e divergência modelo×observado."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "cod_ibge": {"type": "string"},
+                    "temperatura_pico_c": {
+                        "type": "number",
+                        "default": 38,
+                        "description": "Temperatura de pico prevista (°C) para a simulação",
+                    },
+                },
+                "required": ["cod_ibge"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_maturidade_detalhe",
+            "description": (
+                "Maturidade informacional detalhada por fonte (IBGE, SICONFI, CAPAG, S2ID, "
+                "MapBiomas, SNIS, bairros, plano diretor, clima) com score e classificação."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {"cod_ibge": {"type": "string"}},
+                "required": ["cod_ibge"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_alerta_vivo",
+            "description": (
+                "Nível de alerta vivo (CEMADEN/monitoramento 24h) para pré-preencher contingência. "
+                "Retorna VERDE/AMARELO/LARANJA/VERMELHO e contagens."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {"cod_ibge": {"type": "string"}},
+                "required": ["cod_ibge"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_risco_alagamento_ml",
+            "description": (
+                "Probabilidade de alagamento pelo modelo ML Sinidu (Random Forest) "
+                "para uma precipitação 24h em mm."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "cod_ibge": {"type": "string"},
+                    "precip_24h": {
+                        "type": "number",
+                        "default": 80,
+                        "description": "Precipitação acumulada 24h em mm",
+                    },
+                },
+                "required": ["cod_ibge"],
+            },
+        },
+    },
 ]
 
 _TOOL_DISPATCH = {
@@ -319,6 +569,19 @@ _TOOL_DISPATCH = {
         args["cod_ibge"],
         tema=args.get("tema"),
         query=args.get("query"),
+    ),
+    "get_plano_contingencia": lambda db, args: get_plano_contingencia(db, args["cod_ibge"]),
+    "get_comparador_calor_lst": lambda db, args: get_comparador_calor_lst(
+        db,
+        args["cod_ibge"],
+        float(args.get("temperatura_pico_c") or 38),
+    ),
+    "get_maturidade_detalhe": lambda db, args: get_maturidade_detalhe(db, args["cod_ibge"]),
+    "get_alerta_vivo": lambda db, args: get_alerta_vivo(db, args["cod_ibge"]),
+    "get_risco_alagamento_ml": lambda db, args: get_risco_alagamento_ml(
+        db,
+        args["cod_ibge"],
+        float(args.get("precip_24h") or 80),
     ),
 }
 
