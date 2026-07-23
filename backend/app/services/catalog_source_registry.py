@@ -158,13 +158,25 @@ FONTE_REGISTRY: dict[str, dict[str, Any]] = {
         "descricao_curta": "Comunidades urbanas e aglomerados subnormais do Censo.",
         "integravel_etl": True,
     },
+    "gemeo_digital_3d": {
+        "campos_score": ["Exposição por edifício", "Simulação 3D", "Export CityJSON/3D Tiles"],
+        "impacto_confiabilidade": 7,
+        "impacto_score_pts": 6,
+        "dificuldade": "Técnica",
+        "requisito": "Footprints OSM + altura (OSM levels / nDSM LiDAR) + export LOD1",
+        "descricao_curta": (
+            "Modelo urbano LOD1 (gêmeo digital): edificações extrudadas com fonte de altura, "
+            "maturidade e exports 3D Tiles / CityJSON / CityGML."
+        ),
+        "integravel_etl": True,
+    },
 }
 
 RADAR_AXES: dict[str, list[str]] = {
     "IBGE": ["ibge_cidades", "munic"],
     "Clima": ["mapbiomas", "adapta_brasil"],
     "Fiscal": ["sinter"],
-    "Geoespacial": ["geosgb", "inde"],
+    "Geoespacial": ["geosgb", "inde", "gemeo_digital_3d"],
     "Riscos": ["s2id", "cemaden_georiscos", "ibge_singedlab_rs"],
     "Institucional": ["snis_sinisa", "sirene", "brasil_mais"],
 }

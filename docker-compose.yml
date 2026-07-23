@@ -55,6 +55,8 @@ services:
       - ML_DATA_DIR=/data/ml
       - DEM_DIR=/data/dem
       - LOCAL_DEM_DIR=/data/dem/local
+      - TILES3D_DIR=/data/3dtiles
+      - CITYMODEL_DIR=/data/citymodels
       - MAPBIOMAS_STATS_DIR=/data/mapbiomas
       - REFINE_PILOT_DEM=true
       - BOOT_PRIORITY_IBGE_CODES=2611606,2800308
@@ -109,6 +111,8 @@ services:
       - ml_data:/data/ml
       # Bind local: inclui LiDAR seed (data/dem/local/*.tif) — evita OpenTopo na 1ª simulação
       - ./data/dem:/data/dem
+      - ./data/3dtiles:/data/3dtiles
+      - ./data/citymodels:/data/citymodels
       - ./mapbiomas:/data/mapbiomas
       - ibge_mesh_cache:/data/ibge
       - backups_data:/data/backups

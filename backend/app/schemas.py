@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from typing import List, Optional, Dict, Any
 from datetime import date, datetime
 
@@ -28,10 +28,9 @@ class MunicipioCreate(MunicipioBase):
     pass
 
 class MunicipioOut(MunicipioBase):
+    model_config = ConfigDict(from_attributes=True)
+
     id: int
-    
-    class Config:
-        from_attributes = True
 
 # Indicator Summary for Executive Dashboard
 class ExecutiveIndicators(BaseModel):
@@ -139,16 +138,112 @@ class IlhaCalorSimRequest(BaseModel):
     perda_vegetal_pct: float = Field(default=30.0, description="Perda adicional de vegetação (0–100%)")
     ganho_vegetal_pct: float = Field(default=0.0, description="Ganho de cobertura vegetal / arborização (0–60%)")
     impermeabilizacao_extra_pct: float = Field(default=15.0, description="Impermeabilização urbana adicional (0–50%)")
+    sombreamento_pct: float = Field(
+        default=0.0,
+        ge=0,
+        le=100,
+        description="Intervenção de sombreamento adicional (edifícios/toldos/dossel) — 17g.1f",
+    )
+    corredores_vento_pct: float = Field(
+        default=0.0,
+        ge=0,
+        le=100,
+        description="Abertura de corredores de vento / espaço aberto — 17g.1f",
+    )
     codigo_ibge: Optional[str] = Field(default=None, description="Código IBGE do município selecionado")
 
 class ChuvaExtremaSimRequest(BaseModel):
-    precipitacao_mm: float = Field(..., description="Precipitação estimada em milímetros (e.g. 50 a 200)")
+    precipitacao_mm: Optional[float] = Field(
+        default=None,
+        ge=10,
+        le=400,
+        description="Precipitação estimada em mm. Opcional se periodo_retorno_anos for informado.",
+    )
+    periodo_retorno_anos: Optional[int] = Field(
+        default=None,
+        description="Período de retorno IDF (2/10/25/100 anos) — resolve lâmina via tabela municipal/UF",
+    )
+    duracao_min: Optional[int] = Field(
+        default=60,
+        ge=15,
+        le=360,
+        description="Duração do evento de projeto (min) para curva IDF",
+    )
+    nivel_mar_m: Optional[float] = Field(
+        default=None,
+        ge=0,
+        le=3,
+        description="Offset de nível do mar / storm surge (m) — municípios costeiros",
+    )
+    cenario_nivel_mar: Optional[str] = Field(
+        default=None,
+        description="Cenário IPCC/proxy: atual, ssp2_45_2050, ssp2_45_2100, ssp5_85_2050, ssp5_85_2100, storm_surge",
+    )
+    chuva_antecedente_mm: Optional[float] = Field(
+        default=0,
+        ge=0,
+        le=500,
+        description="Chuva antecedente (mm) para gatilho de deslizamento — 17g.1e",
+    )
+    aplicar_drenagem: Optional[bool] = Field(
+        default=True,
+        description="Aplicar sumidouro de microdrenagem (proxy SNIS) no balanço — 17g.1d",
+    )
+    drainage_capacity_mm_h: Optional[float] = Field(
+        default=None,
+        ge=5,
+        le=60,
+        description="Override manual da capacidade da rede (mm/h). Sem valor = proxy SNIS/densidade.",
+    )
     codigo_ibge: Optional[str] = Field(default=None, description="Código IBGE do município selecionado")
+
+
+class SolarRooftopRequest(BaseModel):
+    codigo_ibge: Optional[str] = Field(default=None)
+    limit: int = Field(default=3500, ge=1, le=5000)
+
+
+class GreenRoofMitigationRequest(BaseModel):
+    codigo_ibge: Optional[str] = Field(default=None)
+    precipitacao_mm: float = Field(default=100.0, ge=10, le=400)
+    telhado_verde_pct: float = Field(default=30.0, ge=0, le=100, description="% dos telhados convertidos em verdes")
+
+
+class GreenInfraHeatRequest(BaseModel):
+    codigo_ibge: Optional[str] = Field(default=None)
+    temperatura_pico_c: float = Field(default=36.0, ge=28, le=46)
+    arborizacao_pct: float = Field(default=25.0, ge=0, le=60, description="% ganho de vegetação / parques")
+
+
+class InterventionCompareRequest(BaseModel):
+    codigo_ibge: Optional[str] = Field(default=None)
+    tipo: str = Field(default="telhado_verde", description="telhado_verde | infraverde_calor | solar")
+    precipitacao_mm: float = Field(default=100.0, ge=10, le=400)
+    telhado_verde_pct: float = Field(default=30.0, ge=0, le=100)
+    temperatura_pico_c: float = Field(default=36.0, ge=28, le=46)
+    arborizacao_pct: float = Field(default=25.0, ge=0, le=60)
+
+
+class ShadowInsolationRequest(BaseModel):
+    codigo_ibge: Optional[str] = Field(default=None)
+    hora_local: int = Field(default=14, ge=0, le=23, description="Hora local aproximada (BRT)")
+    limit: int = Field(default=3500, ge=1, le=5000)
+
 
 class ChuvaExtremaCompareRequest(BaseModel):
     baseline_mm: float = Field(default=80.0, description="Cenário de referência (mm)")
     scenario_mm: float = Field(..., description="Cenário alternativo (mm)")
     codigo_ibge: Optional[str] = Field(default=None, description="Código IBGE do município selecionado")
+
+
+class ClimateModuleRequest(BaseModel):
+    codigo_ibge: Optional[str] = Field(default=None)
+    modo: str = Field(default="seca", description="seca | arbovirus")
+    precip_72h_mm: Optional[float] = Field(default=None, ge=0, le=500)
+    precip_esperada_72h_mm: Optional[float] = Field(default=25.0, ge=5, le=200)
+    temperatura_media_c: Optional[float] = Field(default=None, ge=10, le=45)
+    precip_7d_mm: Optional[float] = Field(default=None, ge=0, le=600)
+
 
 class DrenagemSimRequest(BaseModel):
     deficit_drenagem_pct: float = Field(..., description="Déficit operacional de drenagem de 0 a 100%")
@@ -215,6 +310,9 @@ class SimulationJobStartResponse(BaseModel):
     job_id: str
     async_mode: bool = True
     status: str = "queued"
+    precipitacao_mm: Optional[float] = None
+    idf: Optional[Dict[str, Any]] = None
+    nivel_mar: Optional[Dict[str, Any]] = None
 
 class SimulationAnalyzeRequest(BaseModel):
     codigo_ibge: Optional[str] = Field(default=None)
@@ -435,6 +533,8 @@ class AIProvidersResponse(BaseModel):
 class ChatResponse(BaseModel):
     response: str
     suggested_layer: Optional[str] = None # e.g. "calor", "inundacao", "vulnerabilidade"
+    recommended_layers: Optional[List[str]] = None  # 17h.2c — cruzamento multi-camada
+    crosswalk_rationale: Optional[str] = None
     coordinates: Optional[List[float]] = None # e.g. [lat, lng]
     zoom: Optional[int] = None
     source_url: Optional[str] = None
@@ -479,14 +579,13 @@ class CasoReferenciaOut(BaseModel):
 
 
 class CasoSucessoOut(CasoSucessoBase):
+    model_config = ConfigDict(from_attributes=True)
+
     id: int
     uuid: Optional[str] = None
     relevance_score: Optional[float] = None
     similarity: Optional[float] = None
     created_at: Optional[str] = None
-
-    class Config:
-        from_attributes = True
 
 
 class MunicipalReportResponse(BaseModel):

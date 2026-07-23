@@ -66,7 +66,7 @@ def mapbiomas_sync_municipality(
 
 @router.post("/mapbiomas/sync-batch")
 def mapbiomas_sync_batch(
-    limit: int = Query(default=61, ge=1, le=100),
+    limit: int = Query(default=6, ge=1, le=100),
     force: bool = Query(default=False),
     db: Session = Depends(get_db),
     _admin: User = Depends(require_role(Role.ADMIN)),

@@ -56,6 +56,7 @@ export const DEFAULT_LAYER_OPTIONS: LayerOption[] = [
   { id: 'lst_observada', label: 'Temperatura de superfície (LST)', group: 'Clima e riscos', source: 'GeoReDUS / Landsat 8-9', quality: 'Observado' },
   { id: 'vulnerabilidade', label: 'Vulnerabilidade Climática', group: 'Clima e riscos', source: 'Sinidu+Clima: IBGE + MapBiomas + S2ID', quality: 'Derivado Sinidu+Clima' },
   { id: 'inundacao', label: 'Risco de Inundação', group: 'Clima e riscos', source: 'Sinidu+Clima: S2ID + hidrografia', quality: 'Derivado Sinidu+Clima' },
+  { id: 'risco_consolidado', label: 'Risco consolidado (agora)', group: 'Clima e riscos', source: 'Score Sinidu × alerta vivo CEMADEN', quality: 'Derivado Sinidu+Clima' },
   { id: 'alertas', label: 'Alertas Ativos (CEMADEN)', group: 'Clima e riscos', source: 'CEMADEN / GeoRiscos', quality: 'Oficial' },
   { id: 'desastres', label: 'Histórico de Desastres (S2ID)', group: 'Clima e riscos', source: 'S2ID / SEDEC', quality: 'Oficial' },
   { id: 'saneamento_drenagem', label: 'Saneamento e Drenagem', group: 'Planejamento', source: 'SNIS/SINISA + estimativa Sinidu+Clima', quality: 'Derivado Sinidu+Clima' },

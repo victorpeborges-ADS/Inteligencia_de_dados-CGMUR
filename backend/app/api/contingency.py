@@ -11,7 +11,12 @@ from sqlalchemy.orm import Session
 
 from app.db import get_db
 from app.models import ContingencyPlan, ContingencyPlanRevision, Municipio
-from app.services.cobrade_templates import default_acoes_por_nivel
+from app.services.cobrade_templates import (
+    cobrade_for_cenario,
+    default_acoes_por_nivel,
+    default_protocolo_campo,
+    default_recursos_from_support,
+)
 from app.services.contingency_planner import (
     generate_plan_from_simulation,
     plan_to_dict,
@@ -35,6 +40,9 @@ class ContingencyPlanCreate(BaseModel):
     pontos_apoio: list = Field(default_factory=list)
     contatos_defesa_civil: list = Field(default_factory=list)
     acoes_por_nivel: dict = Field(default_factory=dict)
+    recursos_operacionais: list = Field(default_factory=list)
+    protocolo_campo: dict = Field(default_factory=dict)
+    cobrade_codigo: Optional[str] = None
     status: str = "RASCUNHO"
 
 
@@ -46,6 +54,9 @@ class ContingencyPlanUpdate(BaseModel):
     pontos_apoio: Optional[list] = None
     contatos_defesa_civil: Optional[list] = None
     acoes_por_nivel: Optional[dict] = None
+    recursos_operacionais: Optional[list] = None
+    protocolo_campo: Optional[dict] = None
+    cobrade_codigo: Optional[str] = None
     status: Optional[str] = None
 
 
@@ -60,7 +71,13 @@ class GenerateFromSimulation(BaseModel):
 
 @router.get("/templates/acoes")
 def get_action_templates(cenario_tipo: str = "INUNDACAO"):
-    return default_acoes_por_nivel(cenario_tipo.upper())
+    tipo = cenario_tipo.upper()
+    return {
+        "acoes_por_nivel": default_acoes_por_nivel(tipo),
+        "protocolo_campo": default_protocolo_campo(tipo),
+        "cobrade": cobrade_for_cenario(tipo),
+        "recursos_sugeridos": default_recursos_from_support([]),
+    }
 
 
 @router.get("/municipio/{codigo_ibge}/alerta-vivo")
@@ -125,6 +142,7 @@ def list_revisions(plan_id: int, db: Session = Depends(get_db)):
 def create_plan(body: ContingencyPlanCreate, request: Request, db: Session = Depends(get_db)):
     muni = get_accessible_municipio(db, body.codigo_ibge, request=request)
     acoes = body.acoes_por_nivel or default_acoes_por_nivel(body.cenario_tipo)
+    cobrade = cobrade_for_cenario(body.cenario_tipo)
     plan = ContingencyPlan(
         municipio_id=muni.id,
         cenario_tipo=body.cenario_tipo,
@@ -135,6 +153,10 @@ def create_plan(body: ContingencyPlanCreate, request: Request, db: Session = Dep
         pontos_apoio=body.pontos_apoio,
         contatos_defesa_civil=body.contatos_defesa_civil,
         acoes_por_nivel=acoes,
+        recursos_operacionais=body.recursos_operacionais
+        or default_recursos_from_support(body.pontos_apoio),
+        protocolo_campo=body.protocolo_campo or default_protocolo_campo(body.cenario_tipo),
+        cobrade_codigo=body.cobrade_codigo or cobrade.get("codigo"),
         status=body.status,
     )
     db.add(plan)

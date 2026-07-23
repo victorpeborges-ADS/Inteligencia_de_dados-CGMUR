@@ -267,11 +267,11 @@ def _store_refined_pilot_dem(
         return None
 
 
-def sync_dem_batch(db: Session, *, limit: int = 61, force: bool = False) -> dict[str, Any]:
+def sync_dem_batch(db: Session, *, limit: int = 6, force: bool = False) -> dict[str, Any]:
     """Processa DEM (LiDAR local ou SRTM) para municípios prioritários."""
     from app.data_connectors.constants import TARGET_IBGE_CODES
 
-    targets = TARGET_IBGE_CODES[: min(max(limit, 1), 61)]
+    targets = TARGET_IBGE_CODES[: min(max(limit, 1), 6)]
     processed = 0
     skipped = 0
     local_count = 0
@@ -302,12 +302,12 @@ def sync_dem_batch(db: Session, *, limit: int = 61, force: bool = False) -> dict
     }
 
 
-def dem_status(*, limit: int = 61) -> dict[str, Any]:
+def dem_status(*, limit: int = 6) -> dict[str, Any]:
     """Panorama DEM dos municípios prioritários (processados, LiDAR local, piloto)."""
     from app.config import settings
     from app.data_connectors.constants import TARGET_IBGE_CODES
 
-    targets = TARGET_IBGE_CODES[: min(max(limit, 1), 61)]
+    targets = TARGET_IBGE_CODES[: min(max(limit, 1), 6)]
     local_count = 0
     refined_count = 0
     processed = 0

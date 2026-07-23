@@ -33,7 +33,7 @@ from app.services.official_climate import OfficialClimateService
 
 logger = logging.getLogger(__name__)
 
-HEAT_MODEL_VERSION = "1.1"
+HEAT_MODEL_VERSION = "1.2"
 
 # Temperatura normal climatológica de fallback (°C) e pico padrão de onda de calor.
 BASELINE_NORMAL_FALLBACK_C = 27.0
@@ -46,6 +46,10 @@ UHI_COEF_URBAN = 1.2    # tecido urbano construído (calor antropogênico estrut
 UHI_COEF_VEG = 2.5      # dossel pleno resfria até -2.5 °C (evapotranspiração/sombra)
 UHI_COEF_DENSITY = 1.0  # calor antropogênico proporcional à densidade
 HEATWAVE_AMP_K = 0.35   # amplificação da UHI sob onda de calor (por 10 °C de excesso)
+
+# 17g.1f — atenuação máxima relativa do ΔT por sombra de edifícios e corredores de vento
+UHI_SHADE_ATTEN = 0.35
+UHI_VENT_ATTEN = 0.25
 
 CLASS_IMPERM = {
     "Área Urbana": 0.88,
@@ -143,6 +147,33 @@ def _heatwave_amplification(temperatura_pico_c: float, baseline_normal_c: float)
     return 1.0 + HEATWAVE_AMP_K * min(heat_excess, 15.0) / 10.0
 
 
+def _bairro_building_shade_proxy(db: Session, municipio_id: int, bairro_geom) -> float:
+    """Proxy 0–1 de sombreamento por altura média de edificações (17d.3 / 17g.1f)."""
+    from app.models import Edificacao
+
+    rows = (
+        db.query(Edificacao.altura_m, Edificacao.pavimentos)
+        .filter(
+            Edificacao.municipio_id == municipio_id,
+            func.ST_Intersects(bairro_geom, Edificacao.geom),
+        )
+        .limit(80)
+        .all()
+    )
+    if not rows:
+        return 0.0
+    heights: list[float] = []
+    for h, pav in rows:
+        if h is not None and float(h) > 0:
+            heights.append(float(h))
+        elif pav is not None and float(pav) > 0:
+            heights.append(float(pav) * 3.0)
+    if not heights:
+        return 0.0
+    mean_h = sum(heights) / len(heights)
+    return min(1.0, mean_h / 25.0)
+
+
 def _delta_t_bairro(
     *,
     land: dict[str, float],
@@ -152,13 +183,15 @@ def _delta_t_bairro(
     perda_vegetal_pct: float,
     impermeabilizacao_extra_pct: float,
     ganho_vegetal_pct: float = 0.0,
+    shade_factor: float = 0.0,
+    ventilacao_factor: float = 0.0,
 ) -> float:
     """Intensidade da ilha de calor local ΔT (°C) acima do pico previsto.
 
     Fluxo: aplica mudanças de cobertura do cenário (perda vegetal, asfalto extra e
     ganho de vegetação/arborização), calcula a UHI de dossel (Oke) e amplifica pela
     severidade da onda de calor. Arborização converte superfície impermeável em
-    vegetada, reduzindo simultaneamente os dois principais controles da UHI.
+    vegetada. 17g.1f: sombra de edifícios e corredores de vento atenuam o ΔT.
     """
     veg = land["vegetacao"]
     imperm = land["impermeabilidade"]
@@ -185,7 +218,11 @@ def _delta_t_bairro(
     )
     uhi = max(0.0, uhi)
 
-    delta = uhi * _heatwave_amplification(temperatura_pico_c, baseline_normal_c)
+    shade = max(0.0, min(1.0, float(shade_factor)))
+    vent = max(0.0, min(1.0, float(ventilacao_factor)))
+    atten = (1.0 - UHI_SHADE_ATTEN * shade) * (1.0 - UHI_VENT_ATTEN * vent)
+
+    delta = uhi * _heatwave_amplification(temperatura_pico_c, baseline_normal_c) * atten
     return round(max(0.0, min(8.0, delta)), 2)
 
 
@@ -197,6 +234,8 @@ def run_heat_island_simulation(
     perda_vegetal_pct: float = 30.0,
     impermeabilizacao_extra_pct: float = 15.0,
     ganho_vegetal_pct: float = 0.0,
+    sombreamento_pct: float = 0.0,
+    corredores_vento_pct: float = 0.0,
 ) -> dict[str, Any]:
     """Simula ilha de calor por bairro com polígonos e metadados ricos.
 
@@ -214,6 +253,9 @@ def run_heat_island_simulation(
     }
     baseline_normal, temp_fonte = _baseline_air_temp_c(db, muni)
 
+    shade_interv = max(0.0, min(100.0, float(sombreamento_pct))) / 100.0
+    vent_interv = max(0.0, min(100.0, float(corredores_vento_pct))) / 100.0
+
     features: list[dict[str, Any]] = []
     exposures: list[dict[str, Any]] = []
     affected_bairros: list[str] = []
@@ -225,6 +267,9 @@ def run_heat_island_simulation(
     cooling_sum = 0.0
     cooling_pop = 0
     cooling_max = 0.0
+    shade_sum = 0.0
+    vent_sum = 0.0
+    factor_n = 0
 
     def _local_temp(delta: float) -> float:
         return round(temperatura_pico_c + delta, 1)
@@ -251,6 +296,16 @@ def run_heat_island_simulation(
         ivc_row = ivc_map.get(b.nome, {})
         ivc = float(ivc_row.get("indice_vulnerabilidade", 0.4))
 
+        # 17g.1f — sombra local (edifícios) + intervenção; vento = espaço aberto + intervenção
+        shade_build = _bairro_building_shade_proxy(db, muni_id, b.geom)
+        shade_canyon = min(1.0, 0.35 * float(land["urbana"]) + 0.25 * density_norm)
+        shade_factor = min(1.0, 0.45 * max(shade_build, shade_canyon) + 0.55 * shade_interv)
+        vent_local = max(0.0, (1.0 - float(land["urbana"])) * 0.55 + (1.0 - density_norm) * 0.45)
+        ventilacao_factor = min(1.0, 0.45 * vent_local + 0.55 * vent_interv)
+        shade_sum += shade_factor
+        vent_sum += ventilacao_factor
+        factor_n += 1
+
         delta_t = _delta_t_bairro(
             land=land,
             density_norm=density_norm,
@@ -259,6 +314,8 @@ def run_heat_island_simulation(
             perda_vegetal_pct=perda_vegetal_pct,
             impermeabilizacao_extra_pct=impermeabilizacao_extra_pct,
             ganho_vegetal_pct=ganho_vegetal_pct,
+            shade_factor=shade_factor,
+            ventilacao_factor=ventilacao_factor,
         )
 
         # Referência sem arborização para quantificar o resfriamento obtido
@@ -272,6 +329,8 @@ def run_heat_island_simulation(
                 perda_vegetal_pct=perda_vegetal_pct,
                 impermeabilizacao_extra_pct=impermeabilizacao_extra_pct,
                 ganho_vegetal_pct=0.0,
+                shade_factor=shade_factor,
+                ventilacao_factor=ventilacao_factor,
             )
             reducao = max(0.0, round(delta_ref - delta_t, 2))
             if reducao > 0:
@@ -305,6 +364,8 @@ def run_heat_island_simulation(
             "exposicao_pct": exposicao_pct,
             "populacao_exposta": pop_exposta,
             "resfriamento_c": reducao,
+            "shade_factor": round(shade_factor, 3),
+            "ventilacao_factor": round(ventilacao_factor, 3),
             "vegetacao_pct": round(land["vegetacao"] * 100, 1),
             "impermeabilidade_pct": round(land["impermeabilidade"] * 100, 1),
             "ivc": ivc,
@@ -322,6 +383,8 @@ def run_heat_island_simulation(
                 "temp_surface_celsius": local_temp,
                 "temp_pico_celsius": temperatura_pico_c,
                 "resfriamento_celsius": reducao,
+                "shade_factor": round(shade_factor, 3),
+                "ventilacao_factor": round(ventilacao_factor, 3),
                 "vegetacao_pct": round(land["vegetacao"] * 100, 1),
                 "impermeabilizacao_pct": round(land["impermeabilidade"] * 100, 1),
                 "ivc": ivc,
@@ -342,6 +405,8 @@ def run_heat_island_simulation(
                 perda_vegetal_pct=perda_vegetal_pct,
                 impermeabilizacao_extra_pct=impermeabilizacao_extra_pct,
                 ganho_vegetal_pct=ganho_vegetal_pct,
+                shade_factor=shade_interv,
+                ventilacao_factor=vent_interv,
             ),
             2,
         )
@@ -370,11 +435,13 @@ def run_heat_island_simulation(
 
     temp_pico_local_c = round(temperatura_pico_c + max_delta, 1)
     resfriamento_medio_c = round(cooling_sum / cooling_pop, 2) if cooling_pop else 0.0
+    shade_mean = round(shade_sum / factor_n, 3) if factor_n else round(shade_interv, 3)
+    vent_mean = round(vent_sum / factor_n, 3) if factor_n else round(vent_interv, 3)
 
     simulation_meta = {
         "model_version": HEAT_MODEL_VERSION,
         "model_name": "UHI Territorial Sinidu+Clima",
-        "method": "UHI Territorial",
+        "method": "UHI Territorial + sombra/vento (17g.1f)",
         "temperatura_pico_c": temperatura_pico_c,
         "temp_pico_local_c": temp_pico_local_c,
         "baseline_normal_c": baseline_normal,
@@ -386,6 +453,10 @@ def run_heat_island_simulation(
         "perda_vegetal_pct": perda_vegetal_pct,
         "impermeabilizacao_extra_pct": impermeabilizacao_extra_pct,
         "ganho_vegetal_pct": ganho_vegetal_pct,
+        "sombreamento_pct": round(shade_interv * 100, 1),
+        "corredores_vento_pct": round(vent_interv * 100, 1),
+        "shade_factor_medio": shade_mean,
+        "ventilacao_factor_medio": vent_mean,
         "resfriamento_max_c": round(cooling_max, 2),
         "resfriamento_medio_c": resfriamento_medio_c,
         "max_delta_t_c": max_delta,
@@ -395,23 +466,41 @@ def run_heat_island_simulation(
             "MapBiomas (cobertura do solo)",
             "INMET / série climática urbana (normal de referência)",
             "IBGE setores censitários (densidade)",
+            "Edificações OSM/CTM (proxy de sombra — 17d.3)",
             "IVC Sinidu+Clima (priorização de exposição)",
         ],
         "metodologia": (
             "Modelo temperatura-driven: o gestor informa a temperatura de pico prevista; "
             "a intensidade da ilha de calor (ΔT) por bairro deriva da impermeabilização e "
             "cobertura vegetal (MapBiomas) e da densidade populacional (Oke, 1982), "
-            "amplificada pela severidade da onda de calor. A arborização/telhado verde "
-            "converte superfície impermeável em vegetada, reduzindo o ΔT; o resfriamento "
-            "obtido é medido contra o mesmo cenário sem arborização. Temperatura local = pico + ΔT."
+            "amplificada pela severidade da onda de calor. Arborização/telhado verde "
+            "converte superfície impermeável em vegetada. Sombreamento por edifícios "
+            "(altura média) e corredores de vento (espaço aberto + intervenção) atenuam "
+            "o ΔT (17g.1f). Temperatura local = pico + ΔT."
         ),
         "disclaimer": (
             "Simulação exploratória — não substitui medição de temperatura de superfície "
-            "(LST) nem estudo microclimático. Use para priorização territorial e oficinas."
+            "(LST), ray-tracing de sombra nem estudo microclimático de vento. "
+            "Use para priorização territorial e oficinas."
         ),
     }
 
     fc = {"type": "FeatureCollection", "features": features}
+
+    # 17b.3 — calor × edifício
+    try:
+        from app.services.building_exposure_service import enrich_simulation_heat_building_exposure
+
+        simulation_meta = enrich_simulation_heat_building_exposure(
+            db,
+            muni,
+            simulation_meta,
+            heat_geometry=fc,
+            affected_population=min(affected_pop, muni.populacao or affected_pop),
+            temperatura_pico_c=temperatura_pico_c,
+        )
+    except Exception as exc:
+        logger.warning("Exposição calor×edifício falhou: %s", exc)
 
     return {
         "scenario_type": "HeatIsland",

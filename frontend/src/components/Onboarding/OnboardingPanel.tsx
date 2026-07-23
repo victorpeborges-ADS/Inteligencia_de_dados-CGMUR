@@ -38,14 +38,29 @@ interface Props {
 
 export default function OnboardingPanel({ onMunicipioOnboarded, selectedCodigoIbge, onSelectMunicipio }: Props) {
   const [codigoInput, setCodigoInput] = useState(selectedCodigoIbge || '');
+  const [nameQuery, setNameQuery] = useState('');
+  const [seeds, setSeeds] = useState<Array<{ codigo_ibge: string; nome: string; uf: string }>>([]);
   const [validated, setValidated] = useState<OnboardingValidateResult | null>(null);
   const [items, setItems] = useState<OnboardingStatus[]>([]);
   const [result, setResult] = useState<OnboardingStatus | null>(null);
   const [loadingList, setLoadingList] = useState(true);
   const [validating, setValidating] = useState(false);
   const [running, setRunning] = useState(false);
+  const [activating, setActivating] = useState(false);
+  const [showAdvancedGis, setShowAdvancedGis] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<string>('todos');
+  const [ufInput, setUfInput] = useState('PE');
+  const [ufLimit, setUfLimit] = useState(10);
+  const [ufPreview, setUfPreview] = useState<{
+    uf: string;
+    total_ibge: number;
+    ja_carregados: number;
+    pendentes: number;
+    a_processar: number;
+  } | null>(null);
+  const [ufBootstrapping, setUfBootstrapping] = useState(false);
+  const [ufJobId, setUfJobId] = useState<string | null>(null);
 
   const loadList = useCallback(async () => {
     setLoadingList(true);
@@ -64,10 +79,44 @@ export default function OnboardingPanel({ onMunicipioOnboarded, selectedCodigoIb
   }, [loadList]);
 
   useEffect(() => {
+    api
+      .getSeedMunicipalities()
+      .then((list) => setSeeds(list.map((m) => ({ codigo_ibge: m.codigo_ibge, nome: m.nome, uf: m.uf }))))
+      .catch(() => setSeeds([]));
+  }, []);
+
+  useEffect(() => {
     if (selectedCodigoIbge) {
       setCodigoInput(selectedCodigoIbge);
     }
   }, [selectedCodigoIbge]);
+
+  const handleQuickActivate = async (code?: string) => {
+    const ibge = (code || codigoInput).replace(/\D/g, '').padStart(7, '0').slice(-7);
+    if (ibge.length !== 7) {
+      setError('Informe um código IBGE com 7 dígitos ou escolha um município na busca.');
+      return;
+    }
+    setActivating(true);
+    setError(null);
+    try {
+      const ensured = await api.ensureMunicipality(ibge);
+      setCodigoInput(ibge);
+      setValidated({
+        codigo_ibge: ensured.codigo_ibge,
+        nome: ensured.nome,
+        uf: ensured.uf,
+        valido: true,
+      });
+      onSelectMunicipio?.(ibge);
+      onMunicipioOnboarded?.(ibge);
+      await loadList();
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Falha ao ativar município');
+    } finally {
+      setActivating(false);
+    }
+  };
 
   const handleValidate = async () => {
     const code = codigoInput.replace(/\D/g, '').padStart(7, '0').slice(-7);
@@ -108,10 +157,59 @@ export default function OnboardingPanel({ onMunicipioOnboarded, selectedCodigoIb
     }
   };
 
+  const handleUfPreview = async () => {
+    const uf = ufInput.trim().toUpperCase().slice(0, 2);
+    if (uf.length !== 2) {
+      setError('Informe a sigla da UF (ex.: PE).');
+      return;
+    }
+    setError(null);
+    try {
+      const data = await api.previewUfBootstrap(uf, ufLimit);
+      setUfPreview(data);
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Falha na prévia da UF');
+    }
+  };
+
+  const handleUfBootstrap = async () => {
+    const uf = ufInput.trim().toUpperCase().slice(0, 2);
+    if (uf.length !== 2) {
+      setError('Informe a sigla da UF (ex.: PE).');
+      return;
+    }
+    setUfBootstrapping(true);
+    setError(null);
+    try {
+      const data = await api.bootstrapUf(uf, { limit: ufLimit, skip_existing: true, async_job: true });
+      const jobId = typeof data.job_id === 'string' ? data.job_id : null;
+      setUfJobId(jobId);
+      await handleUfPreview();
+      await loadList();
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Falha ao iniciar bootstrap da UF');
+    } finally {
+      setUfBootstrapping(false);
+    }
+  };
+
   const filtered = items.filter((item) => {
     if (filter === 'todos') return true;
     return item.onboarding_status === filter;
   });
+
+  const seedMatches = nameQuery.trim().length >= 2
+    ? seeds
+        .filter((s) => {
+          const q = nameQuery.trim().toLowerCase();
+          return (
+            s.nome.toLowerCase().includes(q)
+            || s.uf.toLowerCase() === q
+            || s.codigo_ibge.includes(q.replace(/\D/g, ''))
+          );
+        })
+        .slice(0, 8)
+    : [];
 
   return (
     <div className="flex h-full flex-col gap-4 overflow-y-auto pr-1">
@@ -121,12 +219,114 @@ export default function OnboardingPanel({ onMunicipioOnboarded, selectedCodigoIb
           Onboarding municipal
         </h3>
         <p className="mt-1 text-xs text-zinc-500">
-          Cadastre um município por código IBGE. O sistema busca geometria, IBGE, SICONFI, CAPAG e prepara camadas base.
+          Ative um município em poucos cliques — sem upload GIS. Depois aprofunde dados se quiser.
         </p>
       </div>
 
+      <div className="rounded-xl border border-emerald-500/25 bg-emerald-950/15 p-3 space-y-2">
+        <label className="text-[10px] font-bold uppercase tracking-wider text-emerald-300/80">
+          Ativação rápida (sem GIS)
+        </label>
+        <input
+          type="search"
+          value={nameQuery}
+          onChange={(e) => setNameQuery(e.target.value)}
+          placeholder="Buscar por nome (ex.: Recife, Aracaju)…"
+          className="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-600"
+        />
+        {seedMatches.length > 0 && (
+          <ul className="max-h-36 space-y-1 overflow-y-auto">
+            {seedMatches.map((s) => (
+              <li key={s.codigo_ibge}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCodigoInput(s.codigo_ibge);
+                    setNameQuery(`${s.nome} — ${s.uf}`);
+                    void handleQuickActivate(s.codigo_ibge);
+                  }}
+                  disabled={activating || running}
+                  className="flex w-full items-center justify-between rounded-lg border border-zinc-800 bg-zinc-950/60 px-2.5 py-1.5 text-left text-xs hover:border-emerald-500/40"
+                >
+                  <span className="font-semibold text-zinc-100">{s.nome} — {s.uf}</span>
+                  <span className="font-mono text-[10px] text-zinc-500">{s.codigo_ibge}</span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+        <button
+          type="button"
+          onClick={() => handleQuickActivate()}
+          disabled={activating || running || codigoInput.replace(/\D/g, '').length < 7}
+          className="flex w-full items-center justify-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-2 text-[10px] font-bold uppercase text-white hover:bg-emerald-500 disabled:opacity-50"
+        >
+          {activating ? <Loader2 size={12} className="animate-spin" /> : <CheckCircle2 size={12} />}
+          Ativar município
+        </button>
+        <p className="text-[9px] leading-snug text-zinc-500">
+          Carrega malha IBGE e bases nacionais. Sem equipe GIS e sem upload de shapefile.
+        </p>
+      </div>
+
+      <div className="rounded-xl border border-sky-500/25 bg-sky-950/15 p-3 space-y-2">
+        <label className="text-[10px] font-bold uppercase tracking-wider text-sky-300/80">
+          Bootstrap por UF (18c.1)
+        </label>
+        <p className="text-[9px] leading-snug text-zinc-500">
+          Ativa vários municípios da UF com cobertura mínima (IBGE + S2ID + MapBiomas), sem GIS.
+        </p>
+        <div className="flex gap-2">
+          <input
+            type="text"
+            maxLength={2}
+            value={ufInput}
+            onChange={(e) => setUfInput(e.target.value.replace(/[^a-zA-Z]/g, '').toUpperCase().slice(0, 2))}
+            placeholder="PE"
+            className="w-16 rounded-lg border border-zinc-700 bg-zinc-950 px-2 py-2 text-center text-sm font-mono font-bold text-zinc-100"
+          />
+          <input
+            type="number"
+            min={1}
+            max={100}
+            value={ufLimit}
+            onChange={(e) => setUfLimit(Math.max(1, Math.min(100, Number(e.target.value) || 1)))}
+            title="Limite de municípios"
+            className="w-20 rounded-lg border border-zinc-700 bg-zinc-950 px-2 py-2 text-sm font-mono text-zinc-100"
+          />
+          <button
+            type="button"
+            onClick={() => void handleUfPreview()}
+            disabled={ufBootstrapping}
+            className="flex flex-1 items-center justify-center gap-1 rounded-lg border border-zinc-600 px-2 py-2 text-[10px] font-bold uppercase text-zinc-300"
+          >
+            Prévia
+          </button>
+          <button
+            type="button"
+            onClick={() => void handleUfBootstrap()}
+            disabled={ufBootstrapping || activating || running}
+            className="flex flex-1 items-center justify-center gap-1 rounded-lg bg-sky-600 px-2 py-2 text-[10px] font-bold uppercase text-white hover:bg-sky-500 disabled:opacity-50"
+          >
+            {ufBootstrapping ? <Loader2 size={12} className="animate-spin" /> : <Play size={12} />}
+            Iniciar
+          </button>
+        </div>
+        {ufPreview && (
+          <p className="text-[10px] text-sky-200/90">
+            {ufPreview.uf}: {ufPreview.total_ibge} no IBGE · {ufPreview.ja_carregados} já no Sinidu ·{' '}
+            {ufPreview.pendentes} pendentes · processará até {ufPreview.a_processar}
+          </p>
+        )}
+        {ufJobId && (
+          <p className="text-[9px] font-mono text-zinc-500">Job: {ufJobId}</p>
+        )}
+      </div>
+
       <div className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-3 space-y-2">
-        <label className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">Código IBGE</label>
+        <label className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">
+          Código IBGE · integração completa
+        </label>
         <div className="flex gap-2">
           <input
             type="text"
@@ -140,7 +340,7 @@ export default function OnboardingPanel({ onMunicipioOnboarded, selectedCodigoIb
           <button
             type="button"
             onClick={handleValidate}
-            disabled={validating || running}
+            disabled={validating || running || activating}
             className="flex items-center gap-1 rounded-lg border border-zinc-600 px-3 py-2 text-[10px] font-bold uppercase text-zinc-300"
           >
             {validating ? <Loader2 size={12} className="animate-spin" /> : <Search size={12} />}
@@ -149,11 +349,11 @@ export default function OnboardingPanel({ onMunicipioOnboarded, selectedCodigoIb
           <button
             type="button"
             onClick={() => handleRun()}
-            disabled={running || validating}
+            disabled={running || validating || activating}
             className="flex items-center gap-1 rounded-lg bg-indigo-600 px-3 py-2 text-[10px] font-bold uppercase text-white"
           >
             {running ? <Loader2 size={12} className="animate-spin" /> : <Play size={12} />}
-            Onboard
+            Aprofundar
           </button>
         </div>
         {validated && (
@@ -169,7 +369,21 @@ export default function OnboardingPanel({ onMunicipioOnboarded, selectedCodigoIb
         )}
       </div>
 
-      <GeoportalMunicipalPanel codigoIbge={codigoInput.length === 7 ? codigoInput : selectedCodigoIbge} />
+      <div className="rounded-xl border border-zinc-800 bg-zinc-900/40">
+        <button
+          type="button"
+          onClick={() => setShowAdvancedGis((v) => !v)}
+          className="flex w-full items-center justify-between px-3 py-2 text-[10px] font-bold uppercase tracking-wide text-zinc-400 hover:text-zinc-200"
+        >
+          GIS municipal (opcional)
+          <span className="text-zinc-600">{showAdvancedGis ? '−' : '+'}</span>
+        </button>
+        {showAdvancedGis && (
+          <div className="border-t border-zinc-800 p-2">
+            <GeoportalMunicipalPanel codigoIbge={codigoInput.length === 7 ? codigoInput : selectedCodigoIbge} />
+          </div>
+        )}
+      </div>
 
       {result && (
         <div className="rounded-xl border border-indigo-500/30 bg-indigo-950/20 p-3 space-y-2">

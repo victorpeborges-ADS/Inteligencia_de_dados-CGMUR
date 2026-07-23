@@ -1,0 +1,1510 @@
+<!DOCTYPE html>
+<html lang="pt-BR" data-theme="light">
+<head>
+  <!--
+    FONTE EDITÁVEL (não compartilhar diretamente).
+    Imagens em docs/apresentacao-assets/ — quebram fora do repositório.
+
+    Para WhatsApp / e-mail offline, envie o arquivo gerado:
+      docs/apresentacao-sinidu-keynote-light.html
+
+    Regenerar autocontido:
+      python3 scripts/inline_apresentacao_assets.py \
+        --source docs/apresentacao-sinidu-keynote-light.source.html \
+        --output docs/apresentacao-sinidu-keynote-light.html
+  -->
+  <!-- apresentacao: tema claro -->
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Sinidu+Clima — Demonstração funcional (versão clara)</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --bg: #ffffff;
+      --bg-elevated: #f8fafc;
+      --card: #ffffff;
+      --border: #e4e4e7;
+      --text: #18181b;
+      --muted: #52525b;
+      --dim: #71717a;
+      --accent: #4f46e5;
+      --accent-glow: rgba(79, 70, 229, 0.22);
+      --emerald: #10b981;
+      --sky: #0ea5e9;
+      --rose: #f43f5e;
+      --amber: #f59e0b;
+      --section-pad: clamp(2rem, 6vw, 5rem);
+    }
+
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    html {
+      scroll-behavior: smooth;
+      scroll-snap-type: y proximity;
+    }
+
+    body {
+      font-family: "Inter", system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.5;
+      overflow-x: hidden;
+    }
+
+    ::selection { background: rgba(79,70,229,0.18); }
+
+    /* ── Chrome UI ── */
+    .chrome {
+      position: fixed;
+      inset: 0 0 auto 0;
+      z-index: 100;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 1rem 1.5rem;
+      background: linear-gradient(180deg, rgba(255,255,255,0.94) 0%, transparent 100%);
+      pointer-events: none;
+    }
+    .chrome > * { pointer-events: auto; }
+    .logo-mini {
+      font-weight: 700;
+      font-size: 0.8rem;
+      letter-spacing: 0.12em;
+      color: var(--muted);
+    }
+    .chrome-actions { display: flex; gap: 0.5rem; }
+    .btn-ghost {
+      background: rgba(0,0,0,0.04);
+      border: 1px solid var(--border);
+      color: var(--text);
+      font-size: 0.7rem;
+      font-weight: 600;
+      padding: 0.45rem 0.85rem;
+      border-radius: 999px;
+      cursor: pointer;
+      backdrop-filter: blur(12px);
+      transition: background 0.2s, border-color 0.2s;
+    }
+    .btn-ghost:hover { background: rgba(0,0,0,0.06); border-color: rgba(0,0,0,0.12); }
+
+    .progress-rail {
+      position: fixed;
+      right: 1.25rem;
+      top: 50%;
+      transform: translateY(-50%);
+      z-index: 90;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .progress-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: rgba(0,0,0,0.12);
+      cursor: pointer;
+      transition: all 0.35s cubic-bezier(0.22, 1, 0.36, 1);
+    }
+    .progress-dot.active {
+      background: var(--accent);
+      transform: scale(1.5);
+      box-shadow: 0 0 12px var(--accent-glow);
+    }
+
+    /* ── Sections ── */
+    .section {
+      min-height: 100vh;
+      min-height: 100dvh;
+      scroll-snap-align: start;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      padding: calc(var(--section-pad) + 2rem) var(--section-pad) var(--section-pad);
+      position: relative;
+      overflow: hidden;
+    }
+
+    .section::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background: radial-gradient(ellipse 70% 50% at 50% -20%, rgba(99,102,241,0.08), transparent 60%);
+      pointer-events: none;
+    }
+
+    .reveal {
+      opacity: 0;
+      transform: translateY(32px);
+      transition: opacity 0.9s cubic-bezier(0.22, 1, 0.36, 1), transform 0.9s cubic-bezier(0.22, 1, 0.36, 1);
+    }
+    .reveal.visible { opacity: 1; transform: translateY(0); }
+    .reveal-delay-1 { transition-delay: 0.1s; }
+    .reveal-delay-2 { transition-delay: 0.2s; }
+    .reveal-delay-3 { transition-delay: 0.35s; }
+
+    .eyebrow {
+      font-size: 0.7rem;
+      font-weight: 600;
+      letter-spacing: 0.2em;
+      text-transform: uppercase;
+      color: var(--accent);
+      margin-bottom: 0.75rem;
+    }
+
+    h1.hero-title {
+      font-family: "Instrument Serif", Georgia, serif;
+      font-size: clamp(3rem, 9vw, 6.5rem);
+      font-weight: 400;
+      line-height: 0.95;
+      letter-spacing: -0.02em;
+      background: linear-gradient(180deg, #18181b 0%, #52525b 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+
+    h2.section-title {
+      font-family: "Instrument Serif", Georgia, serif;
+      font-size: clamp(2rem, 5vw, 3.5rem);
+      font-weight: 400;
+      line-height: 1.1;
+      margin-bottom: 1rem;
+    }
+
+    .lead {
+      font-size: clamp(1rem, 2vw, 1.25rem);
+      color: var(--muted);
+      max-width: 36rem;
+      line-height: 1.65;
+    }
+
+    .split {
+      display: grid;
+      grid-template-columns: 1fr 1.2fr;
+      gap: clamp(2rem, 5vw, 4rem);
+      align-items: center;
+      width: 100%;
+      max-width: 1280px;
+      margin: 0 auto;
+    }
+
+    .split.reverse { grid-template-columns: 1.2fr 1fr; }
+    .center-block { max-width: 900px; margin: 0 auto; width: 100%; text-align: center; }
+    .center-block .lead { margin: 0 auto; }
+
+    /* ── Mockup frames ── */
+    .frame {
+      border-radius: 16px;
+      border: 1px solid var(--border);
+      background: var(--bg-elevated);
+      box-shadow:
+        0 0 0 1px rgba(0,0,0,0.05) inset,
+        0 24px 48px -16px rgba(0,0,0,0.12),
+        0 0 120px -40px var(--accent-glow);
+      overflow: hidden;
+      transform: perspective(1200px) rotateX(2deg);
+      transition: transform 0.6s cubic-bezier(0.22, 1, 0.36, 1);
+    }
+    .frame:hover { transform: perspective(1200px) rotateX(0deg) scale(1.01); }
+
+    .frame-bar {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 12px 16px;
+      background: rgba(0,0,0,0.04);
+      border-bottom: 1px solid var(--border);
+    }
+    .dot { width: 10px; height: 10px; border-radius: 50%; }
+    .dot-r { background: #ef4444; }
+    .dot-y { background: #eab308; }
+    .dot-g { background: #22c55e; }
+    .frame-url {
+      flex: 1;
+      text-align: center;
+      font-size: 0.65rem;
+      color: var(--dim);
+      font-family: ui-monospace, monospace;
+    }
+
+    .frame-body { padding: 16px; }
+    .frame-body--flush { padding: 0; line-height: 0; }
+
+    .screen-shot {
+      width: 100%;
+      height: auto;
+      display: block;
+      border-radius: 0 0 16px 16px;
+    }
+    .screen-shot--crop {
+      max-height: min(72vh, 640px);
+      object-fit: cover;
+      object-position: top center;
+    }
+
+    /* Hero mockup — full platform */
+    .hero-mock {
+      margin-top: 2.5rem;
+      max-width: 1100px;
+      margin-left: auto;
+      margin-right: auto;
+      width: 100%;
+    }
+    .platform-layout {
+      display: grid;
+      grid-template-columns: 200px 1fr 280px;
+      gap: 10px;
+      min-height: 420px;
+    }
+    .sidebar-mock {
+      background: #f4f4f5;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      padding: 12px;
+    }
+    .nav-item {
+      font-size: 0.65rem;
+      padding: 8px 10px;
+      border-radius: 8px;
+      color: var(--dim);
+      margin-bottom: 4px;
+    }
+    .nav-item.on { background: rgba(129,140,248,0.15); color: var(--accent); font-weight: 600; }
+    .map-mock {
+      background:
+        radial-gradient(circle at 30% 40%, rgba(52,211,153,0.2), transparent 45%),
+        radial-gradient(circle at 70% 60%, rgba(129,140,248,0.15), transparent 40%),
+        linear-gradient(160deg, #e0f2fe, #f8fafc);
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      position: relative;
+    }
+    .map-mock::after {
+      content: "";
+      position: absolute;
+      inset: 18%;
+      border: 1px solid rgba(52,211,153,0.4);
+      border-radius: 42% 58% 48% 52%;
+      background: rgba(52,211,153,0.12);
+    }
+    .panel-mock {
+      background: #f4f4f5;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      padding: 12px;
+    }
+    .kpi-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+    .kpi {
+      background: #ffffff;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 10px;
+    }
+    .kpi-l { font-size: 0.5rem; color: var(--dim); text-transform: uppercase; letter-spacing: 0.08em; }
+    .kpi-v { font-size: 1rem; font-weight: 700; margin-top: 4px; }
+
+    /* Flow diagrams */
+    .flow-col {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 0;
+      max-width: 280px;
+      margin: 0 auto;
+    }
+    .flow-item {
+      width: 100%;
+      text-align: center;
+      padding: 0.65rem 1.25rem;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      font-size: 0.85rem;
+      font-weight: 500;
+      color: #3f3f46;
+    }
+    .flow-item.highlight {
+      border-color: rgba(129,140,248,0.5);
+      background: rgba(129,140,248,0.1);
+      color: var(--text);
+      font-weight: 600;
+      box-shadow: 0 0 30px -10px var(--accent-glow);
+    }
+    .flow-arrow {
+      width: 2px;
+      height: 20px;
+      background: linear-gradient(180deg, var(--border), rgba(129,140,248,0.5));
+      position: relative;
+    }
+    .flow-arrow::after {
+      content: "";
+      position: absolute;
+      bottom: -4px;
+      left: 50%;
+      transform: translateX(-50%);
+      border: 5px solid transparent;
+      border-top-color: rgba(129,140,248,0.6);
+    }
+
+    .dual-flow {
+      display: grid;
+      grid-template-columns: 1fr auto 1fr;
+      gap: 2rem;
+      align-items: start;
+      max-width: 1000px;
+      margin: 2rem auto 0;
+    }
+    .flow-label {
+      text-align: center;
+      font-size: 0.75rem;
+      font-weight: 600;
+      color: var(--dim);
+      text-transform: uppercase;
+      letter-spacing: 0.15em;
+      margin-bottom: 1.25rem;
+    }
+    .flow-bridge {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding-top: 8rem;
+      color: var(--accent);
+      font-size: 2rem;
+    }
+
+    /* Horizontal flow */
+    .h-flow {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: center;
+      align-items: center;
+      gap: 0.5rem;
+      margin-top: 2rem;
+    }
+    .h-step {
+      padding: 0.6rem 1rem;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      font-size: 0.8rem;
+      font-weight: 500;
+      white-space: nowrap;
+    }
+    .h-arrow { color: var(--dim); font-size: 0.9rem; }
+
+    /* Module cards */
+    .cards-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+      gap: 1rem;
+      max-width: 1100px;
+      margin: 2rem auto 0;
+      width: 100%;
+    }
+    .module-card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 1.5rem;
+      transition: border-color 0.3s, transform 0.3s, box-shadow 0.3s;
+    }
+    .module-card:hover {
+      border-color: rgba(129,140,248,0.35);
+      transform: translateY(-4px);
+      box-shadow: 0 16px 32px -20px rgba(0,0,0,0.1);
+    }
+    .module-icon {
+      width: 36px;
+      height: 36px;
+      border-radius: 10px;
+      background: rgba(129,140,248,0.15);
+      display: grid;
+      place-items: center;
+      margin-bottom: 1rem;
+      font-size: 1rem;
+    }
+    .module-card h3 { font-size: 1rem; font-weight: 600; margin-bottom: 0.35rem; }
+    .module-card p { font-size: 0.8rem; color: var(--muted); line-height: 1.5; }
+    .module-card .module-do {
+      margin-top: 0.65rem;
+      padding-top: 0.65rem;
+      border-top: 1px solid var(--border);
+      font-size: 0.72rem;
+      color: var(--dim);
+      line-height: 1.45;
+    }
+    .module-card .module-do strong { color: #27272a; font-weight: 600; }
+
+    .nav-preview {
+      max-width: 520px;
+      margin: 1.5rem auto 0;
+      border-radius: 16px;
+      border: 1px solid var(--border);
+      overflow: hidden;
+      background: var(--card);
+    }
+    .nav-preview img { width: 100%; display: block; }
+
+    /* Seção "10 abas": grade compacta 2×5 para caber sem cortar o título */
+    #s5 { padding-top: calc(var(--section-pad) + 1rem); }
+    #s5 .nav-preview { max-width: 440px; margin-top: 1.1rem; }
+    #s5 .cards-grid {
+      grid-template-columns: repeat(5, 1fr);
+      max-width: 1240px;
+      gap: 0.85rem;
+      margin-top: 1.25rem;
+    }
+    #s5 .module-card { padding: 1.15rem 1.2rem; }
+    #s5 .module-card .module-icon { margin-bottom: 0.65rem; }
+    #s5 .module-card .module-do { margin-top: 0.5rem; padding-top: 0.5rem; }
+    @media (max-width: 1180px) {
+      #s5 .cards-grid { grid-template-columns: repeat(3, 1fr); }
+    }
+    @media (max-width: 720px) {
+      #s5 .cards-grid { grid-template-columns: repeat(2, 1fr); }
+    }
+
+    /* Territory showcase */
+    .showcase-row {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 1rem;
+      margin-top: 2rem;
+      max-width: 1100px;
+      margin-left: auto;
+      margin-right: auto;
+    }
+    .showcase-card {
+      border-radius: 14px;
+      border: 1px solid var(--border);
+      overflow: hidden;
+      background: var(--card);
+    }
+    .showcase-visual {
+      height: 280px;
+      position: relative;
+      overflow: hidden;
+      background: var(--bg-elevated);
+    }
+    .showcase-visual img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      object-position: left top;
+      display: block;
+    }
+    .showcase-visual.map2d {
+      background: linear-gradient(135deg, #e0e7ff, #eef2ff);
+    }
+    .showcase-visual.map3d {
+      background: linear-gradient(180deg, #f1f5f9 0%, #e2e8f0 60%, #cbd5e1 100%);
+    }
+    .showcase-visual.map3d::before {
+      content: "";
+      position: absolute;
+      bottom: 0;
+      left: 10%;
+      right: 10%;
+      height: 60%;
+      background: linear-gradient(180deg, transparent, rgba(56,189,248,0.3));
+      clip-path: polygon(0 100%, 15% 40%, 35% 55%, 55% 25%, 75% 45%, 100% 20%, 100% 100%);
+    }
+    .showcase-visual.layers {
+      background: #f8fafc;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      padding: 16px;
+      justify-content: center;
+    }
+    .layer-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 8px 10px;
+      background: #ffffff;
+      border-radius: 8px;
+      font-size: 0.65rem;
+    }
+    .layer-dot { width: 8px; height: 8px; border-radius: 50%; }
+    .showcase-label {
+      padding: 1rem;
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: var(--muted);
+      text-align: center;
+    }
+
+    .showcase-strip {
+      display: flex;
+      gap: 1rem;
+      overflow-x: auto;
+      padding: 0.5rem 0 1rem;
+      margin-top: 1.25rem;
+      max-width: 1100px;
+      margin-left: auto;
+      margin-right: auto;
+      scroll-snap-type: x mandatory;
+      -webkit-overflow-scrolling: touch;
+    }
+    .showcase-strip::-webkit-scrollbar { height: 4px; }
+    .showcase-strip::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+    .showcase-strip .showcase-card {
+      flex: 0 0 min(320px, 85vw);
+      scroll-snap-align: center;
+    }
+    .showcase-visual.sim {
+      background: #f1f5f9;
+      display: flex;
+      align-items: flex-end;
+      padding: 16px;
+      gap: 4px;
+    }
+    .sim-bar {
+      flex: 1;
+      border-radius: 4px 4px 0 0;
+      background: linear-gradient(180deg, var(--sky), rgba(56,189,248,0.2));
+    }
+    .showcase-visual.cont {
+      background: linear-gradient(135deg, #fff7ed, #fef2f2);
+      display: grid;
+      place-items: center;
+    }
+    .cont-badge {
+      padding: 0.5rem 1rem;
+      border: 1px solid rgba(251,113,133,0.5);
+      border-radius: 8px;
+      font-size: 0.7rem;
+      color: var(--rose);
+      font-weight: 600;
+    }
+    .showcase-visual.mon {
+      background: #f8fafc;
+      padding: 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .alert-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px;
+      background: rgba(251,113,133,0.1);
+      border: 1px solid rgba(251,113,133,0.25);
+      border-radius: 8px;
+      font-size: 0.6rem;
+      color: var(--rose);
+    }
+    .showcase-visual.rep {
+      background: #fafafa;
+      color: #18181b;
+      padding: 16px;
+      font-size: 0.55rem;
+      line-height: 1.4;
+    }
+    .showcase-visual.cmp {
+      background: #f4f4f5;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+      padding: 14px;
+    }
+    .cmp-col {
+      background: #ffffff;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      padding: 10px;
+      font-size: 0.55rem;
+      color: var(--dim);
+    }
+    .cmp-col strong { color: var(--text); display: block; margin-bottom: 6px; }
+
+    /* Sources grid */
+    .sources-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+      gap: 0.75rem;
+      max-width: 900px;
+      margin: 2rem auto 0;
+    }
+    .source-pill {
+      text-align: center;
+      padding: 1rem 0.75rem;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      font-size: 0.8rem;
+      font-weight: 600;
+      transition: border-color 0.25s;
+    }
+    .source-pill:hover { border-color: rgba(129,140,248,0.4); }
+
+    /* Stats */
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+      gap: 1rem;
+      max-width: 1000px;
+      margin: 2rem auto 0;
+    }
+    .stat {
+      text-align: center;
+      padding: 1.5rem 1rem;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+    }
+    .stat-num {
+      font-size: 2rem;
+      font-weight: 700;
+      background: linear-gradient(135deg, #18181b, var(--accent));
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+    .stat-label { font-size: 0.75rem; color: var(--muted); margin-top: 0.35rem; }
+
+    /* Timeline */
+    .timeline {
+      position: relative;
+      max-width: 700px;
+      margin: 2.5rem auto 0;
+      padding-left: 2rem;
+    }
+    .timeline::before {
+      content: "";
+      position: absolute;
+      left: 7px;
+      top: 0;
+      bottom: 0;
+      width: 2px;
+      background: linear-gradient(180deg, var(--accent), var(--emerald), var(--sky));
+      opacity: 0.5;
+    }
+    .tl-item {
+      position: relative;
+      padding: 0 0 1.75rem 1.5rem;
+      opacity: 0;
+      transform: translateX(-12px);
+      transition: all 0.6s cubic-bezier(0.22, 1, 0.36, 1);
+    }
+    .tl-item.visible { opacity: 1; transform: translateX(0); }
+    .tl-item::before {
+      content: "";
+      position: absolute;
+      left: -1.65rem;
+      top: 0.35rem;
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      background: var(--bg);
+      border: 2px solid var(--accent);
+      box-shadow: 0 0 12px var(--accent-glow);
+    }
+    .tl-item.future::before { border-color: var(--emerald); box-shadow: 0 0 12px rgba(52,211,153,0.35); }
+    .tl-title { font-weight: 600; font-size: 1rem; }
+    .tl-desc { font-size: 0.8rem; color: var(--muted); margin-top: 0.2rem; }
+
+    /* Three columns */
+    .tri-col {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 1.25rem;
+      max-width: 1100px;
+      margin: 2rem auto 0;
+    }
+    .tri-card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 1.75rem;
+    }
+    .tri-card h3 {
+      font-size: 1.1rem;
+      margin-bottom: 1rem;
+      padding-bottom: 0.75rem;
+      border-bottom: 1px solid var(--border);
+    }
+    .tri-card ul { list-style: none; }
+    .tri-card li {
+      font-size: 0.85rem;
+      color: var(--muted);
+      padding: 0.4rem 0;
+      padding-left: 1rem;
+      position: relative;
+    }
+    .tri-card li::before {
+      content: "·";
+      position: absolute;
+      left: 0;
+      color: var(--accent);
+      font-weight: 700;
+    }
+
+    /* Limitations — honest block */
+    .honest-box {
+      max-width: 720px;
+      margin: 2rem auto 0;
+      padding: 2rem;
+      background: rgba(0,0,0,0.02);
+      border: 1px solid var(--border);
+      border-radius: 20px;
+      text-align: left;
+    }
+    .honest-box p { color: var(--muted); font-size: 1rem; line-height: 1.7; margin-bottom: 1rem; }
+    .honest-box p:last-child { margin-bottom: 0; }
+    .honest-tags {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+      justify-content: center;
+      margin-top: 1.5rem;
+    }
+    .honest-tag {
+      font-size: 0.75rem;
+      padding: 0.4rem 0.9rem;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      color: var(--dim);
+    }
+
+    .workshop-steps {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+      gap: 1rem;
+      max-width: 1100px;
+      margin: 2rem auto 0;
+    }
+    .workshop-step {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 1.25rem;
+      text-align: left;
+    }
+    .workshop-step-num {
+      font-size: 0.65rem;
+      font-weight: 700;
+      letter-spacing: 0.15em;
+      color: var(--accent);
+      margin-bottom: 0.5rem;
+    }
+    .workshop-step h3 { font-size: 0.95rem; margin-bottom: 0.35rem; }
+    .workshop-step p { font-size: 0.8rem; color: var(--muted); line-height: 1.5; }
+
+    .action-list { list-style: none; margin-top: 1rem; }
+    .action-list li {
+      padding: 0.55rem 0;
+      padding-left: 1.25rem;
+      position: relative;
+      color: #3f3f46;
+      font-size: 0.95rem;
+      line-height: 1.5;
+    }
+    .action-list li::before {
+      content: "→";
+      position: absolute;
+      left: 0;
+      color: var(--accent);
+      font-weight: 600;
+    }
+
+    .status-pill {
+      display: inline-block;
+      font-size: 0.65rem;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      padding: 0.25rem 0.6rem;
+      border-radius: 999px;
+      margin-left: 0.5rem;
+      vertical-align: middle;
+    }
+    .status-ok { background: rgba(16,185,129,0.15); color: var(--emerald); border: 1px solid rgba(16,185,129,0.3); }
+    .status-next { background: rgba(99,102,241,0.1); color: #4338ca; border: 1px solid rgba(99,102,241,0.25); }
+
+    /* Vision closing */
+    .vision-quote {
+      font-family: "Instrument Serif", Georgia, serif;
+      font-size: clamp(1.5rem, 3.5vw, 2.25rem);
+      line-height: 1.45;
+      max-width: 800px;
+      margin: 0 auto;
+      font-style: italic;
+      color: #3f3f46;
+    }
+
+    .closing {
+      text-align: center;
+    }
+    .closing h2 {
+      font-family: "Instrument Serif", Georgia, serif;
+      font-size: 4rem;
+      font-weight: 400;
+    }
+
+    .scroll-hint {
+      position: absolute;
+      bottom: 2rem;
+      left: 50%;
+      transform: translateX(-50%);
+      font-size: 0.65rem;
+      color: var(--dim);
+      letter-spacing: 0.15em;
+      text-transform: uppercase;
+      animation: bounce 2s ease infinite;
+    }
+    @keyframes bounce {
+      0%, 100% { transform: translateX(-50%) translateY(0); }
+      50% { transform: translateX(-50%) translateY(6px); }
+    }
+
+    @media (max-width: 900px) {
+      .split, .split.reverse { grid-template-columns: 1fr; }
+      .platform-layout { grid-template-columns: 1fr; min-height: 300px; }
+      .sidebar-mock, .panel-mock { display: none; }
+      .dual-flow { grid-template-columns: 1fr; }
+      .flow-bridge { padding: 1rem; transform: rotate(90deg); }
+      .showcase-row, .tri-col { grid-template-columns: 1fr; }
+      .progress-rail { display: none; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      .reveal, .tl-item { transition: none; opacity: 1; transform: none; }
+      html { scroll-behavior: auto; }
+    }
+  </style>
+</head>
+<body>
+
+  <header class="chrome">
+    <span class="logo-mini">SINIDU+CLIMA</span>
+    <div class="chrome-actions">
+      <button class="btn-ghost" id="btn-fs" type="button">Tela cheia</button>
+    </div>
+  </header>
+
+  <nav class="progress-rail" id="rail" aria-hidden="true"></nav>
+
+  <!-- 1 · CAPA -->
+  <section class="section" id="s1" data-index="0">
+    <div class="reveal visible" style="text-align:center; max-width:900px; margin:0 auto; width:100%">
+      <p class="eyebrow">Demonstração · julho/2026</p>
+      <h1 class="hero-title">Sinidu+Clima</h1>
+      <p class="lead" style="margin:1.25rem auto 0">
+        O que já está rodando, o que dá para fazer hoje na plataforma
+        e o que ainda pretendemos implementar — com os recursos que temos agora.
+      </p>
+    </div>
+    <div class="hero-mock reveal reveal-delay-2">
+      <div class="frame">
+        <div class="frame-bar">
+          <span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span>
+          <span class="frame-url">sinidu.local · Recife — PE · MCID/CGMUR</span>
+        </div>
+        <div class="frame-body frame-body--flush">
+          <img class="screen-shot screen-shot--crop" src="apresentacao-assets/capa.png" alt="Tela principal Sinidu+Clima — mapa, painel e navegação" loading="eager" />
+        </div>
+      </div>
+    </div>
+    <span class="scroll-hint">Role para continuar</span>
+  </section>
+
+  <!-- 2 · ROTEIRO -->
+  <section class="section" id="s2" data-index="1">
+    <div class="center-block reveal">
+      <p class="eyebrow">Na prática</p>
+      <h2 class="section-title">Roteiro de uma oficina (~5 min)</h2>
+      <p class="lead" style="margin-top:0.75rem">Piloto demonstrado: <strong style="color:var(--text)">Recife</strong> — o mesmo fluxo vale para os 61 municípios preparados.</p>
+    </div>
+    <div class="workshop-steps reveal reveal-delay-1">
+      <div class="workshop-step">
+        <div class="workshop-step-num">Passo 1</div>
+        <h3>Abrir o Painel</h3>
+        <p>Ver indicadores, narrativa executiva e recomendações por bairro — tudo numa tela.</p>
+      </div>
+      <div class="workshop-step">
+        <div class="workshop-step-num">Passo 2</div>
+        <h3>Rodar uma simulação</h3>
+        <p>Chuva extrema (120 mm) → mapa muda para 3D → clicar na mancha para ver profundidade.</p>
+      </div>
+      <div class="workshop-step">
+        <div class="workshop-step-num">Passo 3</div>
+        <h3>Central da Oficina</h3>
+        <p>Gerar diagnóstico, comparar com outro município, exportar PDF ou abrir apresentação.</p>
+      </div>
+      <div class="workshop-step">
+        <div class="workshop-step-num">Passo 4</div>
+        <h3>Monitor e Contingência</h3>
+        <p>Consultar alertas CEMADEN/INMET e montar plano COBRADE com rotas de evacuação.</p>
+      </div>
+      <div class="workshop-step">
+        <div class="workshop-step-num">Passo 5</div>
+        <h3>Assistente e Catálogo</h3>
+        <p>Perguntar sobre o município em linguagem natural e verificar maturidade das fontes.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- 3 · PAINEL -->
+  <section class="section" id="s3" data-index="2">
+    <div class="split">
+      <div class="reveal">
+        <p class="eyebrow">Funcionalidade</p>
+        <h2 class="section-title">Painel Executivo</h2>
+        <p class="lead" style="margin-top:1rem">Ao escolher um município, você pode:</p>
+        <ul class="action-list">
+          <li>ler a narrativa automática sobre o território</li>
+          <li>ver KPIs com indicação de origem (oficial, derivado ou lacuna)</li>
+          <li>receber recomendações por bairro prioritário</li>
+          <li>acompanhar saúde fiscal (CAPAG, SICONFI)</li>
+          <li>gerar relatório PDF executivo ou completo (8 páginas)</li>
+        </ul>
+      </div>
+      <div class="reveal reveal-delay-2">
+        <div class="frame">
+          <div class="frame-bar">
+            <span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span>
+            <span class="frame-url">/painel · Painel Executivo</span>
+          </div>
+          <div class="frame-body frame-body--flush">
+            <img class="screen-shot screen-shot--crop" src="apresentacao-assets/painel.png" alt="Painel Executivo — KPIs, narrativa e recomendações territoriais" loading="lazy" />
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 4 · MAPA E SIMULAÇÕES -->
+  <section class="section" id="s4" data-index="3">
+    <div class="center-block reveal">
+      <p class="eyebrow">Funcionalidade</p>
+      <h2 class="section-title">Mapa, camadas e simulações</h2>
+      <p class="lead" style="margin-top:0.75rem">Tudo interativo — sem sair da mesma tela.</p>
+    </div>
+    <div class="h-flow reveal reveal-delay-1">
+      <span class="h-step">Ligar camadas (risco, S2ID, MapBiomas…)</span><span class="h-arrow">→</span>
+      <span class="h-step">Clicar num bairro</span><span class="h-arrow">→</span>
+      <span class="h-step">Rodar chuva 120 mm</span><span class="h-arrow">→</span>
+      <span class="h-step">Ver volume 3D</span><span class="h-arrow">→</span>
+      <span class="h-step">Inspecionar profundidade</span><span class="h-arrow">→</span>
+      <span class="h-step">Tecla F — modo foco</span>
+    </div>
+    <p class="lead reveal reveal-delay-2" style="text-align:center; margin:1.5rem auto 0; max-width:640px; font-size:0.9rem">
+      Na segunda execução da mesma simulação, o resultado sai do cache — útil para oficinas repetidas.
+    </p>
+  </section>
+
+  <!-- 5 · MÓDULOS -->
+  <section class="section" id="s5" data-index="4">
+    <div class="center-block reveal">
+      <p class="eyebrow">Menu da plataforma</p>
+      <h2 class="section-title">As 10 abas — o que cada uma faz</h2>
+      <p class="lead" style="margin-top:0.75rem">Tudo acessível pelo menu lateral. Clique e a tela muda — o mapa permanece no centro.</p>
+    </div>
+    <div class="nav-preview reveal reveal-delay-1">
+      <img src="apresentacao-assets/nav-modulos.png" alt="Menu com as 10 abas da plataforma" loading="lazy" />
+    </div>
+    <div class="cards-grid" style="margin-top:2rem">
+      <div class="module-card reveal">
+        <div class="module-icon">◈</div><h3>Painel</h3>
+        <p>Visão executiva do município selecionado.</p>
+        <div class="module-do"><strong>Você pode:</strong> ler narrativa IA, ver KPIs (IVC, IRI, CAPAG, IDH, PIB), receber recomendações por bairro, gerar plano de ação, checar maturidade de dados e exportar PDF.</div>
+      </div>
+      <div class="module-card reveal reveal-delay-1">
+        <div class="module-icon">▣</div><h3>Municípios</h3>
+        <p>Preparar um município para uso na plataforma.</p>
+        <div class="module-do"><strong>Você pode:</strong> validar código IBGE, rodar onboarding (geometria + ETL), carregar DEM/terreno e integrar bases públicas automaticamente.</div>
+      </div>
+      <div class="module-card reveal reveal-delay-1">
+        <div class="module-icon">◎</div><h3>Catálogo</h3>
+        <p>Transparência sobre qualidade dos dados.</p>
+        <div class="module-do"><strong>Você pode:</strong> ver maturidade por fonte (IBGE, S2ID, MapBiomas…), ranking dos 61 prioritários, lacunas e trâmite institucional.</div>
+      </div>
+      <div class="module-card reveal reveal-delay-2">
+        <div class="module-icon">☁</div><h3>Simulações</h3>
+        <p>Cenários climáticos sobre o território real.</p>
+        <div class="module-do"><strong>Você pode:</strong> simular chuva extrema (até 250 mm), ilha de calor, impermeabilização, vegetação e drenagem; comparar cenários e ver resultado em 3D.</div>
+      </div>
+      <div class="module-card reveal reveal-delay-2">
+        <div class="module-icon">◉</div><h3>Monitor</h3>
+        <p>Acompanhamento de alertas e eventos.</p>
+        <div class="module-do"><strong>Você pode:</strong> consultar alertas CEMADEN e INMET, ver histórico recente e comparar situação com outro município da mesma UF.</div>
+      </div>
+      <div class="module-card reveal reveal-delay-2">
+        <div class="module-icon">⚠</div><h3>Contingência</h3>
+        <p>Planos de resposta a desastres.</p>
+        <div class="module-do"><strong>Você pode:</strong> montar plano COBRADE passo a passo, calcular rotas de evacuação e exportar documento para a Defesa Civil.</div>
+      </div>
+      <div class="module-card reveal reveal-delay-3">
+        <div class="module-icon">✦</div><h3>Assistente</h3>
+        <p>Conversa com contexto do município.</p>
+        <div class="module-do"><strong>Você pode:</strong> perguntar em português sobre indicadores, riscos e bairros — a IA usa os dados carregados (não inventa números).</div>
+      </div>
+      <div class="module-card reveal reveal-delay-3">
+        <div class="module-icon">≡</div><h3>Casos</h3>
+        <p>Referências e aprendizado entre cidades.</p>
+        <div class="module-do"><strong>Você pode:</strong> consultar estudos de caso, boas práticas e benchmarks de municípios com perfil de risco semelhante.</div>
+      </div>
+      <div class="module-card reveal reveal-delay-3">
+        <div class="module-icon">⊞</div><h3>Auditoria</h3>
+        <p>Rastreabilidade das ações na plataforma.</p>
+        <div class="module-do"><strong>Você pode:</strong> ver quem gerou diagnóstico, exportou PDF, rodou simulação, comparou municípios ou ativou contingência.</div>
+      </div>
+      <div class="module-card reveal reveal-delay-3">
+        <div class="module-icon">⚙</div><h3>Sistema</h3>
+        <p>Operação técnica (admin).</p>
+        <div class="module-do"><strong>Você pode:</strong> disparar jobs (onboarding 61, pipeline ETL, MapBiomas, diagnósticos em lote), ver saúde do servidor e status das integrações.</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 5b · PLANO DE AÇÃO -->
+  <section class="section" id="s5b" data-index="5">
+    <div class="split">
+      <div class="reveal">
+        <p class="eyebrow">Painel · Plano de Ação</p>
+        <h2 class="section-title">Plano de Ação Territorial</h2>
+        <p class="lead" style="margin-top:1rem">Gera automaticamente ações priorizadas a partir dos indicadores e riscos do município.</p>
+        <ul class="action-list">
+          <li>clicar em <strong style="color:var(--text)">Gerar Plano de Ação</strong> no painel executivo</li>
+          <li>receber score territorial, severidade e total de ações propostas</li>
+          <li>ver ações separadas por horizonte: <strong style="color:var(--text)">curto</strong> (0–12 meses), <strong style="color:var(--text)">médio</strong> e <strong style="color:var(--text)">longo</strong> prazo</li>
+          <li>cada ação traz: descrição prática, custo estimado (baixo/médio/alto), prioridade, bairros afetados e órgãos responsáveis</li>
+          <li>sugestão de programas federais aplicáveis a cada intervenção</li>
+        </ul>
+        <p class="lead" style="margin-top:1rem; font-size:0.9rem">Exemplo Recife: severidade Alta, score 52, 9 ações (5 curto prazo).</p>
+      </div>
+      <div class="reveal reveal-delay-2">
+        <div class="frame">
+          <div class="frame-bar">
+            <span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span>
+            <span class="frame-url">/painel · Plano de Ação Territorial</span>
+          </div>
+          <div class="frame-body frame-body--flush">
+            <img class="screen-shot" src="apresentacao-assets/plano-acao.png" alt="Plano de ação territorial com ações por horizonte" loading="lazy" />
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 5c · MATURIDADE -->
+  <section class="section" id="s5c" data-index="6">
+    <div class="split reverse">
+      <div class="reveal reveal-delay-2">
+        <div class="frame">
+          <div class="frame-bar">
+            <span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span>
+            <span class="frame-url">/painel · Composição da Maturidade</span>
+          </div>
+          <div class="frame-body frame-body--flush">
+            <img class="screen-shot" src="apresentacao-assets/maturidade.png" alt="Composição da maturidade de dados" loading="lazy" />
+          </div>
+        </div>
+      </div>
+      <div class="reveal">
+        <p class="eyebrow">Painel · Maturidade</p>
+        <h2 class="section-title">Composição da Maturidade</h2>
+        <p class="lead" style="margin-top:1rem">Mostra o quanto o município está pronto para gerar relatórios formais e tomar decisões com evidência.</p>
+        <ul class="action-list">
+          <li>score percentual geral (ex.: <strong style="color:var(--text)">94%</strong> em Recife)</li>
+          <li>peso de cada fonte integrada: IBGE, SICONFI, CAPAG, S2ID, MapBiomas, SNIS/SINISA, Plano Diretor…</li>
+          <li>distinção entre dado <strong style="color:var(--text)">oficial</strong> (verde) e <strong style="color:var(--text)">derivado</strong> Sinidu+Clima (roxo)</li>
+          <li>bloqueio de PDF formal se maturidade estiver abaixo de Prata — com override para admin</li>
+          <li>mesma lógica aparece no Catálogo com ranking nacional dos 61 municípios</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <!-- 5d · SIMULAÇÕES DETALHE -->
+  <section class="section" id="s5d" data-index="7">
+    <div class="split">
+      <div class="reveal">
+        <p class="eyebrow">Simulações</p>
+        <h2 class="section-title">Modelo Pluvial Territorial</h2>
+        <p class="lead" style="margin-top:1rem">Simula o que acontece no terreno quando chove muito — usando relevo real do município.</p>
+        <ul class="action-list">
+          <li><strong style="color:var(--text)">DEM / LiDAR:</strong> importar GeoTIFF local ou usar SRTM 30 m; badge "DEM aquecido" quando pronto</li>
+          <li><strong style="color:var(--text)">Abas:</strong> Chuva · Preditiva · Asfalto · Vegetação · Drenagem</li>
+          <li>ajustar precipitação no slider (40 a 250 mm) — referência Q100 em 150 mm</li>
+          <li><strong style="color:var(--text)">Comparar com referência:</strong> cenário atual vs. linha de base (ex. 120 mm vs. 80 mm) — calcula delta de área, população e profundidade</li>
+          <li>no mapa: manchas de profundidade, curvas de nível, vetores de escoamento D8 e zonas de deslizamento</li>
+          <li>após rodar: mapa muda para <strong style="color:var(--text)">Terreno 3D</strong> — clique na mancha para inspecionar profundidade</li>
+        </ul>
+      </div>
+      <div class="reveal reveal-delay-2">
+        <div class="frame">
+          <div class="frame-bar">
+            <span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span>
+            <span class="frame-url">/simulacoes · Modelo v2.3</span>
+          </div>
+          <div class="frame-body frame-body--flush">
+            <img class="screen-shot" src="apresentacao-assets/simulacoes-detalhe.png" alt="Painel de simulações pluviais" loading="lazy" />
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 6 · PRINTS -->
+  <section class="section" id="s6" data-index="8">
+    <div class="center-block reveal">
+      <p class="eyebrow">Telas reais</p>
+      <h2 class="section-title">Cada camada, uma função diferente</h2>
+      <p class="lead" style="margin-top:0.5rem">Recife · camada ativa destacada no painel à esquerda</p>
+    </div>
+    <div class="showcase-row">
+      <div class="showcase-card reveal">
+        <div class="showcase-visual">
+          <img src="apresentacao-assets/camada-bairros.png" alt="Malha de bairros IBGE" loading="lazy" />
+        </div>
+        <div class="showcase-label">Malha de bairros — divisão territorial oficial</div>
+      </div>
+      <div class="showcase-card reveal reveal-delay-1">
+        <div class="showcase-visual">
+          <img src="apresentacao-assets/camada-inundacao.png" alt="Camada risco de inundação" loading="lazy" />
+        </div>
+        <div class="showcase-label">Risco de inundação — S2ID + hidrografia</div>
+      </div>
+      <div class="showcase-card reveal reveal-delay-2">
+        <div class="showcase-visual">
+          <img src="apresentacao-assets/camada-vulnerabilidade.png" alt="Camada vulnerabilidade climática" loading="lazy" />
+        </div>
+        <div class="showcase-label">Vulnerabilidade climática — índice composto</div>
+      </div>
+    </div>
+    <div class="showcase-strip reveal reveal-delay-2">
+      <div class="showcase-card">
+        <div class="showcase-visual">
+          <img src="apresentacao-assets/camada-mapbiomas.png" alt="Uso do solo MapBiomas" loading="lazy" />
+        </div>
+        <div class="showcase-label">MapBiomas — uso e cobertura do solo</div>
+      </div>
+      <div class="showcase-card">
+        <div class="showcase-visual">
+          <img src="apresentacao-assets/camada-s2id.png" alt="Histórico de desastres S2ID" loading="lazy" />
+        </div>
+        <div class="showcase-label">S2ID — histórico de desastres</div>
+      </div>
+      <div class="showcase-card">
+        <div class="showcase-visual">
+          <img src="apresentacao-assets/camada-alertas.png" alt="Alertas CEMADEN" loading="lazy" />
+        </div>
+        <div class="showcase-label">CEMADEN — alertas ativos no mapa</div>
+      </div>
+      <div class="showcase-card">
+        <div class="showcase-visual">
+          <img src="apresentacao-assets/camada-cruzar-riscos.png" alt="Preset cruzar riscos" loading="lazy" />
+        </div>
+        <div class="showcase-label">Cruzar riscos — bairros + vulnerabilidade + inundação</div>
+      </div>
+      <div class="showcase-card">
+        <div class="showcase-visual">
+          <img src="apresentacao-assets/camada-simulacao-3d.png" alt="Terreno 3D" loading="lazy" />
+        </div>
+        <div class="showcase-label">Terreno 3D — após simulação de chuva</div>
+      </div>
+      <div class="showcase-card">
+        <div class="showcase-visual">
+          <img src="apresentacao-assets/modulo-contingencia.png" alt="Módulo contingência" loading="lazy" />
+        </div>
+        <div class="showcase-label">Contingência — plano COBRADE</div>
+      </div>
+      <div class="showcase-card">
+        <div class="showcase-visual">
+          <img src="apresentacao-assets/modulo-monitor.png" alt="Monitor de alertas" loading="lazy" />
+        </div>
+        <div class="showcase-label">Monitor — alertas em tempo real</div>
+      </div>
+      <div class="showcase-card">
+        <div class="showcase-visual">
+          <img src="apresentacao-assets/comparador.png" alt="Comparador de municípios" loading="lazy" />
+        </div>
+        <div class="showcase-label">Comparar municípios</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 7 · OFICINA -->
+  <section class="section" id="s7" data-index="9">
+    <div class="split">
+      <div class="reveal">
+        <p class="eyebrow">Central da Oficina</p>
+        <h2 class="section-title">Do clique ao relatório</h2>
+        <p class="lead" style="margin-top:1rem">Botões que já funcionam no mapa:</p>
+        <ul class="action-list">
+          <li><strong style="color:var(--text)">Diagnóstico</strong> — gera narrativa e destaca bairros críticos no mapa</li>
+          <li><strong style="color:var(--text)">Apresentar</strong> — abre slides executivos do município</li>
+          <li><strong style="color:var(--text)">Relatório</strong> — PDF rápido ou completo (8 páginas com gráficos)</li>
+          <li><strong style="color:var(--text)">Comparar</strong> — Recife × outro município, com tabela e veredicto IA</li>
+          <li><strong style="color:var(--text)">Assistente</strong> — perguntas em português sobre indicadores e riscos</li>
+        </ul>
+        <p class="lead" style="margin-top:1.25rem; font-size:0.9rem">
+          A IA apoia a leitura dos dados — não substitui parecer técnico oficial.
+        </p>
+      </div>
+      <div class="reveal reveal-delay-2">
+        <div class="frame">
+          <div class="frame-bar">
+            <span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span>
+            <span class="frame-url">/assistente · Assistente municipal</span>
+          </div>
+          <div class="frame-body frame-body--flush">
+            <img class="screen-shot screen-shot--crop" src="apresentacao-assets/assistente.png" alt="Assistente IA com contexto municipal" loading="lazy" />
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 8 · DADOS -->
+  <section class="section" id="s8" data-index="10">
+    <div class="center-block reveal">
+      <p class="eyebrow">Transparência</p>
+      <h2 class="section-title">De onde vêm os números</h2>
+      <p class="lead" style="margin-top:0.75rem">Cada indicador mostra origem e qualidade na interface — oficial, derivado ou lacuna.</p>
+    </div>
+    <div class="sources-grid reveal reveal-delay-1">
+      <div class="source-pill">IBGE</div>
+      <div class="source-pill">CAPAG</div>
+      <div class="source-pill">SICONFI</div>
+      <div class="source-pill">MapBiomas</div>
+      <div class="source-pill">S2ID</div>
+      <div class="source-pill">CEMADEN</div>
+      <div class="source-pill">INMET</div>
+      <div class="source-pill">SNIS</div>
+      <div class="source-pill">CNES</div>
+      <div class="source-pill">SINESP</div>
+      <div class="source-pill">Atlas DH</div>
+      <div class="source-pill">IPEA</div>
+    </div>
+  </section>
+
+  <!-- 9 · HOJE -->
+  <section class="section" id="s9" data-index="11">
+    <div class="center-block reveal">
+      <p class="eyebrow">Entregue e rodando</p>
+      <h2 class="section-title">O que temos hoje</h2>
+    </div>
+    <div class="stats-grid">
+      <div class="stat reveal"><div class="stat-num">61</div><div class="stat-label">Municípios na base prioritária</div></div>
+      <div class="stat reveal reveal-delay-1"><div class="stat-num">15+</div><div class="stat-label">Camadas no mapa</div></div>
+      <div class="stat reveal reveal-delay-1"><div class="stat-num">2D·3D</div><div class="stat-label">Mapa com simulação e inspeção</div></div>
+      <div class="stat reveal reveal-delay-2"><div class="stat-num">PDF</div><div class="stat-label">Relatório + export SEI</div></div>
+      <div class="stat reveal reveal-delay-2"><div class="stat-num">IA</div><div class="stat-label">Diagnóstico, RAG e comparação</div></div>
+      <div class="stat reveal reveal-delay-3"><div class="stat-num">Jobs</div><div class="stat-label">Carga em lote dos 61 municípios</div></div>
+    </div>
+    <p class="lead reveal reveal-delay-3" style="text-align:center; margin:2rem auto 0; max-width:680px; font-size:0.9rem">
+      Onboarding · Comparador · Apresentação executiva · Catálogo nacional · Auth/OIDC prontos para homologação
+    </p>
+  </section>
+
+  <!-- 10 · PRÓXIMOS PASSOS -->
+  <section class="section" id="s10" data-index="12">
+    <div class="center-block reveal">
+      <p class="eyebrow">Com os mesmos recursos</p>
+      <h2 class="section-title">O que ainda pretendemos implementar</h2>
+      <p class="lead" style="margin-top:0.75rem">Sem depender de nova infraestrutura — evolução incremental do que já existe.</p>
+    </div>
+    <div class="timeline" id="timeline">
+      <div class="tl-item"><div class="tl-title">Completar carga dos 61<span class="status-pill status-next">próximo</span></div><div class="tl-desc">Pipeline territorial + diagnósticos e PDFs em lote via painel Sistema</div></div>
+      <div class="tl-item"><div class="tl-title">Oficinas piloto<span class="status-pill status-next">próximo</span></div><div class="tl-desc">Rodar o roteiro de 5 min com equipes que idealizaram o sistema</div></div>
+      <div class="tl-item"><div class="tl-title">Novas fontes de dados<span class="status-pill status-next">próximo</span></div><div class="tl-desc">IDH municipal, série de PIB, SINGED Lab RS e outras integrações já iniciadas</div></div>
+      <div class="tl-item future"><div class="tl-title">Rotas viárias reais (OSRM)<span class="status-pill status-ok">script pronto</span></div><div class="tl-desc">Hoje funciona com fallback; malha nordeste (~414 MB) sobe com um comando</div></div>
+      <div class="tl-item future"><div class="tl-title">Homologação auth gov.br<span class="status-pill status-next">próximo</span></div><div class="tl-desc">OIDC e TLS já testados localmente — aguarda certificado institucional</div></div>
+      <div class="tl-item future"><div class="tl-title">Atualização agendada<span class="status-pill status-ok">parcial</span></div><div class="tl-desc">Pipeline domingo 04:30 — ampliar frequência conforme uso</div></div>
+      <div class="tl-item future"><div class="tl-title">Expandir malha territorial<span class="status-pill status-next">próximo</span></div><div class="tl-desc">Além dos 61 prioritários, conforme demanda das oficinas</div></div>
+      <div class="tl-item future"><div class="tl-title">Refinar simulações e 3D</div><div class="tl-desc">LiDAR local onde disponível; mais cenários de calor e comparação</div></div>
+    </div>
+  </section>
+
+  <!-- 11 · COMO FOI FEITO -->
+  <section class="section" id="s11" data-index="13">
+    <div class="center-block reveal">
+      <p class="eyebrow">Contexto</p>
+      <h2 class="section-title">Como chegamos até aqui</h2>
+    </div>
+    <div class="honest-box reveal reveal-delay-1">
+      <p>Esta versão foi construída como <strong style="color:var(--text)">MVP funcional</strong> — não é slide de conceito: roda, integra bases reais e gera relatórios.</p>
+      <p>O desenvolvimento acontece com <strong style="color:var(--text)">um desenvolvedor</strong>, um <strong style="color:var(--text)">Mac mini</strong>, <strong style="color:var(--text)">banco gratuito</strong> e <strong style="color:var(--text)">ferramentas open source</strong>.</p>
+      <p>Com isso já é possível: carregar 61 municípios, operar mapa 2D/3D, simular chuva extrema, monitorar alertas, usar IA contextual e exportar PDF para SEI.</p>
+      <p style="color:#3f3f46; font-weight:500">A reunião de hoje mostra o que vocês idealizaram — agora materializado e utilizável na prática.</p>
+      <div class="honest-tags">
+        <span class="honest-tag">1 desenvolvedor</span>
+        <span class="honest-tag">Mac mini</span>
+        <span class="honest-tag">Open Source</span>
+        <span class="honest-tag">Docker local</span>
+        <span class="honest-tag">MVP rodando</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- 12 · EVOLUÇÃO -->
+  <section class="section" id="s12" data-index="14">
+    <div class="center-block reveal">
+      <p class="eyebrow">Continuidade</p>
+      <h2 class="section-title">Para onde seguimos com o que temos</h2>
+    </div>
+    <div class="tri-col reveal reveal-delay-1">
+      <div class="tri-card">
+        <h3>Já funciona</h3>
+        <ul>
+          <li>Oficina completa em Recife</li>
+          <li>Diagnóstico + PDF + apresentação</li>
+          <li>Mapa 3D pós-simulação</li>
+          <li>Comparador entre municípios</li>
+          <li>Catálogo com maturidade de dados</li>
+          <li>Auditoria de ações</li>
+        </ul>
+      </div>
+      <div class="tri-card">
+        <h3>Em curso / próximo</h3>
+        <ul>
+          <li>Carga completa dos 61</li>
+          <li>IDH, PIB e novas fontes</li>
+          <li>OSRM para rotas reais</li>
+          <li>Auth gov.br em homologação</li>
+          <li>Oficinas com gestores</li>
+          <li>Ajustes a partir do feedback</li>
+        </ul>
+      </div>
+      <div class="tri-card">
+        <h3>Quando fizer sentido</h3>
+        <ul>
+          <li>Ampliar para mais municípios</li>
+          <li>Servidor dedicado MCID</li>
+          <li>Atualização diária nacional</li>
+          <li>Painéis por UF</li>
+          <li>Integração com Pro-Cidades</li>
+          <li>API pública de indicadores</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <!-- 13 · DEMO AO VIVO -->
+  <section class="section" id="s13" data-index="15">
+    <div class="center-block reveal" style="position:relative; z-index:2">
+      <p class="eyebrow">Demonstração</p>
+      <p class="vision-quote" style="font-style:normal">
+        Na sequência, podemos abrir a plataforma ao vivo
+        e percorrer o roteiro de oficina — do painel ao relatório PDF.
+      </p>
+    </div>
+    <div class="hero-mock reveal reveal-delay-2" style="margin-top:2rem; opacity:0.92">
+      <div class="frame" style="transform:none">
+        <div class="frame-body frame-body--flush">
+          <img class="screen-shot screen-shot--crop" src="apresentacao-assets/mapa-2d.png" alt="Mapa territorial Sinidu+Clima" loading="lazy" />
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 14 · OBRIGADO -->
+  <section class="section closing" id="s14" data-index="16">
+    <div class="reveal visible">
+      <div class="logo-mini" style="font-size:1rem; margin-bottom:2rem; color:var(--accent)">SINIDU+CLIMA</div>
+      <h2>Obrigado</h2>
+      <p class="lead" style="margin:1.5rem auto 0; text-align:center">
+        Sinidu+Clima — do que idealizaram ao que está rodando.<br />
+        <span style="font-size:0.85rem; color:var(--dim)">MCID/CGMUR · julho/2026</span>
+      </p>
+      <p style="margin-top:2rem; font-size:0.75rem; color:var(--dim)">
+        ← → ou Espaço · navegação · F11 tela cheia
+      </p>
+    </div>
+  </section>
+
+  <script>
+    const sections = [...document.querySelectorAll('.section')];
+    const rail = document.getElementById('rail');
+
+    sections.forEach((s, i) => {
+      const d = document.createElement('button');
+      d.className = 'progress-dot' + (i === 0 ? ' active' : '');
+      d.type = 'button';
+      d.setAttribute('aria-label', `Seção ${i + 1}`);
+      d.addEventListener('click', () => s.scrollIntoView({ behavior: 'smooth' }));
+      rail.appendChild(d);
+    });
+
+    const dots = [...rail.querySelectorAll('.progress-dot')];
+
+    const revealObs = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((e) => {
+          if (e.isIntersecting) e.target.classList.add('visible');
+        });
+      },
+      { threshold: 0.15, rootMargin: '0px 0px -8% 0px' }
+    );
+    document.querySelectorAll('.reveal, .tl-item').forEach((el) => revealObs.observe(el));
+
+    const sectionObs = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((e) => {
+          if (!e.isIntersecting) return;
+          const idx = +e.target.dataset.index;
+          dots.forEach((d, i) => d.classList.toggle('active', i === idx));
+        });
+      },
+      { threshold: 0.45 }
+    );
+    sections.forEach((s) => sectionObs.observe(s));
+
+    let currentIdx = 0;
+    function goTo(idx) {
+      if (idx < 0 || idx >= sections.length) return;
+      currentIdx = idx;
+      sections[idx].scrollIntoView({ behavior: 'smooth' });
+    }
+
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'ArrowDown' || e.key === 'ArrowRight' || e.key === ' ') {
+        e.preventDefault();
+        const visible = sections.findIndex((s) => {
+          const r = s.getBoundingClientRect();
+          return r.top >= -100 && r.top < window.innerHeight * 0.5;
+        });
+        goTo(Math.min(visible + 1, sections.length - 1));
+      }
+      if (e.key === 'ArrowUp' || e.key === 'ArrowLeft') {
+        e.preventDefault();
+        const visible = sections.findIndex((s) => {
+          const r = s.getBoundingClientRect();
+          return r.top >= -100 && r.top < window.innerHeight * 0.5;
+        });
+        goTo(Math.max(visible - 1, 0));
+      }
+      if (e.key === 'Home') { e.preventDefault(); goTo(0); }
+      if (e.key === 'End') { e.preventDefault(); goTo(sections.length - 1); }
+      if (e.key === 'f' || e.key === 'F') {
+        if (!document.fullscreenElement) document.documentElement.requestFullscreen?.();
+        else document.exitFullscreen?.();
+      }
+    });
+
+    document.getElementById('btn-fs').addEventListener('click', () => {
+      if (!document.fullscreenElement) document.documentElement.requestFullscreen?.();
+      else document.exitFullscreen?.();
+    });
+
+    // Parallax sutil no hero mockup
+    const heroMock = document.querySelector('.hero-mock');
+    if (heroMock) {
+      window.addEventListener('scroll', () => {
+        const y = window.scrollY;
+        if (y < window.innerHeight) {
+          heroMock.style.transform = `translateY(${y * 0.08}px)`;
+        }
+      }, { passive: true });
+    }
+  </script>
+</body>
+</html>

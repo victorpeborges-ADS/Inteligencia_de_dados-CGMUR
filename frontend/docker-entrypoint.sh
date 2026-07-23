@@ -8,4 +8,4 @@ if [ ! -f node_modules/.package-lock.sha ] || ! cmp -s package-lock.json node_mo
   cp package-lock.json node_modules/.package-lock.sha 2>/dev/null || true
 fi
 
-exec npm run dev
+exec npm run dev -- -H 0.0.0.0 -p 3000

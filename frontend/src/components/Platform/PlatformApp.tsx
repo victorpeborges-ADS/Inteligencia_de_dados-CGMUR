@@ -33,6 +33,15 @@ import {
   type LayerQuality,
 } from '@/config/platformTabs';
 import { useAppStore, FOCUS_MODE_STORAGE_KEY } from '@/stores/useAppStore';
+import {
+  UX_PROFILE_DEFAULT_TAB,
+  UX_PROFILE_HINTS,
+  UX_PROFILE_LABELS,
+  orderedTabsForProfile,
+  readUxProfile,
+  writeUxProfile,
+  type UxProfile,
+} from '@/config/uxProfiles';
 import { resolveActiveTemporalTemas } from '@/config/layerTemporal';
 import AgenteSinidu from '@/components/AgenteSinidu';
 import { useAgenteProativo } from '@/hooks/useAgenteContexto';
@@ -55,7 +64,8 @@ const Map3DMapLibreContainer = dynamic(
   { ssr: false }
 );
 
-import { LayoutDashboard, Sliders, MessageSquare, BookOpen, MapPin, Box, Shield, Radio, Building2, ClipboardList, Server, Database, Focus } from 'lucide-react';
+import { LayoutDashboard, Sliders, MessageSquare, BookOpen, MapPin, Box, Shield, Radio, Building2, ClipboardList, Server, Database, Focus, Columns } from 'lucide-react';
+import MapSwipeCompare, { type SwipeCompareMode } from '@/components/Map/MapSwipeCompare';
 
 type PlatformAppProps = {
   initialTab?: ActiveTab;
@@ -113,8 +123,17 @@ export default function PlatformApp({ initialTab }: PlatformAppProps) {
   const focusMode = useAppStore((s) => s.focusMode);
   const setFocusMode = useAppStore((s) => s.setFocusMode);
   const toggleFocusMode = useAppStore((s) => s.toggleFocusMode);
+  const [uxProfile, setUxProfile] = useState<UxProfile>('planejamento');
 
   useAgenteProativo();
+
+  useEffect(() => {
+    setUxProfile(readUxProfile());
+  }, []);
+
+  useEffect(() => {
+    setActiveLayers((prev) => prev.filter((id) => id !== 'edificacoes'));
+  }, [setActiveLayers]);
 
   useEffect(() => {
     try {
@@ -159,7 +178,14 @@ export default function PlatformApp({ initialTab }: PlatformAppProps) {
   const [simOverlays, setSimOverlays] = useState<SimOverlayOptions>(DEFAULT_SIM_OVERLAYS);
   const [diagnostic, setDiagnostic] = useState<WorkshopDiagnostic | null>(null);
   const [socioRanking, setSocioRanking] = useState<SocioeconomicRanking | null>(null);
-  const [mapMode, setMapMode] = useState<'2d' | '3d'>('2d');
+  const [mapMode, setMapMode] = useState<'2d' | '3d' | 'swipe'>('2d');
+  const [swipeMode, setSwipeMode] = useState<SwipeCompareMode>('2d3d');
+
+  useEffect(() => {
+    if (mapMode === 'swipe' && swipeMode === 'antes_depois' && !simGeoJSON?.features?.length) {
+      setSwipeMode('2d3d');
+    }
+  }, [mapMode, swipeMode, simGeoJSON]);
   const [alertToast, setAlertToast] = useState<{ title: string; message: string } | null>(null);
   const [contingencyNivel, setContingencyNivel] = useState<string>('AMARELO');
   const [alertaVivoChip, setAlertaVivoChip] = useState<{
@@ -358,6 +384,14 @@ export default function PlatformApp({ initialTab }: PlatformAppProps) {
     ));
   };
 
+  const handleAssistantApplyLayers = (layers: string[]) => {
+    setActiveLayers((prev) => {
+      const next = new Set(prev);
+      layers.forEach((id) => next.add(id));
+      return Array.from(next);
+    });
+  };
+
   const handleAssistantFocusMap = (coords: [number, number], customZoom: number) => {
     setMapFocus(coords);
     setZoom(customZoom);
@@ -517,7 +551,7 @@ export default function PlatformApp({ initialTab }: PlatformAppProps) {
   const isAdmin = !authEnabled || user?.role === 'admin';
   const isGestorOrAdmin = !authEnabled || user?.role === 'admin' || user?.role === 'gestor_municipal';
 
-  const tabConfig: { id: ActiveTab; label: string; Icon: typeof LayoutDashboard }[] = [
+  const tabMeta: { id: ActiveTab; label: string; Icon: typeof LayoutDashboard }[] = [
     { id: 'dashboard', label: 'Painel', Icon: LayoutDashboard },
     { id: 'onboarding', label: 'Municípios', Icon: Building2 },
     { id: 'catalog', label: 'Catálogo', Icon: Database },
@@ -526,11 +560,24 @@ export default function PlatformApp({ initialTab }: PlatformAppProps) {
     { id: 'contingency', label: 'Contingência', Icon: Shield },
     { id: 'assistant', label: 'Assistente', Icon: MessageSquare },
     { id: 'cases', label: 'Casos', Icon: BookOpen },
-    ...(isAdmin ? [
-      { id: 'audit' as const, label: 'Auditoria', Icon: ClipboardList },
-      { id: 'system' as const, label: 'Sistema', Icon: Server },
-    ] : []),
+    { id: 'audit', label: 'Auditoria', Icon: ClipboardList },
+    { id: 'system', label: 'Sistema', Icon: Server },
   ];
+  const tabById = Object.fromEntries(tabMeta.map((t) => [t.id, t])) as Record<
+    ActiveTab,
+    { id: ActiveTab; label: string; Icon: typeof LayoutDashboard }
+  >;
+  const orderedCore = orderedTabsForProfile(uxProfile);
+  const tabConfig = [
+    ...orderedCore.map((id) => tabById[id]).filter(Boolean),
+    ...(isAdmin ? [tabById.audit, tabById.system] : []),
+  ];
+
+  const handleUxProfileChange = (profile: UxProfile) => {
+    setUxProfile(profile);
+    writeUxProfile(profile);
+    navigateTab(UX_PROFILE_DEFAULT_TAB[profile]);
+  };
 
   return (
     <main className="min-h-screen bg-background text-foreground flex flex-col font-sans select-none">
@@ -570,6 +617,18 @@ export default function PlatformApp({ initialTab }: PlatformAppProps) {
         {/* Pilot Info Badge */}
         <div className="flex items-center gap-3">
           <ThemeToggle compact={focusMode} />
+          <select
+            value={uxProfile}
+            onChange={(e) => handleUxProfileChange(e.target.value as UxProfile)}
+            title={UX_PROFILE_HINTS[uxProfile]}
+            className="max-w-[160px] rounded-full border border-zinc-700 bg-zinc-950 px-3 py-1.5 text-[10px] font-bold uppercase tracking-wide text-zinc-200 outline-none focus:border-teal-400"
+          >
+            {(Object.keys(UX_PROFILE_LABELS) as UxProfile[]).map((p) => (
+              <option key={p} value={p}>
+                {UX_PROFILE_LABELS[p]}
+              </option>
+            ))}
+          </select>
           <button
             type="button"
             onClick={toggleFocusMode}
@@ -644,7 +703,7 @@ export default function PlatformApp({ initialTab }: PlatformAppProps) {
           <span>
             Backend offline — verifique a API em <strong>{getApiBaseUrl()}</strong>.
             {authEnabled ? ' Faça login para carregar KPIs e mapa quando a API voltar.' : ''}
-            {' '}O seletor lista os 61 municípios prioritários mesmo sem API.
+            {' '}O seletor lista os 6 municípios do catálogo piloto mesmo sem API.
           </span>
           {authEnabled && (
             <button
@@ -694,11 +753,12 @@ export default function PlatformApp({ initialTab }: PlatformAppProps) {
               <div className="flex flex-col gap-4">
                 <OnboardingBanner codigoIbge={selectedMunicipio} municipioNome={selectedMunicipioInfo?.nome} />
                 <ExecutiveDashboard
-                key={`${selectedMunicipio}-${selectedMunicipioInfo?.loaded}`}
+                key={`${selectedMunicipio}-${selectedMunicipioInfo?.loaded}-${uxProfile}`}
                 codigoIbge={selectedMunicipio}
                 municipioLoaded={selectedMunicipioInfo?.loaded === true}
                 municipioEnsuring={municipioEnsuring}
                 municipioNome={selectedMunicipioInfo?.nome}
+                uxProfile={uxProfile}
               />
               </div>
             )}
@@ -744,7 +804,7 @@ export default function PlatformApp({ initialTab }: PlatformAppProps) {
                 municipioLoaded={selectedMunicipioInfo?.loaded === true}
                 overlayOptions={simOverlays}
                 onOverlayChange={setSimOverlays}
-                mapMode3dActive={mapMode === '3d'}
+                mapMode3dActive={mapMode === '3d' || (mapMode === 'swipe' && swipeMode === '2d3d')}
                 onView3D={() => setMapMode('3d')}
                 onFocusWorkshop={() => {
                   setMapMode('3d');
@@ -758,6 +818,7 @@ export default function PlatformApp({ initialTab }: PlatformAppProps) {
                 key={selectedMunicipio}
                 codigoIbge={selectedMunicipio}
                 onToggleLayer={handleAssistantLayerToggle}
+                onApplyLayers={handleAssistantApplyLayers}
                 onFocusMap={handleAssistantFocusMap}
               />
             )}
@@ -820,33 +881,31 @@ export default function PlatformApp({ initialTab }: PlatformAppProps) {
             <div className="pointer-events-none absolute inset-0 z-[500] animate-pulse bg-sky-500/5" aria-hidden />
           )}
           
-          {!focusMode && (
-            <LayerPanel
-              activeLayers={activeLayers}
-              setActiveLayers={setActiveLayers}
-              toggleLayer={toggleLayer}
-              layerOptions={layerOptions}
-              malhaIndisponivel={malhaIndisponivel}
-              codigoIbge={selectedMunicipio}
-              socioSubcamada={socioSubcamada}
-              setSocioSubcamada={setSocioSubcamada}
-              educacaoEtapa={educacaoEtapa}
-              setEducacaoEtapa={setEducacaoEtapa}
-              educacaoRaioM={educacaoRaioM}
-              setEducacaoRaioM={setEducacaoRaioM}
-              showEducacaoBuffer={showEducacaoBuffer}
-              setShowEducacaoBuffer={setShowEducacaoBuffer}
-              temporalActiveTemas={temporalActiveTemas}
-              layerAnoByTema={layerAnoByTema}
-              setLayerAnoForTema={setLayerAnoForTema}
-              showRegionalOverlay={showRegionalOverlay}
-              setShowRegionalOverlay={setShowRegionalOverlay}
-              regionalEscopo={regionalEscopo}
-              setRegionalEscopo={setRegionalEscopo}
-              territorioTipo={territorioTipo}
-              setTerritorioTipo={setTerritorioTipo}
-            />
-          )}
+          <LayerPanel
+            activeLayers={activeLayers}
+            setActiveLayers={setActiveLayers}
+            toggleLayer={toggleLayer}
+            layerOptions={layerOptions}
+            malhaIndisponivel={malhaIndisponivel}
+            codigoIbge={selectedMunicipio}
+            socioSubcamada={socioSubcamada}
+            setSocioSubcamada={setSocioSubcamada}
+            educacaoEtapa={educacaoEtapa}
+            setEducacaoEtapa={setEducacaoEtapa}
+            educacaoRaioM={educacaoRaioM}
+            setEducacaoRaioM={setEducacaoRaioM}
+            showEducacaoBuffer={showEducacaoBuffer}
+            setShowEducacaoBuffer={setShowEducacaoBuffer}
+            temporalActiveTemas={temporalActiveTemas}
+            layerAnoByTema={layerAnoByTema}
+            setLayerAnoForTema={setLayerAnoForTema}
+            showRegionalOverlay={showRegionalOverlay}
+            setShowRegionalOverlay={setShowRegionalOverlay}
+            regionalEscopo={regionalEscopo}
+            setRegionalEscopo={setRegionalEscopo}
+            territorioTipo={territorioTipo}
+            setTerritorioTipo={setTerritorioTipo}
+          />
 
           {socioRanking && activeLayers.includes('socioeconomico') && !focusMode && (
             <div className="map-ui-chrome absolute bottom-4 right-4 z-[998] w-72 rounded-xl border border-amber-500/30 bg-zinc-950/92 p-3 shadow-2xl backdrop-blur-md">
@@ -883,48 +942,100 @@ export default function PlatformApp({ initialTab }: PlatformAppProps) {
             </div>
           )}
 
-          {/* Toggle 2D / 3D + plano ativo */}
-          <div className="map-ui-chrome absolute right-4 top-4 z-[1200] flex gap-2 rounded-xl border border-zinc-800 bg-zinc-950/95 p-1 shadow-lg backdrop-blur-md">
-            <button
-              type="button"
-              onClick={() => setMapMode('2d')}
-              className={`rounded-lg border px-3 py-2 text-[10px] font-bold uppercase tracking-wider ${
-                mapMode === '2d'
-                  ? 'border-indigo-400/50 bg-indigo-500/20 text-indigo-200'
-                  : 'border-zinc-700 bg-zinc-950/90 text-zinc-400 hover:text-zinc-200'
-              }`}
-            >
-              Mapa 2D
-            </button>
-            <button
-              type="button"
-              onClick={() => setMapMode('3d')}
-              className={`flex items-center gap-1.5 rounded-lg border px-3 py-2 text-[10px] font-bold uppercase tracking-wider ${
-                mapMode === '3d'
-                  ? 'border-teal-400/50 bg-teal-500/20 text-teal-200'
-                  : 'border-zinc-700 bg-zinc-950/90 text-zinc-400 hover:text-zinc-200'
-              }`}
-            >
-              <Box size={12} />
-              Terreno 3D
-            </button>
-            {contingencyOverlay && (
+          {/* Toggle 2D / 3D / Swipe + plano ativo */}
+          <div className="map-ui-chrome absolute right-4 top-4 z-[1200] flex flex-col items-end gap-1">
+            <div className="flex gap-2 rounded-xl border border-zinc-800 bg-zinc-950/95 p-1 shadow-lg backdrop-blur-md">
               <button
                 type="button"
-                onClick={() => setShowContingencyOnMap((v) => !v)}
+                onClick={() => setMapMode('2d')}
                 className={`rounded-lg border px-3 py-2 text-[10px] font-bold uppercase tracking-wider ${
-                  showContingencyOnMap
-                    ? 'border-orange-400/50 bg-orange-500/20 text-orange-100'
-                    : 'border-zinc-700 bg-zinc-950/90 text-zinc-500'
+                  mapMode === '2d'
+                    ? 'border-indigo-400/50 bg-indigo-500/20 text-indigo-200'
+                    : 'border-zinc-700 bg-zinc-950/90 text-zinc-400 hover:text-zinc-200'
                 }`}
-                title="Mostrar/ocultar plano de contingência ativo no mapa"
               >
-                Plano
+                Mapa 2D
               </button>
+              <button
+                type="button"
+                onClick={() => setMapMode('3d')}
+                className={`flex items-center gap-1.5 rounded-lg border px-3 py-2 text-[10px] font-bold uppercase tracking-wider ${
+                  mapMode === '3d'
+                    ? 'border-teal-400/50 bg-teal-500/20 text-teal-200'
+                    : 'border-zinc-700 bg-zinc-950/90 text-zinc-400 hover:text-zinc-200'
+                }`}
+              >
+                <Box size={12} />
+                Terreno 3D
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setMapMode('swipe');
+                  if (!simGeoJSON?.features?.length && swipeMode === 'antes_depois') {
+                    setSwipeMode('2d3d');
+                  }
+                }}
+                className={`flex items-center gap-1.5 rounded-lg border px-3 py-2 text-[10px] font-bold uppercase tracking-wider ${
+                  mapMode === 'swipe'
+                    ? 'border-violet-400/50 bg-violet-500/20 text-violet-200'
+                    : 'border-zinc-700 bg-zinc-950/90 text-zinc-400 hover:text-zinc-200'
+                }`}
+                title="Comparador swipe 2D/3D ou antes/depois (17f.7)"
+              >
+                <Columns size={12} />
+                Swipe
+              </button>
+              {contingencyOverlay && (
+                <button
+                  type="button"
+                  onClick={() => setShowContingencyOnMap((v) => !v)}
+                  className={`rounded-lg border px-3 py-2 text-[10px] font-bold uppercase tracking-wider ${
+                    showContingencyOnMap
+                      ? 'border-orange-400/50 bg-orange-500/20 text-orange-100'
+                      : 'border-zinc-700 bg-zinc-950/90 text-zinc-500'
+                  }`}
+                  title="Mostrar/ocultar plano de contingência ativo no mapa"
+                >
+                  Plano
+                </button>
+              )}
+            </div>
+            {mapMode === 'swipe' && (
+              <div className="flex gap-1 rounded-lg border border-violet-500/30 bg-zinc-950/95 p-1 shadow-lg backdrop-blur-md">
+                <button
+                  type="button"
+                  onClick={() => setSwipeMode('2d3d')}
+                  className={`rounded-md px-2.5 py-1.5 text-[9px] font-bold uppercase ${
+                    swipeMode === '2d3d'
+                      ? 'bg-violet-600 text-white'
+                      : 'text-zinc-400 hover:text-zinc-200'
+                  }`}
+                >
+                  2D × 3D
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSwipeMode('antes_depois')}
+                  disabled={!simGeoJSON?.features?.length}
+                  className={`rounded-md px-2.5 py-1.5 text-[9px] font-bold uppercase disabled:opacity-35 ${
+                    swipeMode === 'antes_depois'
+                      ? 'bg-violet-600 text-white'
+                      : 'text-zinc-400 hover:text-zinc-200'
+                  }`}
+                  title={
+                    simGeoJSON?.features?.length
+                      ? 'Cortina entre cenário sem mancha e com simulação'
+                      : 'Rode uma simulação para comparar antes/depois'
+                  }
+                >
+                  Antes × Depois
+                </button>
+              </div>
             )}
           </div>
 
-          {mapMode === '2d' ? (
+          {mapMode === '2d' && (
           <MapContainer 
             activeLayers={activeLayers}
             mapFocus={mapFocus} 
@@ -945,7 +1056,8 @@ export default function PlatformApp({ initialTab }: PlatformAppProps) {
             territorioTipo={territorioTipo}
             layerAnoByTema={layerAnoByTema}
           />
-          ) : (
+          )}
+          {mapMode === '3d' && (
           <Map3DMapLibreContainer
             activeLayers={activeLayers}
             simGeoJSON={simGeoJSON}
@@ -959,6 +1071,73 @@ export default function PlatformApp({ initialTab }: PlatformAppProps) {
             simulating={simulating}
             focusMode={focusMode}
           />
+          )}
+          {mapMode === 'swipe' && (
+            <MapSwipeCompare
+              mode={swipeMode}
+              leftLabel={swipeMode === '2d3d' ? 'Mapa 2D' : 'Antes'}
+              rightLabel={swipeMode === '2d3d' ? 'Terreno 3D' : 'Depois'}
+              left={
+                <MapContainer
+                  activeLayers={activeLayers}
+                  mapFocus={mapFocus}
+                  zoom={zoom}
+                  simGeoJSON={swipeMode === 'antes_depois' ? null : simGeoJSON}
+                  simContours={swipeMode === 'antes_depois' ? null : simContours}
+                  simFlowPaths={swipeMode === 'antes_depois' ? null : simFlowPaths}
+                  simOverlays={simOverlays}
+                  contingencyOverlay={contingencyOverlay}
+                  showContingencyOnMap={showContingencyOnMap}
+                  selectedMunicipio={selectedMunicipio}
+                  simulating={simulating}
+                  socioSubcamada={socioSubcamada}
+                  layerOptions={layerOptions}
+                  educacaoEtapa={educacaoEtapa}
+                  educacaoRaioM={educacaoRaioM}
+                  showEducacaoBuffer={showEducacaoBuffer}
+                  territorioTipo={territorioTipo}
+                  layerAnoByTema={layerAnoByTema}
+                />
+              }
+              right={
+                swipeMode === '2d3d' ? (
+                  <Map3DMapLibreContainer
+                    activeLayers={activeLayers}
+                    simGeoJSON={simGeoJSON}
+                    simContours={simContours}
+                    simFlowPaths={simFlowPaths}
+                    simOverlays={simOverlays}
+                    contingencyOverlay={contingencyOverlay}
+                    showContingencyOnMap={showContingencyOnMap}
+                    selectedMunicipio={selectedMunicipio}
+                    mapFocus={mapFocus}
+                    simulating={simulating}
+                    focusMode={focusMode}
+                  />
+                ) : (
+                  <MapContainer
+                    activeLayers={activeLayers}
+                    mapFocus={mapFocus}
+                    zoom={zoom}
+                    simGeoJSON={simGeoJSON}
+                    simContours={simContours}
+                    simFlowPaths={simFlowPaths}
+                    simOverlays={simOverlays}
+                    contingencyOverlay={contingencyOverlay}
+                    showContingencyOnMap={showContingencyOnMap}
+                    selectedMunicipio={selectedMunicipio}
+                    simulating={simulating}
+                    socioSubcamada={socioSubcamada}
+                    layerOptions={layerOptions}
+                    educacaoEtapa={educacaoEtapa}
+                    educacaoRaioM={educacaoRaioM}
+                    showEducacaoBuffer={showEducacaoBuffer}
+                    territorioTipo={territorioTipo}
+                    layerAnoByTema={layerAnoByTema}
+                  />
+                )
+              }
+            />
           )}
         </section>
       </div>

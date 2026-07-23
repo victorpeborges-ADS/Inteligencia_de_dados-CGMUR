@@ -37,6 +37,7 @@ def _flood_band_features(geometry: dict) -> list[dict]:
 
 
 def test_extreme_rainfall_recife_api(client: TestClient):
+    pytest.importorskip("rasterio")
     res = client.post(
         "/api/v1/simulations/extreme-rainfall",
         json={"precipitacao_mm": 120.0, "codigo_ibge": RECIFE_IBGE},
@@ -55,7 +56,7 @@ def test_extreme_rainfall_recife_api(client: TestClient):
     meta = body.get("simulation_meta") or {}
     assert meta.get("dem_available") is True
     assert meta.get("method") == "dem_pluvial_d8_twi"
-    assert meta.get("model_version") == "2.3"
+    assert meta.get("model_version") == "2.7"
     assert meta.get("dem_resolution_m") is not None
     assert meta.get("contour_interval_m") is not None
     assert meta.get("flow_accumulation_applied") is True
@@ -75,6 +76,7 @@ def test_extreme_rainfall_recife_api(client: TestClient):
 
 
 def test_extreme_rainfall_recife_higher_precip_expands_impact(client: TestClient):
+    pytest.importorskip("rasterio")
     low = client.post(
         "/api/v1/simulations/extreme-rainfall",
         json={"precipitacao_mm": 60.0, "codigo_ibge": RECIFE_IBGE},

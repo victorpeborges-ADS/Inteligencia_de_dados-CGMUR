@@ -18,6 +18,7 @@ from app.services.onboarding_engine import (
     run_onboarding,
     validate_ibge_code,
 )
+from app.services.uf_bootstrap_service import bootstrap_uf, preview_uf_bootstrap
 
 router = APIRouter()
 
@@ -29,6 +30,16 @@ class OnboardingValidateRequest(BaseModel):
 class OnboardingRunRequest(BaseModel):
     codigo_ibge: str = Field(..., min_length=1, max_length=7)
     force: bool = False
+
+
+class UfBootstrapRequest(BaseModel):
+    uf: str = Field(..., min_length=2, max_length=2, description="Sigla UF, ex.: PE")
+    limit: int = Field(default=20, ge=1, le=100)
+    skip_existing: bool = True
+    async_job: bool = Field(
+        default=True,
+        description="Se true, enfileira job em background e retorna job_id",
+    )
 
 
 def _normalize_ibge(value: str) -> str:
@@ -131,3 +142,90 @@ def run_batch(
         return run_batch_onboarding(db, limit=limit, status_filter=status, force=force)
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Falha no lote: {exc}") from exc
+
+
+@router.get("/uf/{uf}/preview")
+def preview_uf(
+    uf: str,
+    request: Request,
+    limit: int = Query(default=50, ge=1, le=200),
+    db: Session = Depends(get_db),
+):
+    """Prévia do bootstrap por UF (quantos pendentes / amostra)."""
+    actor = resolve_actor(request)
+    try:
+        payload = preview_uf_bootstrap(db, uf, limit=limit)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    log_audit(
+        db,
+        user=actor,
+        action="onboarding.uf_preview",
+        resource_type="uf",
+        resource_id=payload.get("uf"),
+        metadata={"pendentes": payload.get("pendentes"), "total_ibge": payload.get("total_ibge")},
+        request=request,
+    )
+    return payload
+
+
+@router.post("/bootstrap-uf")
+def bootstrap_uf_endpoint(
+    body: UfBootstrapRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+    _admin: User = Depends(require_role(Role.ADMIN)),
+):
+    """Bootstrap em lote por UF — cobertura mínima IBGE+S2ID+MapBiomas (18c.1)."""
+    actor = resolve_actor(request)
+    if body.async_job:
+        from app.services.background_jobs import run_uf_bootstrap_job
+
+        try:
+            job_id = run_uf_bootstrap_job(
+                body.uf,
+                limit=body.limit,
+                skip_existing=body.skip_existing,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        log_audit(
+            db,
+            user=actor,
+            action="onboarding.bootstrap_uf",
+            resource_type="uf",
+            resource_id=body.uf.upper(),
+            metadata={"job_id": job_id, "limit": body.limit, "async": True},
+            request=request,
+        )
+        from app.services.background_jobs import get_job
+
+        return {"job_id": job_id, "job": get_job(job_id), "async": True}
+
+    try:
+        result = bootstrap_uf(
+            db,
+            body.uf,
+            limit=body.limit,
+            skip_existing=body.skip_existing,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Falha no bootstrap UF: {exc}") from exc
+
+    log_audit(
+        db,
+        user=actor,
+        action="onboarding.bootstrap_uf",
+        resource_type="uf",
+        resource_id=result.get("uf"),
+        metadata={
+            "processed": result.get("processed"),
+            "ok": result.get("ok"),
+            "limit": body.limit,
+            "async": False,
+        },
+        request=request,
+    )
+    return result

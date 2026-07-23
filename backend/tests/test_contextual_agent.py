@@ -11,7 +11,7 @@ from app.services.contextual_agent_tools import (
 
 
 def test_tool_definitions_count():
-    assert len(TOOL_DEFINITIONS) == 13
+    assert len(TOOL_DEFINITIONS) == 15
     names = {t["function"]["name"] for t in TOOL_DEFINITIONS}
     assert "get_bairros_criticos" in names
     assert "get_score_municipio" in names
@@ -21,6 +21,8 @@ def test_tool_definitions_count():
     assert "get_maturidade_detalhe" in names
     assert "get_alerta_vivo" in names
     assert "get_risco_alagamento_ml" in names
+    assert "get_exposicao_edificios" in names
+    assert "recommend_cruzamento_camadas" in names
 
 
 def test_execute_tool_unknown():
@@ -180,3 +182,52 @@ def test_get_comparador_calor_lst(mock_cfg, mock_sim, mock_cmp):
     assert out["disponivel"] is True
     assert out["divergencia_mediana_c"] == 3.0
     mock_sim.assert_called_once()
+
+
+@patch("app.services.contextual_agent_tools.AnalyticalEngine.run_chuva_extrema_simulation")
+def test_get_exposicao_edificios_inundacao(mock_sim):
+    from app.services.contextual_agent_tools import get_exposicao_edificios, execute_tool
+
+    db = MagicMock()
+    muni = MagicMock(id=1, codigo_ibge="2611606", nome="Recife", uf="PE")
+    db.query.return_value.filter.return_value.first.return_value = muni
+    mock_sim.return_value = {
+        "affected_population": 1200,
+        "affected_bairros": ["Boa Viagem", "Centro"],
+        "simulation_meta": {
+            "exposicao_cenario": {
+                "disponivel": True,
+                "edificios_total": 100,
+                "edificios_expostos": 12,
+                "por_faixa": {"superficial": 2, "moderada": 5, "critica": 5},
+                "populacao_edificios_estimada": 340,
+                "escolas_expostas": {"n": 1},
+                "saude_exposta": {"n": 0},
+                "amostra": [
+                    {"id": 1, "nome": "Torre A", "depth_band": "critica", "depth_m": 1.1, "altura_m": 24, "populacao_estimada": 40},
+                ],
+            },
+            "exposicao_deslizamento": {
+                "disponivel": True,
+                "edificios_total": 100,
+                "edificios_expostos": 3,
+                "por_faixa": {"moderada": 1, "alta": 2, "critica": 0},
+                "populacao_edificios_estimada": 55,
+                "slope_threshold_deg": 22.0,
+                "amostra": [],
+            },
+        },
+    }
+
+    out = get_exposicao_edificios(db, "2611606", tipo="inundacao", precipitacao_mm=120)
+    assert out["tipo"] == "inundacao"
+    assert out["inundacao"]["edificios_expostos"] == 12
+    assert out["inundacao"]["populacao_edificios_estimada"] == 340
+    assert out["inundacao"]["amostra"][0]["nome"] == "Torre A"
+
+    via_dispatch = execute_tool(
+        db,
+        "get_exposicao_edificios",
+        {"cod_ibge": "2611606", "tipo": "todos", "precipitacao_mm": 100},
+    )
+    assert via_dispatch["deslizamento"]["edificios_expostos"] == 3

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timedelta
+from datetime import timedelta
 from typing import Any
 
 from sqlalchemy import func
@@ -22,6 +22,7 @@ from app.services.action_plan_engine import action_plan_to_dict
 from app.services.analytical_engine import AnalyticalEngine
 from app.services.contingency_planner import plan_to_dict
 from app.services.georedus_lst_service import get_lst_observada_config
+from app.timeutil import utc_now
 from app.services.georedus_reference_service import build_georedus_referencia
 from app.services.heat_simulator import run_heat_island_simulation
 from app.services.lst_heat_comparator import compare_heat_simulation_with_lst
@@ -53,7 +54,7 @@ def get_alertas_cemaden(db: Session, codigo_ibge: str) -> dict[str, Any]:
     muni = db.query(Municipio).filter(Municipio.codigo_ibge == codigo_ibge).first()
     if not muni:
         return {"error": "Município não encontrado"}
-    since = datetime.utcnow() - timedelta(hours=24)
+    since = utc_now() - timedelta(hours=24)
     alerts_db = (
         db.query(MonitoringAlert)
         .filter(MonitoringAlert.codigo_ibge == codigo_ibge, MonitoringAlert.created_at >= since)
@@ -353,6 +354,130 @@ def get_risco_alagamento_ml(
         }
 
 
+def _resumo_amostra_edificios(amostra: list[dict[str, Any]] | None, *, max_n: int = 5) -> list[dict[str, Any]]:
+    out = []
+    for b in (amostra or [])[:max_n]:
+        out.append({
+            "id": b.get("id"),
+            "nome": b.get("nome") or f"Edifício #{b.get('id')}",
+            "faixa": b.get("depth_band") or b.get("heat_band") or b.get("slope_band"),
+            "altura_m": b.get("altura_m"),
+            "populacao_estimada": b.get("populacao_estimada"),
+            "depth_m": b.get("depth_m"),
+            "delta_t_c": b.get("delta_t_c"),
+            "mean_slope_deg": b.get("mean_slope_deg"),
+        })
+    return out
+
+
+def get_exposicao_edificios(
+    db: Session,
+    codigo_ibge: str,
+    *,
+    tipo: str = "inundacao",
+    precipitacao_mm: float = 120.0,
+    temperatura_pico_c: float = 34.0,
+) -> dict[str, Any]:
+    """17b.6 — quantos prédios/pessoas expostos a inundação, deslizamento ou calor."""
+    muni = db.query(Municipio).filter(Municipio.codigo_ibge == codigo_ibge).first()
+    if not muni:
+        return {"error": "Município não encontrado"}
+
+    tipo_n = (tipo or "inundacao").strip().lower()
+    if tipo_n in {"alagamento", "chuva", "pluvial", "flood"}:
+        tipo_n = "inundacao"
+    if tipo_n in {"encosta", "landslide", "deslizamentos"}:
+        tipo_n = "deslizamento"
+    if tipo_n in {"uhi", "ilha_calor", "temperatura", "heat"}:
+        tipo_n = "calor"
+    if tipo_n not in {"inundacao", "deslizamento", "calor", "todos"}:
+        tipo_n = "inundacao"
+
+    payload: dict[str, Any] = {
+        "codigo_ibge": codigo_ibge,
+        "nome": muni.nome,
+        "uf": muni.uf,
+        "tipo": tipo_n,
+        "nota": (
+            "Cruzamento espacial footprint LOD1 × mancha simulada. "
+            "População por edifício é estimativa (setor × área×pavimentos)."
+        ),
+    }
+
+    try:
+        if tipo_n in {"inundacao", "deslizamento", "todos"}:
+            mm = float(precipitacao_mm)
+            result = AnalyticalEngine.run_chuva_extrema_simulation(db, muni.id, mm)
+            meta = result.get("simulation_meta") or {}
+            payload["precipitacao_mm"] = mm
+            payload["populacao_territorial_afetada"] = result.get("affected_population")
+            payload["bairros_afetados"] = (result.get("affected_bairros") or [])[:8]
+
+            if tipo_n in {"inundacao", "todos"}:
+                expo = meta.get("exposicao_cenario") or {}
+                payload["inundacao"] = {
+                    "disponivel": bool(expo.get("disponivel")),
+                    "edificios_total": expo.get("edificios_total"),
+                    "edificios_expostos": expo.get("edificios_expostos"),
+                    "por_faixa": expo.get("por_faixa"),
+                    "populacao_edificios_estimada": expo.get("populacao_edificios_estimada"),
+                    "escolas_expostas": (expo.get("escolas_expostas") or {}).get("n"),
+                    "saude_exposta": (expo.get("saude_exposta") or {}).get("n"),
+                    "amostra": _resumo_amostra_edificios(expo.get("amostra")),
+                    "motivo": expo.get("motivo"),
+                }
+
+            if tipo_n in {"deslizamento", "todos"}:
+                slide = meta.get("exposicao_deslizamento") or {}
+                payload["deslizamento"] = {
+                    "disponivel": bool(slide.get("disponivel")),
+                    "edificios_total": slide.get("edificios_total"),
+                    "edificios_expostos": slide.get("edificios_expostos"),
+                    "por_faixa": slide.get("por_faixa"),
+                    "populacao_edificios_estimada": slide.get("populacao_edificios_estimada"),
+                    "slope_threshold_deg": slide.get("slope_threshold_deg"),
+                    "amostra": _resumo_amostra_edificios(slide.get("amostra")),
+                    "motivo": slide.get("motivo"),
+                }
+
+        if tipo_n in {"calor", "todos"}:
+            temp = float(temperatura_pico_c)
+            heat = run_heat_island_simulation(db, muni.id, temperatura_pico_c=temp)
+            meta_h = heat.get("simulation_meta") or {}
+            expo_h = meta_h.get("exposicao_cenario") or {}
+            payload["temperatura_pico_c"] = temp
+            payload["calor"] = {
+                "disponivel": bool(expo_h.get("disponivel")),
+                "edificios_total": expo_h.get("edificios_total"),
+                "edificios_expostos": expo_h.get("edificios_expostos"),
+                "por_faixa": expo_h.get("por_faixa"),
+                "populacao_edificios_estimada": expo_h.get("populacao_edificios_estimada"),
+                "max_delta_t_c": meta_h.get("max_delta_t_c"),
+                "amostra": _resumo_amostra_edificios(expo_h.get("amostra")),
+                "motivo": expo_h.get("motivo"),
+            }
+    except Exception as exc:
+        payload["error"] = str(exc)[:240]
+        payload["mensagem"] = (
+            "Não foi possível calcular a exposição por edifício. "
+            "Verifique DEM/footprints no município ou rode a simulação no módulo Simulações."
+        )
+
+    return payload
+
+
+def recommend_cruzamento_camadas(
+    db: Session,
+    codigo_ibge: str,
+    pergunta: str = "",
+) -> dict[str, Any]:
+    """17h.2c — sugere quais camadas cruzar para a pergunta do gestor."""
+    from app.services.layer_crosswalk_service import recommend_layer_crosswalk
+
+    _ = db  # contexto municipal já implícito no cod_ibge
+    return recommend_layer_crosswalk(pergunta, cod_ibge=codigo_ibge)
+
+
 TOOL_DEFINITIONS: list[dict[str, Any]] = [
     {
         "type": "function",
@@ -552,6 +677,61 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_exposicao_edificios",
+            "description": (
+                "Conta edifícios e população estimada expostos a inundação, deslizamento ou calor "
+                "(cruzamento footprint LOD1 × mancha simulada). Use para perguntas como "
+                "'quantos prédios alagam com 120 mm?' ou 'quais edifícios estão em encosta crítica?'."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "cod_ibge": {"type": "string"},
+                    "tipo": {
+                        "type": "string",
+                        "enum": ["inundacao", "deslizamento", "calor", "todos"],
+                        "default": "inundacao",
+                        "description": "Tipo de exposição climática",
+                    },
+                    "precipitacao_mm": {
+                        "type": "number",
+                        "default": 120,
+                        "description": "Precipitação (mm) para inundação/deslizamento",
+                    },
+                    "temperatura_pico_c": {
+                        "type": "number",
+                        "default": 34,
+                        "description": "Temperatura de pico (°C) para cenário de calor",
+                    },
+                },
+                "required": ["cod_ibge"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "recommend_cruzamento_camadas",
+            "description": (
+                "Sugere quais camadas do mapa cruzar para responder uma pergunta do gestor "
+                "(ex.: onde há gente pobre em área de alagamento?). Retorna recommended_layers."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "cod_ibge": {"type": "string"},
+                    "pergunta": {
+                        "type": "string",
+                        "description": "Pergunta do gestor em linguagem natural",
+                    },
+                },
+                "required": ["cod_ibge", "pergunta"],
+            },
+        },
+    },
 ]
 
 _TOOL_DISPATCH = {
@@ -582,6 +762,18 @@ _TOOL_DISPATCH = {
         db,
         args["cod_ibge"],
         float(args.get("precip_24h") or 80),
+    ),
+    "get_exposicao_edificios": lambda db, args: get_exposicao_edificios(
+        db,
+        args["cod_ibge"],
+        tipo=str(args.get("tipo") or "inundacao"),
+        precipitacao_mm=float(args.get("precipitacao_mm") or 120),
+        temperatura_pico_c=float(args.get("temperatura_pico_c") or 34),
+    ),
+    "recommend_cruzamento_camadas": lambda db, args: recommend_cruzamento_camadas(
+        db,
+        args["cod_ibge"],
+        pergunta=str(args.get("pergunta") or ""),
     ),
 }
 

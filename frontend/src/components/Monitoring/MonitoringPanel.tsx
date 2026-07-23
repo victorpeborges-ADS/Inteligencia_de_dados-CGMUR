@@ -32,7 +32,9 @@ import {
   ChevronUp,
   X,
   GitCompare,
+  Megaphone,
 } from 'lucide-react';
+import PublicAlertDispatchModal from './PublicAlertDispatchModal';
 
 const MonitoringMiniMap = dynamic(() => import('./MonitoringMiniMap'), { ssr: false });
 
@@ -59,6 +61,7 @@ interface Props {
 
 export default function MonitoringPanel({ codigoIbge, municipioNome, onActivateContingency, onToast }: Props) {
   const [data, setData] = useState<MonitoringDashboard | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [scenario, setScenario] = useState<ScenarioAnalysis | null>(null);
   const [scenarioLoading, setScenarioLoading] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -79,6 +82,7 @@ export default function MonitoringPanel({ codigoIbge, municipioNome, onActivateC
     cemaden_ativos_24h: number;
     titulo_recente?: string | null;
   } | null>(null);
+  const [disseminateOpen, setDisseminateOpen] = useState(false);
 
   const pushAgenteProativo = useAppStore((s) => s.pushAgenteProativo);
   const setAgenteAberto = useAppStore((s) => s.setAgenteAberto);
@@ -88,10 +92,12 @@ export default function MonitoringPanel({ codigoIbge, municipioNome, onActivateC
     try {
       const dash = await api.getMonitoringDashboard(codigoIbge);
       setData(dash);
+      setLoadError(null);
       setAlertNivel(dash.nivel_risco_atual);
       setLastUpdate(new Date());
     } catch (e) {
       console.error(e);
+      setLoadError(e instanceof Error ? e.message : 'Falha ao carregar o monitoramento.');
     } finally {
       setLoading(false);
     }
@@ -218,6 +224,32 @@ export default function MonitoringPanel({ codigoIbge, municipioNome, onActivateC
     return <p className="text-sm text-zinc-400">Carregando monitoramento…</p>;
   }
 
+  if (!data && loadError) {
+    return (
+      <div className="rounded-xl border border-rose-700/50 bg-rose-950/30 p-4">
+        <div className="flex items-center gap-2 text-rose-200">
+          <AlertTriangle size={16} />
+          <h3 className="text-sm font-bold">Monitoramento indisponível</h3>
+        </div>
+        <p className="mt-2 text-xs leading-snug text-rose-200/80">
+          Não foi possível carregar o painel de {municipioNome || codigoIbge}. O nível de risco{' '}
+          <strong>não pode ser confirmado agora</strong> — não assuma VERDE.
+        </p>
+        <p className="mt-1 font-mono text-[10px] text-rose-300/70">{loadError}</p>
+        <button
+          type="button"
+          onClick={() => {
+            setLoading(true);
+            load();
+          }}
+          className="mt-3 flex items-center gap-1.5 rounded-lg border border-rose-600/50 bg-rose-900/40 px-3 py-1.5 text-[11px] font-bold uppercase text-rose-100 hover:bg-rose-800/50"
+        >
+          <RefreshCw size={12} /> Tentar novamente
+        </button>
+      </div>
+    );
+  }
+
   const nivel = data?.nivel_risco_atual || 'VERDE';
   const nome = data?.nome_municipio || municipioNome || codigoIbge;
   const weatherMissing = !data?.weather_disponivel && data?.precip_24h_mm == null;
@@ -318,18 +350,38 @@ export default function MonitoringPanel({ codigoIbge, municipioNome, onActivateC
                 {alertaVivo.titulo_recente ? ` · ${alertaVivo.titulo_recente}` : ''}
               </p>
             </div>
-            {onActivateContingency && (
+            <div className="flex shrink-0 flex-col gap-1.5">
               <button
                 type="button"
-                onClick={() => onActivateContingency(alertaVivo.nivel_alerta, null)}
-                className="shrink-0 rounded-lg border border-amber-500/40 bg-amber-950/40 px-2.5 py-1.5 text-[9px] font-bold uppercase tracking-wider text-amber-100 hover:bg-amber-900/50"
+                onClick={() => setDisseminateOpen(true)}
+                className="inline-flex items-center justify-center gap-1 rounded-lg border border-rose-500/40 bg-rose-950/40 px-2.5 py-1.5 text-[9px] font-bold uppercase tracking-wider text-rose-100 hover:bg-rose-900/50"
               >
-                Abrir contingência
+                <Megaphone size={11} />
+                Disseminar alerta
               </button>
-            )}
+              {onActivateContingency && (
+                <button
+                  type="button"
+                  onClick={() => onActivateContingency(alertaVivo.nivel_alerta, null)}
+                  className="rounded-lg border border-amber-500/40 bg-amber-950/40 px-2.5 py-1.5 text-[9px] font-bold uppercase tracking-wider text-amber-100 hover:bg-amber-900/50"
+                >
+                  Abrir contingência
+                </button>
+              )}
+            </div>
           </div>
         </div>
       )}
+
+      <PublicAlertDispatchModal
+        open={disseminateOpen}
+        onClose={() => setDisseminateOpen(false)}
+        codigoIbge={codigoIbge}
+        onDone={() => {
+          onToast?.('Alerta disseminado', 'Registro auditável criado para Defesa Civil / canais selecionados.');
+          void load();
+        }}
+      />
 
       {data?.risk_probability != null && (
         <p className="text-xs text-zinc-400">

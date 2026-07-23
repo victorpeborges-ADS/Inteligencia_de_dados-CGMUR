@@ -7,6 +7,7 @@ import GeoReDusReferenceCard from '@/components/DataCatalog/GeoReDusReferenceCar
 
 interface AssistantProps {
   onToggleLayer: (layerName: string) => void;
+  onApplyLayers?: (layers: string[]) => void;
   onFocusMap: (coords: [number, number], zoom: number) => void;
   codigoIbge?: string;
 }
@@ -59,7 +60,7 @@ function shortSourceLabel(label: string) {
   return label.length > 28 ? `${label.slice(0, 25)}…` : label;
 }
 
-export default function AssistantPanel({ onToggleLayer, onFocusMap, codigoIbge }: AssistantProps) {
+export default function AssistantPanel({ onToggleLayer, onApplyLayers, onFocusMap, codigoIbge }: AssistantProps) {
   const [messages, setMessages] = useState<ChatMessage[]>([DEFAULT_GREETING()]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
@@ -278,6 +279,13 @@ export default function AssistantPanel({ onToggleLayer, onFocusMap, codigoIbge }
           resolveApiKey(),
         );
 
+        const extras: ChatMessage[] = [];
+        if (res.crosswalk_rationale && res.recommended_layers?.length) {
+          extras.push({
+            role: 'assistant',
+            content: `**Cruzamento no mapa:** ${res.recommended_layers.join(' · ')}\n\n_${res.crosswalk_rationale}_`,
+          });
+        }
         setMessages((prev) => [
           ...prev,
           {
@@ -290,9 +298,15 @@ export default function AssistantPanel({ onToggleLayer, onFocusMap, codigoIbge }
             aiProvider: res.ai_provider,
             aiModel: res.ai_model,
           },
+          ...extras,
         ]);
 
-        if (res.suggested_layer) onToggleLayer(res.suggested_layer);
+        if (res.recommended_layers?.length) {
+          if (onApplyLayers) onApplyLayers(res.recommended_layers);
+          else res.recommended_layers.forEach((layer) => onToggleLayer(layer));
+        } else if (res.suggested_layer) {
+          onToggleLayer(res.suggested_layer);
+        }
         if (res.coordinates) onFocusMap(res.coordinates, res.zoom || 13);
       } catch (err) {
         console.error('Error sending message:', err);
@@ -314,6 +328,7 @@ export default function AssistantPanel({ onToggleLayer, onFocusMap, codigoIbge }
       activeProvider,
       connectionStatus,
       onToggleLayer,
+      onApplyLayers,
       onFocusMap,
     ]
   );

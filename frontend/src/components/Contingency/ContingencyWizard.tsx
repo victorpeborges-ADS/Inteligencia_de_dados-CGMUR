@@ -2,8 +2,9 @@
 
 import { useEffect, useState } from 'react';
 import dynamic from 'next/dynamic';
-import { api, type ContingencyPlan, type RoutingStatus } from '@/utils/api';
+import { api, type ContingencyPlan, type ContingencyRecurso, type RoutingStatus } from '@/utils/api';
 import { Save, ChevronRight, ChevronLeft, FileDown, Shield, Navigation, CheckCircle2, Siren } from 'lucide-react';
+import TermTooltip from '@/components/UI/TermTooltip';
 
 const ContingencyDrawMap = dynamic(() => import('./ContingencyDrawMap'), { ssr: false });
 
@@ -94,6 +95,15 @@ export default function ContingencyWizard({
       : [{ nome: '', cargo: 'Coordenador DC', telefone: '', whatsapp: '' }],
   );
   const [acoes, setAcoes] = useState<Record<string, string[]>>(initialPlan?.acoes_por_nivel || {});
+  const [recursos, setRecursos] = useState<ContingencyRecurso[]>(
+    initialPlan?.recursos_operacionais || [],
+  );
+  const [protocolo, setProtocolo] = useState<ContingencyPlan['protocolo_campo']>(
+    initialPlan?.protocolo_campo || undefined,
+  );
+  const [cobradeCodigo, setCobradeCodigo] = useState<string | null>(
+    initialPlan?.cobrade_codigo || initialPlan?.cobrade?.codigo || null,
+  );
   const [drawMode, setDrawMode] = useState<'zone' | 'support' | 'view'>('zone');
   const [routingStatus, setRoutingStatus] = useState<RoutingStatus | null>(null);
 
@@ -104,7 +114,18 @@ export default function ContingencyWizard({
   }, []);
 
   useEffect(() => {
-    api.getContingencyActionTemplates(cenario).then(setAcoes).catch(() => {});
+    api
+      .getContingencyActionTemplates(cenario)
+      .then((tpl) => {
+        setAcoes(tpl.acoes_por_nivel || {});
+        if (tpl.protocolo_campo) setProtocolo(tpl.protocolo_campo);
+        if (tpl.cobrade?.codigo) setCobradeCodigo(tpl.cobrade.codigo);
+        if ((!recursos.length || recursos.every((r) => r.fonte === 'pendente')) && tpl.recursos_sugeridos?.length) {
+          setRecursos(tpl.recursos_sugeridos);
+        }
+      })
+      .catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- só recarrega templates ao mudar cenário
   }, [cenario]);
 
   useEffect(() => {
@@ -193,6 +214,11 @@ export default function ContingencyWizard({
           : contatos,
       );
       setAcoes(plan.acoes_por_nivel || {});
+      if (plan.recursos_operacionais?.length) setRecursos(plan.recursos_operacionais);
+      if (plan.protocolo_campo) setProtocolo(plan.protocolo_campo);
+      if (plan.cobrade_codigo || plan.cobrade?.codigo) {
+        setCobradeCodigo(plan.cobrade_codigo || plan.cobrade?.codigo || null);
+      }
       setStep(2);
     } catch (e: any) {
       setError(e.message);
@@ -213,6 +239,9 @@ export default function ContingencyWizard({
         pontos_apoio: pontos,
         contatos_defesa_civil: contatos,
         acoes_por_nivel: acoes,
+        recursos_operacionais: recursos,
+        protocolo_campo: protocolo || {},
+        cobrade_codigo: cobradeCodigo || undefined,
         status: 'RASCUNHO',
       };
       let plan: ContingencyPlan;
@@ -269,6 +298,11 @@ export default function ContingencyWizard({
     <div className="flex h-full flex-col gap-3 overflow-y-auto pr-1 text-zinc-200">
       <div className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-wider text-teal-300">
         <Shield size={14} /> Plano de Contingenciamento — Etapa {step}/4
+        {cobradeCodigo && (
+          <span className="ml-auto normal-case tracking-normal text-[9px] font-normal text-zinc-400">
+            <TermTooltip term="COBRADE" /> {cobradeCodigo}
+          </span>
+        )}
       </div>
 
       {error && <p className="rounded-lg border border-rose-500/40 bg-rose-950/30 px-3 py-2 text-xs text-rose-200">{error}</p>}
@@ -411,23 +445,94 @@ export default function ContingencyWizard({
       )}
 
       {step === 4 && (
-        <div className="space-y-3 max-h-[320px] overflow-y-auto">
-          {contatos.map((c, i) => (
-            <div key={i} className="grid grid-cols-2 gap-2">
-              <input placeholder="Nome" value={c.nome} onChange={(e) => {
-                const next = [...contatos]; next[i] = { ...c, nome: e.target.value }; setContatos(next);
-              }} className="rounded border border-zinc-700 bg-zinc-900 px-2 py-1 text-xs col-span-2" />
-              <input placeholder="Telefone" value={c.telefone} onChange={(e) => {
-                const next = [...contatos]; next[i] = { ...c, telefone: e.target.value }; setContatos(next);
-              }} className="rounded border border-zinc-700 bg-zinc-900 px-2 py-1 text-xs" />
-              <input placeholder="WhatsApp" value={c.whatsapp} onChange={(e) => {
-                const next = [...contatos]; next[i] = { ...c, whatsapp: e.target.value }; setContatos(next);
-              }} className="rounded border border-zinc-700 bg-zinc-900 px-2 py-1 text-xs" />
+        <div className="space-y-3 max-h-[360px] overflow-y-auto">
+          <p className="text-[10px] leading-snug text-zinc-400">
+            Contatos 24h, inventário de recursos e protocolo alerta → campo. Isso vira o checklist operacional no PDF.
+          </p>
+
+          <div>
+            <p className="mb-1 text-[10px] font-bold uppercase text-zinc-500">Contatos mínimos</p>
+            {contatos.map((c, i) => (
+              <div key={i} className="mb-2 grid grid-cols-2 gap-2">
+                <input placeholder="Nome" value={c.nome} onChange={(e) => {
+                  const next = [...contatos]; next[i] = { ...c, nome: e.target.value }; setContatos(next);
+                }} className="rounded border border-zinc-700 bg-zinc-900 px-2 py-1 text-xs col-span-2" />
+                <input placeholder="Cargo" value={c.cargo} onChange={(e) => {
+                  const next = [...contatos]; next[i] = { ...c, cargo: e.target.value }; setContatos(next);
+                }} className="rounded border border-zinc-700 bg-zinc-900 px-2 py-1 text-xs col-span-2" />
+                <input placeholder="Telefone" value={c.telefone} onChange={(e) => {
+                  const next = [...contatos]; next[i] = { ...c, telefone: e.target.value }; setContatos(next);
+                }} className="rounded border border-zinc-700 bg-zinc-900 px-2 py-1 text-xs" />
+                <input placeholder="WhatsApp" value={c.whatsapp} onChange={(e) => {
+                  const next = [...contatos]; next[i] = { ...c, whatsapp: e.target.value }; setContatos(next);
+                }} className="rounded border border-zinc-700 bg-zinc-900 px-2 py-1 text-xs" />
+              </div>
+            ))}
+          </div>
+
+          <div className="rounded-lg border border-teal-500/20 bg-teal-950/15 p-2">
+            <p className="mb-1 text-[10px] font-bold text-teal-200">Recursos operacionais</p>
+            {recursos.length === 0 && (
+              <p className="text-[9px] text-zinc-500">Gere a partir da simulação ou preencha abaixo.</p>
+            )}
+            {recursos.map((r, i) => (
+              <div key={i} className="mb-1.5 grid grid-cols-3 gap-1.5">
+                <input
+                  value={r.nome}
+                  onChange={(e) => {
+                    const next = [...recursos];
+                    next[i] = { ...r, nome: e.target.value };
+                    setRecursos(next);
+                  }}
+                  className="col-span-2 rounded border border-zinc-700 bg-zinc-900 px-2 py-1 text-[10px]"
+                  placeholder="Nome do recurso"
+                />
+                <input
+                  type="number"
+                  value={r.quantidade ?? 0}
+                  onChange={(e) => {
+                    const next = [...recursos];
+                    next[i] = { ...r, quantidade: Number(e.target.value) };
+                    setRecursos(next);
+                  }}
+                  className="rounded border border-zinc-700 bg-zinc-900 px-2 py-1 text-[10px]"
+                  placeholder="Qtd"
+                />
+              </div>
+            ))}
+            <button
+              type="button"
+              onClick={() =>
+                setRecursos([
+                  ...recursos,
+                  { tipo: 'outro', nome: '', quantidade: 0, fonte: 'manual' },
+                ])
+              }
+              className="mt-1 text-[9px] font-bold text-teal-300 hover:text-teal-100"
+            >
+              + Adicionar recurso
+            </button>
+          </div>
+
+          {protocolo?.passos && protocolo.passos.length > 0 && (
+            <div className="rounded-lg border border-amber-500/20 bg-amber-950/10 p-2">
+              <p className="mb-1 text-[10px] font-bold text-amber-200">Protocolo de campo</p>
+              <ol className="list-decimal space-y-1 pl-4">
+                {protocolo.passos.map((p) => (
+                  <li key={p.ordem} className="text-[9px] leading-snug text-zinc-300">
+                    <span className="font-semibold text-amber-100">{p.quando}</span> — {p.quem}: {p.o_que}
+                    {p.sla_minutos != null && (
+                      <span className="text-zinc-500"> (SLA {p.sla_minutos} min)</span>
+                    )}
+                  </li>
+                ))}
+              </ol>
             </div>
-          ))}
+          )}
+
           {NIVEIS.map((n) => (
             <div key={n}>
-              <label className="text-[10px] font-bold uppercase text-zinc-500">{n}</label>
+              <label className="text-[10px] font-bold uppercase text-zinc-500">Ações {n}</label>
               <textarea
                 rows={2}
                 value={(acoes[n] || []).join('\n')}

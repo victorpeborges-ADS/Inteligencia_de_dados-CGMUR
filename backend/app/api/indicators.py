@@ -3,7 +3,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.orm import Session
 from sqlalchemy import func, text
 from app.db import get_db
-from app.models import Municipio, Bairro, SetorCensitario, CoberturaVegetalMapBiomas, HistoricoDesastreS2ID, AlertaCemaden, InfraestruturaUrbana, MunicipioIbge, MunicipioFiscal, MunicipioSeed, MunicipioSeguranca, MunicipioSaneamento, EscolaInep, TerritorioEspecial
+from app.models import Municipio, Bairro, SetorCensitario, CoberturaVegetalMapBiomas, HistoricoDesastreS2ID, AlertaCemaden, InfraestruturaUrbana, Edificacao, MunicipioIbge, MunicipioFiscal, MunicipioSeed, MunicipioSeguranca, MunicipioSaneamento, EscolaInep, TerritorioEspecial
 from app.services.municipio_audit_service import audit_municipio
 from app.config import settings
 from app.schemas import ExecutiveIndicators, GeoJSONFeatureCollection
@@ -136,6 +136,11 @@ def get_layers_meta(
         .filter(InfraestruturaUrbana.municipio_id == muni.id)
         .count()
     )
+    edificacoes_count = (
+        db.query(Edificacao)
+        .filter(Edificacao.municipio_id == muni.id)
+        .count()
+    )
     is_official_mesh = is_official_ibge_mesh(db, muni)
     is_recife_mesh = muni.codigo_ibge == "2611606" and bairro_count >= 85 and not is_official_mesh
     is_recife_infra = muni.codigo_ibge == "2611606" and infra_count >= 12
@@ -159,6 +164,7 @@ def get_layers_meta(
             "vulnerabilidade",
             "inundacao",
             "prioridade_planejamento",
+            "risco_consolidado",
             "saneamento_drenagem",
             "adaptacao_climatica",
             "saude_risco",
@@ -202,6 +208,22 @@ def get_layers_meta(
                     else "OpenStreetMap / bases locais de infraestrutura urbana"
                 ),
                 "count": infra_count,
+            },
+            "edificacoes": {
+                "quality": (
+                    "Observado"
+                    if edificacoes_count > 0
+                    else "Estimado"
+                ),
+                "source": "OpenStreetMap building=* · altura OSM/levels/heurística (LOD1)",
+                "count": edificacoes_count,
+                "disponivel": True,
+                "tiles_mvt": True,
+            },
+            "risco_consolidado": {
+                "quality": "Derivado Sinidu+Clima",
+                "source": "Score Sinidu (IVC+IRI+adaptação) × alerta vivo CEMADEN",
+                "disponivel": malha_disponivel or muni.codigo_ibge == "2611606",
             },
             "cobertura": {
                 "quality": (
@@ -1122,6 +1144,25 @@ def get_geojson_layer(
                     "qualidade_dado": "Referencia" if is_recife_infra else quality_badge(layer_name),
                 },
             })
+
+    elif layer_name == "edificacoes":
+        from app.data_connectors.building_footprints_collector import buildings_geojson
+
+        # Cap GeoJSON para mapas 2D; o 3D preferencialmente usa MVT (17f.10).
+        limit_raw = request.query_params.get("limit") if request else None
+        try:
+            geo_limit = int(limit_raw) if limit_raw else 1500
+        except (TypeError, ValueError):
+            geo_limit = 1500
+        geo_limit = max(100, min(geo_limit, 3500))
+        fc = buildings_geojson(db, muni.codigo_ibge, ensure=True, limit=geo_limit)
+        features.extend(fc.get("features") or [])
+
+    elif layer_name == "risco_consolidado":
+        from app.services.risco_consolidado_service import build_risco_consolidado_geojson
+
+        fc = build_risco_consolidado_geojson(db, muni.codigo_ibge)
+        features.extend(fc.get("features") or [])
 
     elif layer_name == "educacao":
         etapa_norm = (etapa or "todas").strip().lower()

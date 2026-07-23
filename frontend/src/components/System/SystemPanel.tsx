@@ -118,7 +118,7 @@ export default function SystemPanel() {
     setBatchRunning(true);
     setSyncMessage(null);
     try {
-      const { job_id } = await api.startOnboardingBatchJob(61, 'pendente');
+      const { job_id } = await api.startOnboardingBatchJob(6, 'pendente');
       setSyncMessage(`Onboarding em background (job ${job_id})…`);
       const job = await pollJob(job_id);
       if (job?.status === 'completed') {
@@ -138,7 +138,7 @@ export default function SystemPanel() {
     setPipelineRunning(true);
     setSyncMessage(null);
     try {
-      const { job_id } = await api.startPipelineJob(61);
+      const { job_id } = await api.startPipelineJob(6);
       setSyncMessage(`Pipeline territorial em execução (job ${job_id})…`);
       const job = await pollJob(job_id);
       if (job?.status === 'completed') {
@@ -159,8 +159,8 @@ export default function SystemPanel() {
     try {
       const starter =
         kind === 'diagnostics'
-          ? () => api.startDiagnosticsBatchJob(61)
-          : () => api.startReportsBatchJob(61, true, codigos);
+          ? () => api.startDiagnosticsBatchJob(6)
+          : () => api.startReportsBatchJob(6, true, codigos);
       const { job_id } = await starter();
       setSyncMessage(`${kind === 'diagnostics' ? 'Diagnósticos' : 'PDFs'} em lote (job ${job_id})…`);
       const job = await pollJob(job_id);
@@ -181,13 +181,13 @@ export default function SystemPanel() {
     setDemBatchRunning(true);
     setSyncMessage(null);
     try {
-      const { job_id } = await api.startDemBatchJob(61, false);
+      const { job_id } = await api.startDemBatchJob(6, false);
       setSyncMessage(`Batch DEM em execução (job ${job_id})…`);
       const job = await pollJob(job_id);
       if (job?.status === 'completed') {
         const result = job.result as { processed?: number; local_or_refined?: number };
         setSyncMessage(
-          `DEM — ${result?.processed ?? '?'}/61 processados` +
+          `DEM — ${result?.processed ?? '?'}/6 processados` +
             (result?.local_or_refined != null ? ` (${result.local_or_refined} local/refinado)` : ''),
         );
       } else if (job?.status === 'failed') {
@@ -204,7 +204,7 @@ export default function SystemPanel() {
     setHomologationRunning(true);
     setSyncMessage(null);
     try {
-      const { job_id } = await api.startHomologationFullJob(61, false);
+      const { job_id } = await api.startHomologationFullJob(6, false);
       setSyncMessage(`Pipeline MCID completo em execução (job ${job_id})…`);
       const job = await pollJob(job_id);
       if (job?.status === 'completed') {
@@ -248,7 +248,7 @@ export default function SystemPanel() {
     setFontesRunning(true);
     setSyncMessage(null);
     try {
-      const { job_id } = await api.startExternalSourcesBatchJob(61);
+      const { job_id } = await api.startExternalSourcesBatchJob(6);
       setSyncMessage(`Fontes externas (job ${job_id})…`);
       const job = await pollJob(job_id);
       if (job?.status === 'completed') {
@@ -291,7 +291,7 @@ export default function SystemPanel() {
     setMapbiomasSyncing(true);
     setSyncMessage(null);
     try {
-      const { job_id } = await api.startMapBiomasBatchJob(61, false);
+      const { job_id } = await api.startMapBiomasBatchJob(6, false);
       setSyncMessage(`MapBiomas em background (job ${job_id})…`);
       const job = await pollJob(job_id);
       if (job?.status === 'completed') {
@@ -352,7 +352,7 @@ export default function SystemPanel() {
             className="inline-flex items-center gap-1 rounded-lg border border-indigo-800 bg-indigo-950/40 px-2 py-1 text-xs text-indigo-200 hover:bg-indigo-900/40 disabled:opacity-50"
           >
             {batchRunning ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Building2 className="h-3.5 w-3.5" />}
-            Onboarding (61)
+            Onboarding (6)
           </button>
           <button
             type="button"
@@ -361,7 +361,7 @@ export default function SystemPanel() {
             className="inline-flex items-center gap-1 rounded-lg border border-slate-700 bg-slate-950/40 px-2 py-1 text-xs text-slate-200 hover:bg-slate-900/40 disabled:opacity-50"
           >
             {demBatchRunning ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Database className="h-3.5 w-3.5" />}
-            DEM (61)
+            DEM (6)
           </button>
           <button
             type="button"
@@ -370,7 +370,7 @@ export default function SystemPanel() {
             className="inline-flex items-center gap-1 rounded-lg border border-amber-800 bg-amber-950/40 px-2 py-1 text-xs text-amber-200 hover:bg-amber-900/40 disabled:opacity-50"
           >
             {homologationRunning ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />}
-            Pipeline MCID (61)
+            Pipeline MCID (6)
           </button>
           <label
             className={`inline-flex cursor-pointer items-center gap-1 rounded-lg border border-sky-800 bg-sky-950/40 px-2 py-1 text-xs text-sky-200 hover:bg-sky-900/40 ${demUploading ? 'opacity-50' : ''}`}
@@ -404,7 +404,7 @@ export default function SystemPanel() {
             disabled={exportsRunning}
             className="inline-flex items-center gap-1 rounded-lg border border-cyan-800 bg-cyan-950/40 px-2 py-1 text-xs text-cyan-200 hover:bg-cyan-900/40 disabled:opacity-50"
           >
-            Diagnósticos (61)
+            Diagnósticos (6)
           </button>
           <button
             type="button"
@@ -412,7 +412,7 @@ export default function SystemPanel() {
             disabled={exportsRunning}
             className="inline-flex items-center gap-1 rounded-lg border border-rose-800 bg-rose-950/40 px-2 py-1 text-xs text-rose-200 hover:bg-rose-900/40 disabled:opacity-50"
           >
-            PDFs (61)
+            PDFs (6)
           </button>
           <button
             type="button"

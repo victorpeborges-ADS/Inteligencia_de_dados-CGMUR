@@ -3,7 +3,7 @@ from sqlalchemy.dialects.postgresql import ARRAY, UUID
 from sqlalchemy.orm import relationship
 from geoalchemy2 import Geometry
 from app.db import Base
-import datetime
+from app.timeutil import utc_now
 
 class Municipio(Base):
     __tablename__ = "municipios"
@@ -22,6 +22,7 @@ class Municipio(Base):
     alertas = relationship("AlertaCemaden", back_populates="municipio", cascade="all, delete-orphan")
     cobertura = relationship("CoberturaVegetalMapBiomas", back_populates="municipio", cascade="all, delete-orphan")
     infraestrutura = relationship("InfraestruturaUrbana", back_populates="municipio", cascade="all, delete-orphan")
+    edificacoes = relationship("Edificacao", back_populates="municipio", cascade="all, delete-orphan")
     escolas_inep = relationship("EscolaInep", back_populates="municipio", cascade="all, delete-orphan")
     territorios_especiais = relationship("TerritorioEspecial", back_populates="municipio", cascade="all, delete-orphan")
 
@@ -39,7 +40,7 @@ class Bairro(Base):
     renda_media_censo2022 = Column(Numeric(12, 2), nullable=True)
     
     # Temporal columns
-    valid_from = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)
+    valid_from = Column(DateTime, default=utc_now, nullable=False)
     valid_to = Column(DateTime, nullable=True)
 
     municipio = relationship("Municipio", back_populates="bairros")
@@ -59,7 +60,7 @@ class SetorCensitario(Base):
     geom = Column(Geometry(geometry_type="MULTIPOLYGON", srid=4326, spatial_index=True))
     
     # Temporal columns
-    valid_from = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)
+    valid_from = Column(DateTime, default=utc_now, nullable=False)
     valid_to = Column(DateTime, nullable=True)
 
     municipio = relationship("Municipio", back_populates="setores")
@@ -83,7 +84,7 @@ class AlertaCemaden(Base):
     id = Column(Integer, primary_key=True, index=True)
     municipio_id = Column(Integer, ForeignKey("municipios.id", ondelete="CASCADE"), nullable=False)
     nivel_alerta = Column(String(20), nullable=False) # BAIXO, MEDIO, ALTO, MUITO_ALTO
-    data_alerta = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)
+    data_alerta = Column(DateTime, default=utc_now, nullable=False)
     descricao = Column(Text, nullable=True)
     geom = Column(Geometry(geometry_type="MULTIPOLYGON", srid=4326, spatial_index=True))
 
@@ -112,7 +113,7 @@ class MapBiomasMunicipalStat(Base):
     colecao = Column(String(32), default="10.1")
     data_quality = Column(String(24), default="derivado")
     fonte = Column(String(255), default="MapBiomas / Sinidu+Clima")
-    atualizado_em = Column(DateTime, default=datetime.datetime.utcnow)
+    atualizado_em = Column(DateTime, default=utc_now)
 
     municipio = relationship("Municipio", backref="mapbiomas_stats")
 
@@ -127,6 +128,29 @@ class InfraestruturaUrbana(Base):
     geom = Column(Geometry(geometry_type="GEOMETRY", srid=4326, spatial_index=True))
 
     municipio = relationship("Municipio", back_populates="infraestrutura")
+
+
+class Edificacao(Base):
+    """Footprint LOD1 — onda 17a (gêmeo digital)."""
+
+    __tablename__ = "edificacoes"
+
+    id = Column(Integer, primary_key=True, index=True)
+    municipio_id = Column(Integer, ForeignKey("municipios.id", ondelete="CASCADE"), nullable=False, index=True)
+    codigo_ibge = Column(String(7), nullable=False, index=True)
+    osm_id = Column(String(40), nullable=True, index=True)
+    nome = Column(String(200), nullable=True)
+    uso = Column(String(80), nullable=True)
+    pavimentos = Column(Integer, nullable=True)
+    altura_m = Column(Numeric(8, 2), nullable=False, default=6.0)
+    fonte_altura = Column(String(40), nullable=False, default="heuristic")
+    qualidade = Column(String(20), nullable=False, default="Derivado")
+    fonte_footprint = Column(String(40), nullable=False, default="osm")
+    geom = Column(Geometry(geometry_type="MULTIPOLYGON", srid=4326, spatial_index=True))
+    atualizado_em = Column(DateTime, default=utc_now)
+
+    municipio = relationship("Municipio", back_populates="edificacoes")
+
 
 class EscolaInep(Base):
     __tablename__ = "escolas_inep"
@@ -145,7 +169,7 @@ class EscolaInep(Base):
     geom = Column(Geometry(geometry_type="POINT", srid=4326, spatial_index=True))
     fonte = Column(String(128), default="inep_censo_escolar")
     data_quality = Column(String(24), default="oficial")
-    atualizado_em = Column(DateTime, default=datetime.datetime.utcnow)
+    atualizado_em = Column(DateTime, default=utc_now)
 
     municipio = relationship("Municipio", back_populates="escolas_inep")
 
@@ -162,7 +186,7 @@ class TerritorioEspecial(Base):
     geom = Column(Geometry(geometry_type="MULTIPOLYGON", srid=4326, spatial_index=True))
     fonte = Column(String(128), default="bases_oficiais")
     data_quality = Column(String(24), default="oficial")
-    atualizado_em = Column(DateTime, default=datetime.datetime.utcnow)
+    atualizado_em = Column(DateTime, default=utc_now)
 
     municipio = relationship("Municipio", back_populates="territorios_especiais")
 
@@ -240,7 +264,7 @@ class IntegrationRun(Base):
     records_count = Column(Integer, default=0)
     last_success_at = Column(DateTime)
     error_message = Column(Text)
-    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    created_at = Column(DateTime, default=utc_now)
 
 
 class MunicipioFonteExterna(Base):
@@ -263,8 +287,8 @@ class MunicipioFonteExterna(Base):
     brasil_mais_data_quality = Column(String(24), default="ausente")
     fonte_metodo = Column(String(64), default="derivado_sinidu")
     sincronizado_em = Column(DateTime, nullable=True)
-    created_at = Column(DateTime, default=datetime.datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+    created_at = Column(DateTime, default=utc_now)
+    updated_at = Column(DateTime, default=utc_now, onupdate=utc_now)
 
     municipio = relationship("Municipio")
 
@@ -287,8 +311,8 @@ class MunicipioSingedlabRs(Base):
     fonte_url = Column(Text, default="https://www.ibge.gov.br/singedlab/dados-apoio-rs.php")
     fonte_ref = Column(Text, nullable=True)
     sincronizado_em = Column(DateTime, nullable=True)
-    created_at = Column(DateTime, default=datetime.datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+    created_at = Column(DateTime, default=utc_now)
+    updated_at = Column(DateTime, default=utc_now, onupdate=utc_now)
 
     municipio = relationship("Municipio")
 
@@ -320,7 +344,7 @@ class CasoSucesso(Base):
     fonte_referencia = Column(Text, nullable=True)
     tags = Column(ARRAY(String), nullable=True)
     imagem_url = Column(Text, nullable=True)
-    created_at = Column(DateTime, default=datetime.datetime.utcnow, nullable=True)
+    created_at = Column(DateTime, default=utc_now, nullable=True)
 
 
 class RelatorioMunicipal(Base):
@@ -335,7 +359,7 @@ class RelatorioMunicipal(Base):
     status = Column(String(20), default="concluido")  # gerando, concluido, falha
     erro_mensagem = Column(Text, nullable=True)
     sha256_hash = Column(String(64), nullable=True, index=True)
-    gerado_em = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)
+    gerado_em = Column(DateTime, default=utc_now, nullable=False)
 
     municipio = relationship("Municipio")
 
@@ -353,7 +377,7 @@ class AuditLog(Base):
     metadata_json = Column("metadata", JSON, default=dict)
     ip_address = Column(String(45), nullable=True)
     user_agent = Column(String(512), nullable=True)
-    created_at = Column(DateTime, default=datetime.datetime.utcnow, nullable=False, index=True)
+    created_at = Column(DateTime, default=utc_now, nullable=False, index=True)
 
 
 class DiagnosticoExecutivo(Base):
@@ -370,7 +394,7 @@ class DiagnosticoExecutivo(Base):
     narrativa_ia = Column(Text, nullable=True)
     narrativa_ia_meta = Column(JSON, default=dict)
     origem = Column(String(24), default="manual")
-    gerado_em = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)
+    gerado_em = Column(DateTime, default=utc_now, nullable=False)
 
     municipio = relationship("Municipio")
 
@@ -388,7 +412,7 @@ class PlanoAcaoMunicipal(Base):
     headline = Column(Text, nullable=True)
     conteudo = Column(JSON, default=dict)
     origem = Column(String(24), default="manual")
-    gerado_em = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)
+    gerado_em = Column(DateTime, default=utc_now, nullable=False)
 
     municipio = relationship("Municipio")
 
@@ -404,7 +428,7 @@ class RagDocument(Base):
     chunk_idx = Column(Integer, nullable=False, default=0)
     content = Column(Text, nullable=False)
     doc_meta = Column("metadata", JSON, default=dict)
-    created_at = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)
+    created_at = Column(DateTime, default=utc_now, nullable=False)
 
 
 class MunicipioSeed(Base):
@@ -431,8 +455,8 @@ class MunicipioSeed(Base):
     integration_steps = Column(JSON, default=dict)
     prioridade = Column(Integer, default=0)
     geom_fonte = Column(String(40), nullable=True)
-    created_at = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)
-    updated_at = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)
+    created_at = Column(DateTime, default=utc_now, nullable=False)
+    updated_at = Column(DateTime, default=utc_now, nullable=False)
 
 
 class EstabelecimentoSaude(Base):
@@ -448,7 +472,7 @@ class EstabelecimentoSaude(Base):
     esf = Column(Boolean, default=False)
     geom = Column(Geometry(geometry_type="POINT", srid=4326, spatial_index=True))
     fonte = Column(String(80), default="CNES/DataSUS")
-    created_at = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)
+    created_at = Column(DateTime, default=utc_now, nullable=False)
 
     municipio = relationship("Municipio")
 
@@ -469,7 +493,7 @@ class MunicipioSaude(Base):
     cobertura_saude_score = Column(Numeric(6, 3), nullable=True)
     ano_ref = Column(Integer, nullable=True)
     lacunas = Column(JSON, default=list)
-    updated_at = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=utc_now, nullable=False)
 
 
 class MunicipioSeguranca(Base):
@@ -484,7 +508,7 @@ class MunicipioSeguranca(Base):
     taxa_100k = Column(Numeric(10, 2), nullable=True)
     cobertura_seguranca_score = Column(Numeric(6, 3), nullable=True)
     fonte = Column(String(80), default="SINESP/dados.gov.br")
-    updated_at = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=utc_now, nullable=False)
 
 
 class ContingencyPlan(Base):
@@ -494,19 +518,22 @@ class ContingencyPlan(Base):
     municipio_id = Column(Integer, ForeignKey("municipios.id", ondelete="CASCADE"), nullable=False, index=True)
     cenario_tipo = Column(String(20), nullable=False)  # INUNDACAO | DESLIZAMENTO | MULTIPLO
     nivel_alerta = Column(String(10), nullable=False, default="VERDE")
-    data_criacao = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)
-    data_revisao = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)
+    data_criacao = Column(DateTime, default=utc_now, nullable=False)
+    data_revisao = Column(DateTime, default=utc_now, nullable=False)
     criado_por = Column(String(120), default="sistema")
     zonas_evacuacao = Column(JSON, default=list)
     rotas_fuga = Column(JSON, default=list)
     pontos_apoio = Column(JSON, default=list)
     contatos_defesa_civil = Column(JSON, default=list)
     acoes_por_nivel = Column(JSON, default=dict)
+    recursos_operacionais = Column(JSON, default=list)
+    protocolo_campo = Column(JSON, default=dict)
+    cobrade_codigo = Column(String(32), nullable=True)
     status = Column(String(20), default="RASCUNHO")  # RASCUNHO | ATIVO | ARQUIVADO
     versao = Column(Integer, default=1)
     simulacao_ref = Column(JSON, nullable=True)
-    created_at = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)
-    updated_at = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)
+    created_at = Column(DateTime, default=utc_now, nullable=False)
+    updated_at = Column(DateTime, default=utc_now, nullable=False)
 
     municipio = relationship("Municipio")
     revisions = relationship("ContingencyPlanRevision", back_populates="plan", cascade="all, delete-orphan")
@@ -519,7 +546,7 @@ class ContingencyPlanRevision(Base):
     plan_id = Column(Integer, ForeignKey("contingency_plans.id", ondelete="CASCADE"), nullable=False, index=True)
     versao = Column(Integer, nullable=False)
     snapshot = Column(JSON, nullable=False)
-    revisado_em = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)
+    revisado_em = Column(DateTime, default=utc_now, nullable=False)
     revisado_por = Column(String(120), default="sistema")
 
     plan = relationship("ContingencyPlan", back_populates="revisions")
@@ -536,7 +563,7 @@ class MonitoringAlert(Base):
     titulo = Column(String(255), nullable=False)
     mensagem = Column(Text, nullable=True)
     payload = Column(JSON, default=dict)
-    created_at = Column(DateTime, default=datetime.datetime.utcnow, nullable=False, index=True)
+    created_at = Column(DateTime, default=utc_now, nullable=False, index=True)
     expires_at = Column(DateTime, nullable=True)
 
 
@@ -551,7 +578,7 @@ class WeatherForecastCache(Base):
     precip_72h_mm = Column(Numeric(8, 2), default=0)
     risk_probability = Column(Numeric(5, 4), default=0)
     raw_payload = Column(JSON, nullable=True)
-    fetched_at = Column(DateTime, default=datetime.datetime.utcnow, nullable=False, index=True)
+    fetched_at = Column(DateTime, default=utc_now, nullable=False, index=True)
 
 
 class MunicipioGeoportalPublicacao(Base):
@@ -573,5 +600,5 @@ class MunicipioGeoportalPublicacao(Base):
     mensagem = Column(Text, nullable=True)
     geojson_snapshot = Column(JSON, nullable=True)
     ativo = Column(Boolean, default=True)
-    publicado_em = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)
+    publicado_em = Column(DateTime, default=utc_now, nullable=False)
     importado_em = Column(DateTime, nullable=True)

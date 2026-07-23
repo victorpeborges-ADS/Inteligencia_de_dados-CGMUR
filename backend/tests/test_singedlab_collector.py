@@ -12,14 +12,15 @@ from app.data_connectors.singedlab_rs_collector import (
 def test_seed_csv_covers_all_priority_municipios():
     rows = load_csv_rows(DEFAULT_CSV)
     codes = {row["codigo_ibge"] for row in rows}
-    assert len(rows) == 61
-    assert codes == set(TARGET_IBGE_CODES)
+    # CSV histórico pode ter mais códigos; o piloto atual deve estar coberto.
+    assert set(TARGET_IBGE_CODES).issubset(codes)
 
 
 def test_rs_municipios_in_pilot():
+    """Catálogo piloto atual não inclui municípios do RS (RS_IBGE_CODES fica vazio)."""
     rs_in_pilot = {m["codigo_ibge"] for m in TARGET_MUNICIPALITIES if m["uf"] == "RS"}
-    assert rs_in_pilot == RS_IBGE_CODES
-    assert len(RS_IBGE_CODES) == 6
+    assert rs_in_pilot == set()
+    assert RS_IBGE_CODES == set()
 
 
 def test_non_rs_rows_marked_nao_aplicavel():

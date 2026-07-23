@@ -7,7 +7,6 @@ não estão disponíveis, com `data_quality` explícito (estimado / referencia_d
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
 from typing import Any
 
 from sqlalchemy.orm import Session
@@ -19,13 +18,10 @@ from app.models import (
     MunicipioFonteExterna,
     MunicipioIbge,
 )
+from app.timeutil import utc_now
 
 # Fatores de emissão simplificados (tCO2/ habitante/ano) — proxy SIRENE até inventário oficial
 _EMISSAO_PER_CAPITA_TCO2 = 1.8
-
-
-def _utcnow() -> datetime:
-    return datetime.now(timezone.utc)
 
 
 def _quality_label(score: float | None, *, min_integrado: float = 0.65) -> str:
@@ -38,37 +34,57 @@ def _quality_label(score: float | None, *, min_integrado: float = 0.65) -> str:
     return "lacuna"
 
 
-def _adapta_indicators(db: Session, muni: Municipio | None, codigo_ibge: str) -> dict[str, Any]:
-    stats = (
+def _mapbiomas_veg_pct_by_year(db: Session, codigo_ibge: str) -> list[tuple[int, float]]:
+    """%(vegetação+floresta) por ano a partir de area_ha × classe_uso."""
+    code = str(codigo_ibge).zfill(7)[:7]
+    rows = (
         db.query(MapBiomasMunicipalStat)
-        .filter(MapBiomasMunicipalStat.codigo_ibge == codigo_ibge)
+        .filter(MapBiomasMunicipalStat.codigo_ibge == code)
         .order_by(MapBiomasMunicipalStat.ano.desc())
-        .limit(5)
         .all()
     )
-    vegetacao_pct = None
-    if stats:
-        vegetacao_pct = float(stats[0].vegetacao_pct or stats[0].floresta_pct or 0)
-    elif muni:
+    if not rows:
+        return []
+    by_year: dict[int, dict[str, float]] = {}
+    for r in rows:
+        ano = int(r.ano)
+        bucket = by_year.setdefault(ano, {"veg": 0.0, "total": 0.0})
+        ha = float(r.area_ha or 0)
+        bucket["total"] += ha
+        classe = (r.classe_uso or "").lower()
+        if any(k in classe for k in ("florest", "vegeta", "formação", "formacao", "mangue", "savana")):
+            bucket["veg"] += ha
+    series: list[tuple[int, float]] = []
+    for ano, b in sorted(by_year.items(), reverse=True):
+        if b["total"] <= 0:
+            continue
+        series.append((ano, round(100.0 * b["veg"] / b["total"], 2)))
+    return series
+
+
+def _adapta_indicators(db: Session, muni: Municipio | None, codigo_ibge: str) -> dict[str, Any]:
+    series = _mapbiomas_veg_pct_by_year(db, codigo_ibge)
+    vegetacao_pct = series[0][1] if series else None
+
+    if vegetacao_pct is None and muni:
         cob = (
             db.query(CoberturaVegetalMapBiomas)
             .filter(CoberturaVegetalMapBiomas.municipio_id == muni.id)
             .order_by(CoberturaVegetalMapBiomas.ano.desc())
             .first()
         )
-        if cob:
-            vegetacao_pct = float(cob.percentual_vegetacao or 0)
+        if cob and cob.percentual_vegetacao is not None:
+            vegetacao_pct = float(cob.percentual_vegetacao)
 
     if vegetacao_pct is None:
         return {"score": None, "indicadores": {}, "quality": "ausente"}
 
     # Score adaptação: cobertura vegetal + estabilidade da série MapBiomas
     stability = 1.0
-    if len(stats) >= 2:
-        vals = [float(s.vegetacao_pct or s.floresta_pct or 0) for s in stats[:3]]
-        if vals:
-            spread = max(vals) - min(vals)
-            stability = max(0.0, 1.0 - spread / 100.0)
+    if len(series) >= 2:
+        vals = [pct for _, pct in series[:3]]
+        spread = max(vals) - min(vals)
+        stability = max(0.0, 1.0 - spread / 100.0)
 
     score = min(1.0, (vegetacao_pct / 100.0) * 0.6 + stability * 0.4)
     return {
@@ -76,6 +92,7 @@ def _adapta_indicators(db: Session, muni: Municipio | None, codigo_ibge: str) ->
         "indicadores": {
             "vegetacao_pct": vegetacao_pct,
             "estabilidade_serie": round(stability, 3),
+            "ano_ref": series[0][0] if series else None,
             "fonte_referencia": "MapBiomas + proxy AdaptaBrasil",
         },
         "quality": _quality_label(score),
@@ -196,8 +213,8 @@ def collect_external_sources(db: Session, codigo_ibge: str) -> dict[str, Any]:
     row.brasil_mais_indicadores = brasil_mais.get("indicadores") or {}
     row.brasil_mais_data_quality = brasil_mais.get("quality", "ausente")
     row.fonte_metodo = "derivado_sinidu"
-    row.sincronizado_em = _utcnow()
-    row.updated_at = _utcnow()
+    row.sincronizado_em = utc_now()
+    row.updated_at = utc_now()
 
     db.flush()
     return {

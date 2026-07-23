@@ -781,7 +781,7 @@ def collect_mapbiomas_municipality(db: Session, codigo_ibge: str, force: bool = 
     return result
 
 
-def sync_mapbiomas_batch(db: Session, *, limit: int = 61, force: bool = False) -> dict[str, Any]:
+def sync_mapbiomas_batch(db: Session, *, limit: int = 6, force: bool = False) -> dict[str, Any]:
     """Sincroniza MapBiomas para municípios já carregados no banco."""
     from app.data_connectors.constants import TARGET_IBGE_CODES
 
@@ -811,8 +811,16 @@ def sync_mapbiomas_batch(db: Session, *, limit: int = 61, force: bool = False) -
 
 
 def get_urban_series(db: Session, codigo_ibge: str) -> list[dict[str, Any]]:
-    """Série área urbanizada (km²) para gráfico climático."""
+    """Série área urbanizada (km² e % do município) — 17e.2."""
     code = str(codigo_ibge).zfill(7)[:7]
+    muni = db.query(Municipio).filter(Municipio.codigo_ibge == code).first()
+    area_km2 = float(muni.area_km2) if muni and muni.area_km2 else 0.0
+
+    def _pct(area_urb_km2: float) -> float | None:
+        if area_km2 <= 0:
+            return None
+        return round(100.0 * area_urb_km2 / area_km2, 2)
+
     rows = (
         db.query(MapBiomasMunicipalStat)
         .filter(
@@ -823,23 +831,27 @@ def get_urban_series(db: Session, codigo_ibge: str) -> list[dict[str, Any]]:
         .all()
     )
     if rows:
-        return [
-            {
+        out = []
+        for r in rows:
+            km2 = round(float(r.area_ha) / 100.0, 2)
+            out.append({
                 "ano": r.ano,
-                "area_urbanizada_km2": round(float(r.area_ha) / 100.0, 2),
-                "qualidade_dado": "Oficial" if r.data_quality in ("oficial", "referencia_mapbiomas") else "Derivado",
-            }
-            for r in rows
-        ]
+                "area_urbanizada_km2": km2,
+                "pct_area_municipal": _pct(km2),
+                "qualidade_dado": (
+                    "Oficial" if r.data_quality in ("oficial", "referencia_mapbiomas") else "Derivado"
+                ),
+            })
+        return out
 
-    muni = db.query(Municipio).filter(Municipio.codigo_ibge == code).first()
     if not muni:
         return []
-    derived = build_landcover_series(code, float(muni.area_km2 or 0), int(muni.populacao or 0))
+    derived = build_landcover_series(code, area_km2, int(muni.populacao or 0))
     return [
         {
             "ano": r["ano"],
             "area_urbanizada_km2": round(float(r["area_ha"]) / 100.0, 2),
+            "pct_area_municipal": _pct(round(float(r["area_ha"]) / 100.0, 2)),
             "qualidade_dado": "Derivado",
         }
         for r in derived

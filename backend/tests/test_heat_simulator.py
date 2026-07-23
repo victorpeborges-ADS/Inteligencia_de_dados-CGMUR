@@ -31,24 +31,45 @@ def test_heatwave_amplification_floor_at_one():
     assert _heatwave_amplification(25.0, 27.0) == 1.0
 
 
-def test_delta_t_increases_with_impermeability():
-    low = _delta_t_bairro(
+def test_delta_t_decreases_with_shade_and_vent():
+    base = _delta_t_bairro(
         land=BASE_LAND,
-        density_norm=0.5,
+        density_norm=0.6,
         temperatura_pico_c=36.0,
         baseline_normal_c=27.0,
         perda_vegetal_pct=0,
         impermeabilizacao_extra_pct=0,
+        shade_factor=0.0,
+        ventilacao_factor=0.0,
     )
-    high = _delta_t_bairro(
-        land={**BASE_LAND, "impermeabilidade": 0.95, "vegetacao": 0.03},
-        density_norm=0.5,
+    shaded = _delta_t_bairro(
+        land=BASE_LAND,
+        density_norm=0.6,
         temperatura_pico_c=36.0,
         baseline_normal_c=27.0,
         perda_vegetal_pct=0,
         impermeabilizacao_extra_pct=0,
+        shade_factor=0.8,
+        ventilacao_factor=0.0,
     )
-    assert high > low
+    ventilated = _delta_t_bairro(
+        land=BASE_LAND,
+        density_norm=0.6,
+        temperatura_pico_c=36.0,
+        baseline_normal_c=27.0,
+        perda_vegetal_pct=0,
+        impermeabilizacao_extra_pct=0,
+        shade_factor=0.0,
+        ventilacao_factor=0.8,
+    )
+    assert shaded < base
+    assert ventilated < base
+
+
+def test_heat_model_version():
+    from app.services.heat_simulator import HEAT_MODEL_VERSION
+
+    assert HEAT_MODEL_VERSION == "1.2"
 
 
 def test_delta_t_increases_with_vegetation_loss():

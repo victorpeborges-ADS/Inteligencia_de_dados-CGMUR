@@ -58,7 +58,7 @@ function upsertFillLayer(map: MapLibreMap, layerName: string, opts?: { flatOpaci
   }
 }
 
-function upsertExtrusionLayer(map: MapLibreMap, layerName: string) {
+function upsertExtrusionLayer(map: MapLibreMap, layerName: string, opts?: { minzoom?: number }) {
   const id = extrusionId(layerName);
   if (!map.getLayer(id)) {
     map.addLayer({
@@ -66,6 +66,7 @@ function upsertExtrusionLayer(map: MapLibreMap, layerName: string) {
       type: 'fill-extrusion',
       source: sourceId(layerName),
       filter: POLYGON_FILTER,
+      minzoom: opts?.minzoom,
       paint: {
         'fill-extrusion-color': ['coalesce', ['get', '_fill'], '#0284c7'],
         'fill-extrusion-height': ['coalesce', ['get', '_extrusionHeightM'], 0.25],
@@ -332,4 +333,363 @@ export function syncThematicLayers(
     if (!wanted.has(layerName)) removeLayerBundle(map, layerName);
   });
   map.__siniduLayerIds = Array.from(wanted);
+}
+
+const LIVE_SENSORS_SRC = 'src-live-sensors';
+const LIVE_SENSORS_CLUSTER = 'live-sensors-cluster';
+const LIVE_SENSORS_COUNT = 'live-sensors-count';
+const LIVE_SENSORS_HALO = 'live-sensors-halo';
+const LIVE_SENSORS_CORE = 'live-sensors-core';
+
+function removeLayersAndSource(map: MapLibreMap, layerIds: string[], sourceIdToRemove: string) {
+  layerIds.forEach((id) => {
+    if (map.getLayer(id)) map.removeLayer(id);
+  });
+  if (map.getSource(sourceIdToRemove)) map.removeSource(sourceIdToRemove);
+}
+
+function upsertClusterSource(
+  map: MapLibreMap,
+  id: string,
+  data: { type: 'FeatureCollection'; features: any[] },
+  opts: { clusterMaxZoom: number; clusterRadius: number; layerIdsBeforeRecreate: string[] },
+) {
+  const existing = map.getSource(id);
+  if (existing?.__siniduCluster) {
+    existing.setData(data);
+    return;
+  }
+  if (existing) {
+    removeLayersAndSource(map, opts.layerIdsBeforeRecreate, id);
+  }
+  map.addSource(id, {
+    type: 'geojson',
+    data,
+    cluster: true,
+    clusterMaxZoom: opts.clusterMaxZoom,
+    clusterRadius: opts.clusterRadius,
+  });
+  map.getSource(id).__siniduCluster = true;
+}
+
+/** Overlay vivo CEMADEN/estações no gêmeo 3D (17e.3) + cluster (17f.10). */
+export function syncLiveSensorsOverlay(
+  map: MapLibreMap,
+  geojson: { type: 'FeatureCollection'; features: any[] } | null,
+  visible: boolean,
+) {
+  const sensorLayerIds = [
+    LIVE_SENSORS_COUNT,
+    LIVE_SENSORS_CLUSTER,
+    LIVE_SENSORS_HALO,
+    LIVE_SENSORS_CORE,
+  ];
+  if (!visible || !geojson?.features?.length) {
+    removeLayersAndSource(map, sensorLayerIds, LIVE_SENSORS_SRC);
+    return;
+  }
+
+  upsertClusterSource(map, LIVE_SENSORS_SRC, geojson, {
+    clusterMaxZoom: 13,
+    clusterRadius: 48,
+    layerIdsBeforeRecreate: sensorLayerIds,
+  });
+
+  if (!map.getLayer(LIVE_SENSORS_CLUSTER)) {
+    map.addLayer({
+      id: LIVE_SENSORS_CLUSTER,
+      type: 'circle',
+      source: LIVE_SENSORS_SRC,
+      filter: ['has', 'point_count'],
+      paint: {
+        'circle-color': '#f43f5e',
+        'circle-opacity': 0.78,
+        'circle-radius': ['step', ['get', 'point_count'], 16, 5, 22, 15, 28],
+        'circle-stroke-color': '#ffffff',
+        'circle-stroke-width': 1.5,
+      },
+    });
+  }
+
+  if (!map.getLayer(LIVE_SENSORS_COUNT)) {
+    map.addLayer({
+      id: LIVE_SENSORS_COUNT,
+      type: 'symbol',
+      source: LIVE_SENSORS_SRC,
+      filter: ['has', 'point_count'],
+      layout: {
+        'text-field': ['get', 'point_count_abbreviated'],
+        'text-size': 11,
+        'text-font': ['Open Sans Regular', 'Arial Unicode MS Regular'],
+      },
+      paint: { 'text-color': '#ffffff' },
+    });
+  }
+
+  if (!map.getLayer(LIVE_SENSORS_HALO)) {
+    map.addLayer({
+      id: LIVE_SENSORS_HALO,
+      type: 'circle',
+      source: LIVE_SENSORS_SRC,
+      filter: ['!', ['has', 'point_count']],
+      paint: {
+        'circle-color': ['coalesce', ['get', '_fill'], '#f43f5e'],
+        'circle-opacity': 0.28,
+        'circle-radius': 18,
+        'circle-blur': 0.6,
+        'circle-stroke-width': 0,
+      },
+    });
+  }
+
+  if (!map.getLayer(LIVE_SENSORS_CORE)) {
+    map.addLayer({
+      id: LIVE_SENSORS_CORE,
+      type: 'circle',
+      source: LIVE_SENSORS_SRC,
+      filter: ['!', ['has', 'point_count']],
+      paint: {
+        'circle-color': ['coalesce', ['get', '_fill'], '#f43f5e'],
+        'circle-opacity': ['coalesce', ['get', '_fillOpacity'], 0.92],
+        'circle-radius': ['coalesce', ['get', '_radius'], 8],
+        'circle-stroke-color': '#ffffff',
+        'circle-stroke-width': 1.5,
+      },
+    });
+  }
+
+  try {
+    map.moveLayer(LIVE_SENSORS_CLUSTER);
+    map.moveLayer(LIVE_SENSORS_COUNT);
+    map.moveLayer(LIVE_SENSORS_HALO);
+    map.moveLayer(LIVE_SENSORS_CORE);
+  } catch {
+    /* ignore */
+  }
+}
+
+/** Pulso do halo dos sensores vivos (chamar via rAF). */
+export function pulseLiveSensorsHalo(map: MapLibreMap, tMs: number) {
+  if (!map.getLayer(LIVE_SENSORS_HALO)) return;
+  const phase = (tMs % 1800) / 1800;
+  const radius = 14 + phase * 16;
+  const opacity = 0.38 * (1 - phase);
+  try {
+    map.setPaintProperty(LIVE_SENSORS_HALO, 'circle-radius', radius);
+    map.setPaintProperty(LIVE_SENSORS_HALO, 'circle-opacity', opacity);
+  } catch {
+    /* style mid-transition */
+  }
+}
+
+const CRITICAL_POIS_SRC = 'src-critical-pois';
+const CRITICAL_POIS_CLUSTER = 'critical-pois-cluster';
+const CRITICAL_POIS_COUNT = 'critical-pois-count';
+const CRITICAL_POIS_CIRCLE = 'critical-pois-circle';
+const CRITICAL_POIS_LABEL = 'critical-pois-label';
+
+const URBAN_CTX_SRC = 'src-urban-context';
+const URBAN_CTX_FILL = 'urban-context-fill';
+const URBAN_CTX_LINE = 'urban-context-line';
+
+const EDIF_MVT_SRC = 'src-edificacoes-mvt';
+const EDIF_MVT_EXT = 'extrusion-edificacoes-mvt';
+const EDIF_MVT_LINE = 'line-edificacoes-mvt';
+
+/** Remove overlay LOD1 — UI pausada (qualidade insuficiente). */
+export function clearEdificacoesMvt(map: MapLibreMap) {
+  removeLayersAndSource(map, [EDIF_MVT_EXT, EDIF_MVT_LINE], EDIF_MVT_SRC);
+}
+
+/** POIs críticos INEP/CNES/abrigos com rótulos (17f.3) + cluster (17f.10). */
+export function syncCriticalPoisOverlay(
+  map: MapLibreMap,
+  geojson: { type: 'FeatureCollection'; features: any[] } | null,
+  visible: boolean,
+) {
+  const poiLayerIds = [
+    CRITICAL_POIS_COUNT,
+    CRITICAL_POIS_CLUSTER,
+    CRITICAL_POIS_LABEL,
+    CRITICAL_POIS_CIRCLE,
+  ];
+  if (!visible || !geojson?.features?.length) {
+    removeLayersAndSource(map, poiLayerIds, CRITICAL_POIS_SRC);
+    return;
+  }
+
+  upsertClusterSource(map, CRITICAL_POIS_SRC, geojson, {
+    clusterMaxZoom: 13,
+    clusterRadius: 52,
+    layerIdsBeforeRecreate: poiLayerIds,
+  });
+
+  if (!map.getLayer(CRITICAL_POIS_CLUSTER)) {
+    map.addLayer({
+      id: CRITICAL_POIS_CLUSTER,
+      type: 'circle',
+      source: CRITICAL_POIS_SRC,
+      filter: ['has', 'point_count'],
+      paint: {
+        'circle-color': '#38bdf8',
+        'circle-opacity': 0.82,
+        'circle-radius': ['step', ['get', 'point_count'], 15, 8, 20, 20, 26],
+        'circle-stroke-color': '#0f172a',
+        'circle-stroke-width': 1.4,
+      },
+    });
+  }
+
+  if (!map.getLayer(CRITICAL_POIS_COUNT)) {
+    map.addLayer({
+      id: CRITICAL_POIS_COUNT,
+      type: 'symbol',
+      source: CRITICAL_POIS_SRC,
+      filter: ['has', 'point_count'],
+      layout: {
+        'text-field': ['get', 'point_count_abbreviated'],
+        'text-size': 11,
+        'text-font': ['Open Sans Regular', 'Arial Unicode MS Regular'],
+      },
+      paint: { 'text-color': '#0f172a' },
+    });
+  }
+
+  if (!map.getLayer(CRITICAL_POIS_CIRCLE)) {
+    map.addLayer({
+      id: CRITICAL_POIS_CIRCLE,
+      type: 'circle',
+      source: CRITICAL_POIS_SRC,
+      filter: ['!', ['has', 'point_count']],
+      paint: {
+        'circle-color': ['coalesce', ['get', '_fill'], '#38bdf8'],
+        'circle-opacity': ['coalesce', ['get', '_fillOpacity'], 0.95],
+        'circle-radius': ['coalesce', ['get', '_radius'], 7],
+        'circle-stroke-color': ['coalesce', ['get', '_stroke'], '#0f172a'],
+        'circle-stroke-width': 1.4,
+      },
+    });
+  }
+
+  if (!map.getLayer(CRITICAL_POIS_LABEL)) {
+    map.addLayer({
+      id: CRITICAL_POIS_LABEL,
+      type: 'symbol',
+      source: CRITICAL_POIS_SRC,
+      filter: ['!', ['has', 'point_count']],
+      layout: {
+        'text-field': ['coalesce', ['get', 'label'], ['get', 'nome'], ''],
+        'text-size': 11,
+        'text-offset': [0, 1.15],
+        'text-anchor': 'top',
+        'text-max-width': 10,
+        'text-font': ['Open Sans Regular', 'Arial Unicode MS Regular'],
+        'text-optional': true,
+        'symbol-sort-key': [
+          'match',
+          ['get', 'categoria'],
+          'abrigo',
+          0,
+          'saude',
+          1,
+          'escola',
+          2,
+          3,
+        ],
+      },
+      paint: {
+        'text-color': '#f8fafc',
+        'text-halo-color': '#0f172a',
+        'text-halo-width': 1.4,
+        'text-opacity': [
+          'interpolate',
+          ['linear'],
+          ['zoom'],
+          12,
+          0,
+          13.2,
+          0.85,
+          15,
+          1,
+        ],
+      },
+    });
+  }
+
+  try {
+    map.moveLayer(CRITICAL_POIS_CLUSTER);
+    map.moveLayer(CRITICAL_POIS_COUNT);
+    map.moveLayer(CRITICAL_POIS_CIRCLE);
+    map.moveLayer(CRITICAL_POIS_LABEL);
+  } catch {
+    /* ignore */
+  }
+}
+
+/** Hidrografia / vias / curvas de nível no gêmeo 3D (17f.6). */
+export function syncUrbanContextOverlay(
+  map: MapLibreMap,
+  geojson: { type: 'FeatureCollection'; features: any[] } | null,
+  visible: boolean,
+  opacity = 1,
+) {
+  if (!visible || !geojson?.features?.length) {
+    if (map.getLayer(URBAN_CTX_LINE)) map.removeLayer(URBAN_CTX_LINE);
+    if (map.getLayer(URBAN_CTX_FILL)) map.removeLayer(URBAN_CTX_FILL);
+    if (map.getSource(URBAN_CTX_SRC)) map.removeSource(URBAN_CTX_SRC);
+    return;
+  }
+
+  upsertSource(map, URBAN_CTX_SRC, geojson);
+  const o = Math.max(0, Math.min(1, opacity));
+
+  if (!map.getLayer(URBAN_CTX_FILL)) {
+    map.addLayer({
+      id: URBAN_CTX_FILL,
+      type: 'fill',
+      source: URBAN_CTX_SRC,
+      filter: POLYGON_FILTER,
+      paint: {
+        'fill-color': ['coalesce', ['get', '_fill'], '#0284c7'],
+        'fill-opacity': ['*', o, ['coalesce', ['get', '_fillOpacity'], 0.35]],
+      },
+    });
+  } else {
+    try {
+      map.setPaintProperty(URBAN_CTX_FILL, 'fill-opacity', [
+        '*',
+        o,
+        ['coalesce', ['get', '_fillOpacity'], 0.35],
+      ]);
+    } catch {
+      /* ignore */
+    }
+  }
+
+  if (!map.getLayer(URBAN_CTX_LINE)) {
+    map.addLayer({
+      id: URBAN_CTX_LINE,
+      type: 'line',
+      source: URBAN_CTX_SRC,
+      filter: ['any', POLYGON_FILTER, LINE_FILTER],
+      paint: {
+        'line-color': ['coalesce', ['get', '_stroke'], '#94a3b8'],
+        'line-width': ['coalesce', ['get', '_strokeWidth'], 1.2],
+        'line-opacity': o,
+      },
+    });
+  } else {
+    try {
+      map.setPaintProperty(URBAN_CTX_LINE, 'line-opacity', o);
+    } catch {
+      /* ignore */
+    }
+  }
+
+  try {
+    map.moveLayer(URBAN_CTX_FILL);
+    map.moveLayer(URBAN_CTX_LINE);
+  } catch {
+    /* ignore */
+  }
 }

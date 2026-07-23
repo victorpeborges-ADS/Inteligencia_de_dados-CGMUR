@@ -94,7 +94,7 @@ def system_overview(
 
     batch_cov = batch_coverage_summary(db)
     ctm_summary = build_ctm_operational_summary(db)
-    dem_meta = dem_status(limit=61)
+    dem_meta = dem_status(limit=6)
     boot_codes = settings.BOOT_PRIORITY_IBGE_CODES
     from app.services.dem_processor import is_processed
 
@@ -208,43 +208,43 @@ def get_background_job(
 
 @router.post("/jobs/onboarding-batch")
 def start_onboarding_batch_job(
-    limit: int = 61,
+    limit: int = 6,
     status: str = "pendente",
     force: bool = False,
     _admin: User = Depends(require_role(Role.ADMIN)),
 ):
     from app.services.background_jobs import get_job, run_onboarding_batch_job
 
-    job_id = run_onboarding_batch_job(limit=min(limit, 61), status_filter=status, force=force)
+    job_id = run_onboarding_batch_job(limit=min(limit, 6), status_filter=status, force=force)
     return {"job_id": job_id, "job": get_job(job_id)}
 
 
 @router.post("/jobs/mapbiomas-batch")
 def start_mapbiomas_batch_job(
-    limit: int = 61,
+    limit: int = 6,
     force: bool = False,
     _admin: User = Depends(require_role(Role.ADMIN)),
 ):
     from app.services.background_jobs import get_job, run_mapbiomas_batch_job
 
-    job_id = run_mapbiomas_batch_job(limit=min(limit, 61), force=force)
+    job_id = run_mapbiomas_batch_job(limit=min(limit, 6), force=force)
     return {"job_id": job_id, "job": get_job(job_id)}
 
 
 @router.post("/jobs/pipeline")
 def start_pipeline_job(
-    onboarding_limit: int = 61,
+    onboarding_limit: int = 6,
     _admin: User = Depends(require_role(Role.ADMIN)),
 ):
     from app.services.background_jobs import get_job, run_pipeline_job
 
-    job_id = run_pipeline_job(onboarding_limit=min(onboarding_limit, 61))
+    job_id = run_pipeline_job(onboarding_limit=min(onboarding_limit, 6))
     return {"job_id": job_id, "job": get_job(job_id)}
 
 
 @router.post("/jobs/diagnostics-batch")
 def start_diagnostics_batch_job(
-    limit: int = 61,
+    limit: int = 6,
     codigos: str | None = None,
     _admin: User = Depends(require_role(Role.ADMIN)),
 ):
@@ -255,13 +255,13 @@ def start_diagnostics_batch_job(
         return {"job_id": existing["id"], "job": existing, "reused": True}
 
     codes = [c.strip().zfill(7)[:7] for c in codigos.split(",") if c.strip()] if codigos else None
-    job_id = run_diagnostics_batch_job(limit=min(limit, 61), codigos=codes)
+    job_id = run_diagnostics_batch_job(limit=min(limit, 6), codigos=codes)
     return {"job_id": job_id, "job": get_job(job_id), "reused": False}
 
 
 @router.post("/jobs/reports-batch")
 def start_reports_batch_job(
-    limit: int = 61,
+    limit: int = 6,
     force: bool = False,
     codigos: str | None = None,
     _admin: User = Depends(require_role(Role.ADMIN)),
@@ -273,30 +273,30 @@ def start_reports_batch_job(
         return {"job_id": existing["id"], "job": existing, "reused": True}
 
     codes = [c.strip().zfill(7)[:7] for c in codigos.split(",") if c.strip()] if codigos else None
-    job_id = run_reports_batch_job(limit=min(limit, 61), force=force, codigos=codes)
+    job_id = run_reports_batch_job(limit=min(limit, 6), force=force, codigos=codes)
     return {"job_id": job_id, "job": get_job(job_id), "reused": False}
 
 
 @router.post("/jobs/fontes-externas-batch")
 def start_external_sources_batch_job(
-    limit: int = 61,
+    limit: int = 6,
     _admin: User = Depends(require_role(Role.ADMIN)),
 ):
     from app.services.background_jobs import get_job, run_external_sources_batch_job
 
-    job_id = run_external_sources_batch_job(limit=min(limit, 61))
+    job_id = run_external_sources_batch_job(limit=min(limit, 6))
     return {"job_id": job_id, "job": get_job(job_id)}
 
 
 @router.post("/jobs/bairros-batch")
 def start_bairros_batch_job(
-    limit: int = 61,
+    limit: int = 6,
     force: bool = False,
     _admin: User = Depends(require_role(Role.ADMIN)),
 ):
     from app.services.background_jobs import get_job, run_bairros_batch_job
 
-    job_id = run_bairros_batch_job(limit=min(limit, 61), force=force)
+    job_id = run_bairros_batch_job(limit=min(limit, 6), force=force)
     return {"job_id": job_id, "job": get_job(job_id)}
 
 
@@ -320,26 +320,26 @@ def start_ctm_batch_job(
 
 @router.post("/jobs/dem-batch")
 def start_dem_batch_job(
-    limit: int = 61,
+    limit: int = 6,
     force: bool = False,
     _admin: User = Depends(require_role(Role.ADMIN)),
 ):
     from app.services.background_jobs import get_job, run_dem_batch_job
 
-    job_id = run_dem_batch_job(limit=min(limit, 61), force=force)
+    job_id = run_dem_batch_job(limit=min(limit, 6), force=force)
     return {"job_id": job_id, "job": get_job(job_id)}
 
 
 @router.post("/jobs/homologation-full")
 def start_homologation_full_job(
-    onboarding_limit: int = 61,
+    onboarding_limit: int = 6,
     force_dem: bool = False,
     _admin: User = Depends(require_role(Role.ADMIN)),
 ):
     from app.services.background_jobs import get_job, run_full_homologation_job
 
     job_id = run_full_homologation_job(
-        onboarding_limit=min(onboarding_limit, 61),
+        onboarding_limit=min(onboarding_limit, 6),
         force_dem=force_dem,
     )
     return {"job_id": job_id, "job": get_job(job_id)}

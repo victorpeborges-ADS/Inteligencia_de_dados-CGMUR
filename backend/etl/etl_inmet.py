@@ -1,3 +1,4 @@
+from app.timeutil import utc_now
 import datetime
 import logging
 from sqlalchemy.orm import Session
@@ -99,7 +100,7 @@ def run_inmet_environmental_etl(db: Session, muni_id: int):
         alt_obj = AlertaCemaden(
             municipio_id=muni_id,
             nivel_alerta=a["nivel"],
-            data_alerta=datetime.datetime.utcnow(),
+            data_alerta=utc_now(),
             descricao=a["desc"],
             geom=f"SRID=4326;{a['geom'].wkt}"
         )

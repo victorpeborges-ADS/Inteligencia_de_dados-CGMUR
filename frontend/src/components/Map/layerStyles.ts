@@ -105,6 +105,20 @@ export function getLayerStyle(
     return { fillColor: scoreColor(value, ['#16a34a', '#facc15', '#f97316']), fillOpacity: 0.38, color: '#dcfce7', weight: 1.1 };
   }
 
+  if (layerName === 'risco_consolidado') {
+    const nivel = String(props.nivel || 'VERDE').toUpperCase();
+    if (nivel === 'VERMELHO') {
+      return { fillColor: '#dc2626', fillOpacity: 0.62, color: '#7f1d1d', weight: 1.5 };
+    }
+    if (nivel === 'LARANJA') {
+      return { fillColor: '#ea580c', fillOpacity: 0.55, color: '#9a3412', weight: 1.35 };
+    }
+    if (nivel === 'AMARELO') {
+      return { fillColor: '#eab308', fillOpacity: 0.48, color: '#a16207', weight: 1.2 };
+    }
+    return { fillColor: '#22c55e', fillOpacity: 0.38, color: '#15803d', weight: 1.0 };
+  }
+
   if (layerName === 'prioridade_planejamento') {
     const cls = props.classe_prioridade;
     if (cls === 'ALTA') {
@@ -240,15 +254,25 @@ export function getLayerStyle(
 export function enrichGeoJSON(layerName: string, geojson: any): { type: 'FeatureCollection'; features: any[] } {
   const features = (geojson?.features || []).map((feature: any) => {
     const style = getLayerStyle(layerName, feature);
+    const props = feature.properties || {};
+    const extrusion =
+      props._extrusionHeightM != null
+        ? Number(props._extrusionHeightM)
+        : props.altura_m != null
+          ? Number(props.altura_m)
+          : undefined;
     return {
       ...feature,
       properties: {
-        ...feature.properties,
+        ...props,
         _fill: style.fillColor,
         _fillOpacity: style.fillOpacity,
         _stroke: style.color,
         _strokeWidth: style.weight,
         _radius: style.radius ?? 6,
+        ...(extrusion != null && Number.isFinite(extrusion)
+          ? { _extrusionHeightM: Math.max(1.5, extrusion) }
+          : {}),
       },
     };
   });

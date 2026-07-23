@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { MapContainer as LeafletMap, TileLayer, GeoJSON, useMap } from 'react-leaflet';
+import { ChevronDown, ChevronRight, ChevronUp, AlertTriangle, X } from 'lucide-react';
 import L from 'leaflet';
 import { api } from '@/utils/api';
 import { getLayerStyle, getSimulationFeatureStyle } from './layerStyles';
@@ -28,6 +29,7 @@ import LayerMetaBlock from './LayerMetaBlock';
 import RegionalOverlayPanel from './RegionalOverlayPanel';
 import ActiveLayersPanel from './ActiveLayersPanel';
 import { buildVectorRenderOrder } from '@/utils/activeLayerOrder';
+import { MAP_CENTER_LEFT } from '@/config/mapOverlayLayout';
 import {
   EXTERNAL_RASTER_LAYER_IDS,
   isExternalRasterLayer,
@@ -35,6 +37,9 @@ import {
   type ExternalRasterId,
 } from '@/config/externalRasters';
 import { buildLayerFetchParams } from '@/config/layerTemporal';
+
+const LEGEND_PANEL_COLLAPSED_KEY = 'sinidu-legend-panel-collapsed';
+const LEGEND_SECTIONS_COLLAPSED_KEY = 'sinidu-legend-sections-collapsed';
 
 type RasterRuntimeConfig = {
   tileUrl: string;
@@ -93,6 +98,7 @@ const layerTitles: Record<string, string> = {
   saneamento_drenagem: 'Saneamento e Drenagem',
   adaptacao_climatica: 'Adaptação Climática',
   prioridade_planejamento: 'Prioridade de Planejamento',
+  risco_consolidado: 'Risco consolidado',
   lacunas_dados: 'Lacunas de Dados',
   saude_risco: 'Saúde × Risco',
   seguranca_publica: 'Segurança Pública',
@@ -152,6 +158,12 @@ const legendByLayer: Record<string, LegendItem[]> = {
     { color: '#be123c', label: 'Prioridade alta' },
     { color: '#9333ea', label: 'Prioridade média' },
     { color: '#c4b5fd', label: 'Prioridade baixa' }
+  ],
+  risco_consolidado: [
+    { color: '#dc2626', label: 'Vermelho — crítico' },
+    { color: '#ea580c', label: 'Laranja — elevado' },
+    { color: '#eab308', label: 'Amarelo — atenção' },
+    { color: '#22c55e', label: 'Verde — baixo' },
   ],
   lacunas_dados: [
     { color: '#16a34a', label: 'Maturidade alta' },
@@ -272,7 +284,8 @@ export default function MapContainer({
 }: MapProps) {
   const [layerData, setLayerData] = useState<Record<string, any>>({});
   const [loading, setLoading] = useState(false);
-  const [basemap, setBasemap] = useState<MapBasemapId>('dark');
+  const [basemap, setBasemap] = useState<MapBasemapId>('satellite');
+  const [failedLayers, setFailedLayers] = useState<string[]>([]);
   const [rasterConfigs, setRasterConfigs] = useState<Record<string, RasterRuntimeConfig>>({});
   const [rasterRescale, setRasterRescale] = useState<Record<ExternalRasterId, { min: number; max: number }>>(() => {
     const init = {} as Record<ExternalRasterId, { min: number; max: number }>;
@@ -287,17 +300,43 @@ export default function MapContainer({
   const [rasterLoading, setRasterLoading] = useState(false);
   const [regionalData, setRegionalData] = useState<RegionalOverlayResponse | null>(null);
   const [regionalLoading, setRegionalLoading] = useState(false);
-
-  const showRegionalOverlay = useAppStore((s) => s.showRegionalOverlay);
-  const colorMode = useAppStore((s) => s.colorMode);
-  const regionalEscopo = useAppStore((s) => s.regionalEscopo);
+  const [legendPanelCollapsed, setLegendPanelCollapsed] = useState(false);
+  const [collapsedLegendSections, setCollapsedLegendSections] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
-    setBasemap((prev) => {
-      if (prev === 'satellite') return prev;
-      return colorMode === 'light' ? 'light' : 'dark';
-    });
-  }, [colorMode]);
+    try {
+      if (localStorage.getItem(LEGEND_PANEL_COLLAPSED_KEY) === 'true') {
+        setLegendPanelCollapsed(true);
+      }
+      const raw = localStorage.getItem(LEGEND_SECTIONS_COLLAPSED_KEY);
+      if (raw) setCollapsedLegendSections(JSON.parse(raw));
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(LEGEND_PANEL_COLLAPSED_KEY, String(legendPanelCollapsed));
+    } catch {
+      /* ignore */
+    }
+  }, [legendPanelCollapsed]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(LEGEND_SECTIONS_COLLAPSED_KEY, JSON.stringify(collapsedLegendSections));
+    } catch {
+      /* ignore */
+    }
+  }, [collapsedLegendSections]);
+
+  const toggleLegendSection = (sectionId: string) => {
+    setCollapsedLegendSections((prev) => ({ ...prev, [sectionId]: !prev[sectionId] }));
+  };
+
+  const showRegionalOverlay = useAppStore((s) => s.showRegionalOverlay);
+  const regionalEscopo = useAppStore((s) => s.regionalEscopo);
   const setRegionalEscopo = useAppStore((s) => s.setRegionalEscopo);
   const setShowRegionalOverlay = useAppStore((s) => s.setShowRegionalOverlay);
   const setCompareModalOpen = useAppStore((s) => s.setCompareModalOpen);
@@ -338,6 +377,7 @@ export default function MapContainer({
       setMapSpatialReady(false);
     }
     setLoading(true);
+    setFailedLayers([]);
 
     let alive = true;
     const loadLayers = async () => {
@@ -360,6 +400,7 @@ export default function MapContainer({
           if (!alive || layerLoadGen.current !== gen) return;
           if (!data?.features || !Array.isArray(data.features)) {
             console.error(`Layer ${layerName} retornou payload inválido`, data);
+            setFailedLayers((prev) => (prev.includes(layerName) ? prev : [...prev, layerName]));
             continue;
           }
           setLayerData((prev) => ({ ...prev, [layerName]: data }));
@@ -368,6 +409,9 @@ export default function MapContainer({
           }
         } catch (err) {
           console.error(`Error loading layer ${layerName}:`, err);
+          if (alive && layerLoadGen.current === gen) {
+            setFailedLayers((prev) => (prev.includes(layerName) ? prev : [...prev, layerName]));
+          }
         }
       }
       if (alive && layerLoadGen.current === gen) {
@@ -509,7 +553,7 @@ export default function MapContainer({
       opacity: styleOpacity * layerOpacity,
     };
     const thematicOnTop = activeLayers.some((l) =>
-      ['cobertura', 'inundacao', 'vulnerabilidade', 'saneamento_drenagem', 'prioridade_planejamento', 'adaptacao_climatica', 'saude_risco', 'seguranca_publica', 'vulnerabilidade_multidimensional', 'lst_observada'].includes(l)
+      ['cobertura', 'inundacao', 'vulnerabilidade', 'risco_consolidado', 'saneamento_drenagem', 'prioridade_planejamento', 'adaptacao_climatica', 'saude_risco', 'seguranca_publica', 'vulnerabilidade_multidimensional', 'lst_observada'].includes(l)
     );
     const simActive = Boolean(simGeoJSON) || (simContours?.features?.length ?? 0) > 0;
     if (layerName === 'bairros' && simActive) {
@@ -652,6 +696,16 @@ export default function MapContainer({
       popupContent += `<p class="mb-1"><span class="text-zinc-400">Adaptação:</span> <span class="font-bold text-emerald-300">${props.capacidade_adaptacao}</span></p>`;
     }
 
+    if (props.layer === 'risco_consolidado' && props.nivel) {
+      popupContent += `<p class="mb-1"><span class="text-zinc-400">Risco agora:</span> <span class="font-bold text-rose-300">${props.nivel}</span>`;
+      if (props.score_sinidu != null) {
+        popupContent += ` <span class="text-zinc-500">(score ${props.score_sinidu})</span>`;
+      }
+      popupContent += `</p>`;
+      if (props.alerta_vivo) {
+        popupContent += `<p class="mb-1"><span class="text-zinc-400">Alerta vivo:</span> <span class="font-bold text-amber-300">${props.alerta_vivo}</span></p>`;
+      }
+    }
     if (props.prioridade_planejamento !== undefined) {
       popupContent += `<p class="mb-1"><span class="text-zinc-400">Prioridade:</span> <span class="font-bold text-fuchsia-300">${props.prioridade_planejamento}</span>`;
       if (props.classe_prioridade) {
@@ -849,6 +903,28 @@ export default function MapContainer({
           </div>
         </div>
       ) : null}
+
+      {!loading && failedLayers.length > 0 && (
+        <div className="map-ui-chrome pointer-events-auto absolute left-1/2 top-4 z-[1200] flex max-w-[90%] -translate-x-1/2 items-start gap-2 rounded-xl border border-amber-500/50 bg-zinc-950/95 px-3 py-2 text-[11px] text-amber-100 shadow-lg backdrop-blur-md">
+          <AlertTriangle size={14} className="mt-0.5 shrink-0 text-amber-400" />
+          <div>
+            <p className="font-bold text-amber-200">
+              {failedLayers.length === 1 ? 'Uma camada não carregou' : `${failedLayers.length} camadas não carregaram`}
+            </p>
+            <p className="mt-0.5 text-amber-100/80">
+              {failedLayers.map((id) => layerMetaById[id]?.label || id).join(', ')} — o mapa pode estar incompleto para este município.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => setFailedLayers([])}
+            className="ml-1 rounded p-0.5 text-amber-300/70 hover:text-amber-100"
+            aria-label="Dispensar aviso"
+          >
+            <X size={13} />
+          </button>
+        </div>
+      )}
 
       <LeafletMap
         center={mapFocus}
@@ -1081,7 +1157,10 @@ export default function MapContainer({
 
       </LeafletMap>
 
-      <div className="map-ui-chrome pointer-events-auto absolute left-4 top-4 z-[1100] flex gap-1 rounded-xl border border-zinc-700/80 bg-zinc-950/95 p-1 shadow-lg backdrop-blur-md">
+      <div
+        className="map-ui-chrome pointer-events-auto absolute top-20 z-[1100] flex gap-1 rounded-xl border border-zinc-700/80 bg-zinc-950/95 p-1 shadow-lg backdrop-blur-md"
+        style={{ left: MAP_CENTER_LEFT }}
+      >
         {([
           ['dark', 'Escuro'],
           ['light', 'Claro'],
@@ -1135,23 +1214,58 @@ export default function MapContainer({
           showRegionalOverlay={showRegionalOverlayStore}
         />
 
+        {legendPanelCollapsed ? (
+          <button
+            type="button"
+            onClick={() => setLegendPanelCollapsed(false)}
+            className="map-ui-chrome flex w-full shrink-0 items-center justify-between rounded-xl border border-zinc-700/80 bg-zinc-950/95 px-3 py-2 text-[10px] font-bold uppercase tracking-wider text-zinc-200 shadow-lg backdrop-blur-md hover:border-zinc-600"
+          >
+            <span>Legenda Territorial ({activeLayers.length})</span>
+            <ChevronDown size={14} className="text-zinc-500" />
+          </button>
+        ) : (
         <div className="map-ui-chrome flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-zinc-700/80 bg-zinc-950/95 text-[11px] text-zinc-200 shadow-2xl shadow-black/50 backdrop-blur-md">
-        <div className="shrink-0 border-b border-zinc-800 bg-zinc-950/95 px-4 py-3">
-          <h5 className="text-sm font-extrabold text-zinc-50">Legenda Territorial</h5>
-          <p className="mt-0.5 text-[10px] text-zinc-500">Camadas do município selecionado no header.</p>
+        <div className="flex shrink-0 items-start justify-between gap-2 border-b border-zinc-800 bg-zinc-950/95 px-4 py-3">
+          <div className="min-w-0">
+            <h5 className="text-sm font-extrabold text-zinc-50">Legenda Territorial</h5>
+            <p className="mt-0.5 text-[10px] text-zinc-500">Camadas do município selecionado no header.</p>
+          </div>
+          <button
+            type="button"
+            onClick={() => setLegendPanelCollapsed(true)}
+            title="Recolher legenda"
+            className="rounded p-0.5 text-zinc-500 hover:bg-zinc-800 hover:text-zinc-300"
+          >
+            <ChevronUp size={14} />
+          </button>
         </div>
 
         <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3 pr-5">
           {activeLayers.length === 0 && !simGeoJSON && (
             <span className="text-zinc-500 italic">Nenhuma camada ativada no momento.</span>
           )}
-          {activeLayers.map((layerName) => (
-            <div key={layerName} className="mb-3 last:mb-0">
-              <p className="mb-1.5 text-[10px] font-extrabold uppercase tracking-wider text-indigo-300">
-                {layerTitles[layerName] || layerName}
-              </p>
+          {activeLayers.map((layerName) => {
+            const sectionCollapsed = !!collapsedLegendSections[layerName];
+            return (
+            <div key={layerName} className="mb-3 last:mb-0 rounded-lg border border-zinc-800/80 bg-zinc-950/30">
+              <button
+                type="button"
+                onClick={() => toggleLegendSection(layerName)}
+                className="flex w-full items-center gap-2 px-2 py-1.5 text-left hover:bg-zinc-900/50"
+              >
+                {sectionCollapsed ? (
+                  <ChevronRight size={12} className="shrink-0 text-zinc-500" />
+                ) : (
+                  <ChevronDown size={12} className="shrink-0 text-zinc-500" />
+                )}
+                <span className="flex-1 text-[10px] font-extrabold uppercase tracking-wider text-indigo-300">
+                  {layerTitles[layerName] || layerName}
+                </span>
+              </button>
+              {!sectionCollapsed && (
+              <div className="px-2 pb-2">
               {layerMetaById[layerName] && (
-                <LayerMetaBlock layer={layerMetaById[layerName]} compact />
+                <LayerMetaBlock layer={layerMetaById[layerName]} compact defaultCollapsed />
               )}
               {isExternalRasterLayer(layerName) ? (
                 <div className="flex flex-col gap-2">
@@ -1278,11 +1392,29 @@ export default function MapContainer({
                   ))}
                 </div>
               )}
+              </div>
+              )}
             </div>
-          ))}
+            );
+          })}
           {simGeoJSON && (
-            <div className="mt-3 border-t border-zinc-800 pt-3 flex flex-col gap-2">
-              <p className="mb-1 text-[10px] font-extrabold uppercase tracking-wider text-indigo-300">Simulação hidrológica</p>
+            <div className="mt-3 rounded-lg border border-zinc-800/80 bg-zinc-950/30">
+              <button
+                type="button"
+                onClick={() => toggleLegendSection('__simulacao__')}
+                className="flex w-full items-center gap-2 px-2 py-1.5 text-left hover:bg-zinc-900/50"
+              >
+                {collapsedLegendSections.__simulacao__ ? (
+                  <ChevronRight size={12} className="shrink-0 text-zinc-500" />
+                ) : (
+                  <ChevronDown size={12} className="shrink-0 text-zinc-500" />
+                )}
+                <span className="flex-1 text-[10px] font-extrabold uppercase tracking-wider text-indigo-300">
+                  Simulação hidrológica
+                </span>
+              </button>
+              {!collapsedLegendSections.__simulacao__ && (
+            <div className="flex flex-col gap-2 px-2 pb-2">
               <div className="flex items-center gap-2 text-zinc-400"><span className="h-3 w-3 rounded-sm border border-sky-900 bg-sky-400/50" />Alagamento superficial</div>
               <div className="flex items-center gap-2 text-zinc-400"><span className="h-3 w-3 rounded-sm border border-sky-800 bg-sky-600/60" />Alagamento moderado</div>
               <div className="flex items-center gap-2 text-zinc-400"><span className="h-3 w-3 rounded-sm border border-indigo-950 bg-indigo-900/70" />Alagamento crítico</div>
@@ -1297,10 +1429,27 @@ export default function MapContainer({
                 <div className="flex items-center gap-2 text-zinc-400"><span className="h-0.5 w-4 border-t-2 border-dashed border-cyan-400" />Escoamento superficial</div>
               )}
             </div>
+              )}
+            </div>
           )}
           {showRegionalOverlay && (
-            <div className="mt-3 border-t border-zinc-800 pt-3 flex flex-col gap-2">
-              <p className="mb-1 text-[10px] font-extrabold uppercase tracking-wider text-teal-300">Contexto regional</p>
+            <div className="mt-3 rounded-lg border border-zinc-800/80 bg-zinc-950/30">
+              <button
+                type="button"
+                onClick={() => toggleLegendSection('__regional__')}
+                className="flex w-full items-center gap-2 px-2 py-1.5 text-left hover:bg-zinc-900/50"
+              >
+                {collapsedLegendSections.__regional__ ? (
+                  <ChevronRight size={12} className="shrink-0 text-zinc-500" />
+                ) : (
+                  <ChevronDown size={12} className="shrink-0 text-zinc-500" />
+                )}
+                <span className="flex-1 text-[10px] font-extrabold uppercase tracking-wider text-teal-300">
+                  Contexto regional
+                </span>
+              </button>
+              {!collapsedLegendSections.__regional__ && (
+              <div className="flex flex-col gap-2 px-2 pb-2">
               <div className="flex items-center gap-2 text-zinc-400">
                 <span className="h-0.5 w-4 border-t-2 border-dashed border-cyan-400" />
                 Municípios do escopo
@@ -1309,10 +1458,13 @@ export default function MapContainer({
                 <span className="h-0.5 w-4 border-t-2 border-dashed border-amber-400" />
                 Referência de comparação
               </div>
+              </div>
+              )}
             </div>
           )}
         </div>
         </div>
+        )}
       </div>
     </div>
   );

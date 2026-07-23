@@ -15,6 +15,7 @@ from app.data_connectors.orchestrator import IntegrationOrchestrator
 from app.data_connectors.singedlab_rs_collector import collect_singedlab_municipality, row_to_dict, sync_singedlab_batch
 from app.models import (
     AlertaCemaden,
+    Edificacao,
     HistoricoDesastreS2ID,
     IntegrationRun,
     MapBiomasMunicipalStat,
@@ -26,6 +27,7 @@ from app.models import (
     MunicipioSingedlabRs,
 )
 from app.services.catalog_source_registry import FONTE_REGISTRY
+from app.services.building_catalog_service import catalog_meta_gemeo_digital
 from app.services.cemaden_monitor import sync_cemaden_alerts
 
 logger = logging.getLogger(__name__)
@@ -70,6 +72,15 @@ def get_source_sync_meta(db: Session, codigo_ibge: str, fonte_id: str) -> dict[s
         row = db.query(MunicipioSingedlabRs).filter(MunicipioSingedlabRs.codigo_ibge == codigo_ibge).first()
         records = 1 if row else 0
         ultima_sync = row.sincronizado_em if row else None
+    elif fonte_id == "gemeo_digital_3d":
+        meta3d = catalog_meta_gemeo_digital(db, codigo_ibge, muni=muni)
+        records = int(meta3d.get("registros") or 0)
+        ultima_sync = meta3d.get("ultima_sync")
+        if ultima_sync and isinstance(ultima_sync, str):
+            try:
+                ultima_sync = datetime.fromisoformat(ultima_sync.replace("Z", "+00:00"))
+            except ValueError:
+                ultima_sync = None
     elif fonte_id in EXTERNAL_FONTES:
         ext = db.query(MunicipioFonteExterna).filter(MunicipioFonteExterna.codigo_ibge == codigo_ibge).first()
         ultima_sync = ext.updated_at if ext else None
@@ -169,6 +180,30 @@ def get_source_preview(db: Session, codigo_ibge: str, fonte_id: str, limit: int 
         row = db.query(MunicipioSingedlabRs).filter(MunicipioSingedlabRs.codigo_ibge == codigo_ibge).first()
         if row:
             rows.append(row_to_dict(row))
+    elif fonte_id == "gemeo_digital_3d" and muni:
+        buildings = (
+            db.query(Edificacao)
+            .filter(Edificacao.municipio_id == muni.id)
+            .order_by(Edificacao.atualizado_em.desc())
+            .limit(limit)
+            .all()
+        )
+        for b in buildings:
+            rows.append({
+                "id": b.id,
+                "nome": b.nome or f"Edifício #{b.id}",
+                "altura_m": float(b.altura_m or 0),
+                "fonte_altura": b.fonte_altura,
+                "qualidade": b.qualidade,
+                "uso": b.uso,
+            })
+        if not buildings:
+            meta3d = catalog_meta_gemeo_digital(db, codigo_ibge, muni=muni)
+            rows.append({
+                "resumo": "Sem edificações ingeridas",
+                "maturidade_3d_pct": meta3d.get("maturidade_3d_pct"),
+                "por_fonte_altura": meta3d.get("por_fonte_altura"),
+            })
     elif fonte_id in EXTERNAL_FONTES:
         ext = db.query(MunicipioFonteExterna).filter(MunicipioFonteExterna.codigo_ibge == codigo_ibge).first()
         if ext:
@@ -204,6 +239,18 @@ def refresh_catalog_source(db: Session, codigo_ibge: str, fonte_id: str, *, forc
         elif fonte_id == "ibge_singedlab_rs":
             result.update(collect_singedlab_municipality(db, codigo_ibge, force=force))
             result["ok"] = not result.get("skipped", False) or result.get("records", 0) > 0
+        elif fonte_id == "gemeo_digital_3d":
+            from app.data_connectors.building_footprints_collector import collect_buildings_municipality
+
+            sync_out = collect_buildings_municipality(db, codigo_ibge, force=force)
+            if isinstance(sync_out, dict):
+                result.update(sync_out)
+            result["ok"] = int((sync_out or {}).get("count") or 0) > 0 or (sync_out or {}).get("status") in (
+                "cached",
+                "ok",
+                "updated",
+            )
+            result["meta_3d"] = catalog_meta_gemeo_digital(db, codigo_ibge)
         elif fonte_id in EXTERNAL_FONTES:
             ext = sync_external_sources_batch(db, [codigo_ibge])
             result["ok"] = ext.get("processed", 0) >= 1

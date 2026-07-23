@@ -105,8 +105,150 @@ RECIFE_S2ID_EVENTS: list[dict[str, Any]] = [
     },
 ]
 
+# Aracaju — eventos documentados (Defesa Civil de Aracaju / Semdec; imprensa local)
+ARACAJU_S2ID_EVENTS: list[dict[str, Any]] = [
+    {
+        "tipo": "Inundação",
+        "data": datetime.date(2022, 7, 10),
+        "afetados": 900,
+        "danos": 4_000_000.0,
+        "lng": -37.098,
+        "lat": -10.945,
+        "referencia": "Jabotiana / Largo da Aparecida — cheia do Rio Poxim Mirim (jul/2022, 231 mm/72h)",
+    },
+    {
+        "tipo": "Alagamento Urbano",
+        "data": datetime.date(2022, 7, 8),
+        "afetados": 500,
+        "danos": 1_500_000.0,
+        "lng": -37.075,
+        "lat": -10.990,
+        "referencia": "Santa Maria / Lamarão — alagamentos das chuvas de julho/2022 (Defesa Civil de Aracaju)",
+    },
+    {
+        "tipo": "Alagamento Urbano",
+        "data": datetime.date(2022, 7, 11),
+        "afetados": 400,
+        "danos": 1_200_000.0,
+        "lng": -37.101,
+        "lat": -10.949,
+        "referencia": "Conjuntos Sol Nascente / Santa Lúcia / JK (Jabotiana) — cheia do Poxim Mirim (jul/2022)",
+    },
+]
+
+# Salvador — eventos documentados (Codesal / imprensa)
+SALVADOR_S2ID_EVENTS: list[dict[str, Any]] = [
+    {
+        "tipo": "Deslizamento de Terra",
+        "data": datetime.date(2019, 11, 26),
+        "afetados": 1200,
+        "danos": 3_500_000.0,
+        "lng": -38.452,
+        "lat": -12.934,
+        "referencia": "Chuvas de nov/2019 — 114 deslizamentos e ~300 desalojados (Codesal)",
+    },
+    {
+        "tipo": "Deslizamento de Terra",
+        "data": datetime.date(2022, 4, 15),
+        "afetados": 1454,
+        "danos": 8_000_000.0,
+        "lng": -38.435,
+        "lat": -12.921,
+        "referencia": "Operação Chuva 2022 (mar–jun) — 3.650 deslizamentos, 1.454 cadastros (Codesal)",
+    },
+    {
+        "tipo": "Alagamento Urbano",
+        "data": datetime.date(2019, 11, 26),
+        "afetados": 600,
+        "danos": 1_800_000.0,
+        "lng": -38.501,
+        "lat": -12.971,
+        "referencia": "Chuvas de nov/2019 — 122 imóveis alagados, 9 alagamentos de vias (Codesal)",
+    },
+]
+
+# Rio de Janeiro — eventos documentados (Alerta Rio / Defesa Civil / imprensa)
+RIO_S2ID_EVENTS: list[dict[str, Any]] = [
+    {
+        "tipo": "Inundação",
+        "data": datetime.date(2019, 4, 8),
+        "afetados": 10000,
+        "danos": 40_000_000.0,
+        "lng": -43.224,
+        "lat": -22.968,
+        "referencia": "Temporal de 8–9/abr/2019 — 10 mortos; maior chuva em 22 anos (Jardim Botânico 155 mm)",
+    },
+    {
+        "tipo": "Deslizamento de Terra",
+        "data": datetime.date(2019, 2, 6),
+        "afetados": 6000,
+        "danos": 15_000_000.0,
+        "lng": -43.243,
+        "lat": -22.997,
+        "referencia": "Chuvas de 6/fev/2019 — 6 mortos; deslizamento na Av. Niemeyer (Vidigal/São Conrado)",
+    },
+    {
+        "tipo": "Inundação",
+        "data": datetime.date(2020, 3, 2),
+        "afetados": 4000,
+        "danos": 10_000_000.0,
+        "lng": -43.553,
+        "lat": -22.902,
+        "referencia": "Chuvas de mar/2020 — 4 mortos; maiores impactos na Zona Oeste (Jardim Maravilha)",
+    },
+]
+
+# São Paulo — eventos documentados (CGE / Defesa Civil estadual / imprensa)
+SAO_PAULO_S2ID_EVENTS: list[dict[str, Any]] = [
+    {
+        "tipo": "Inundação",
+        "data": datetime.date(2020, 2, 10),
+        "afetados": 2000,
+        "danos": 21_000_000.0,
+        "lng": -46.620,
+        "lat": -23.516,
+        "referencia": "Fev/2020 — transbordamento do Tietê; maior chuva de fevereiro em 37 anos (114 mm); Ceagesp alagada",
+    },
+    {
+        "tipo": "Alagamento Urbano",
+        "data": datetime.date(2020, 2, 10),
+        "afetados": 700,
+        "danos": 5_000_000.0,
+        "lng": -46.700,
+        "lat": -23.580,
+        "referencia": "Fev/2020 — transbordamento da Marginal Pinheiros; 85 pontos de alagamento na capital",
+    },
+]
+
+# Brasília / DF — eventos documentados (Defesa Civil do DF / imprensa)
+BRASILIA_S2ID_EVENTS: list[dict[str, Any]] = [
+    {
+        "tipo": "Deslizamento de Terra",
+        "data": datetime.date(2019, 12, 10),
+        "afetados": 50,
+        "danos": 2_000_000.0,
+        "lng": -47.917,
+        "lat": -15.826,
+        "referencia": "Dez/2019 — cratera de 10 m na 709/909 Sul (Asa Sul); solo cedeu após ruptura de galeria pluvial",
+    },
+    {
+        "tipo": "Alagamento Urbano",
+        "data": datetime.date(2018, 11, 16),
+        "afetados": 200,
+        "danos": 1_500_000.0,
+        "lng": -48.020,
+        "lat": -15.800,
+        "referencia": "Nov/2018 — crateras em Vicente Pires e alagamento do metrô de Samambaia (Córrego Samambaia transbordou)",
+    },
+]
+
 _PILOT_EVENTS: dict[str, list[dict[str, Any]]] = {
     "2611606": RECIFE_S2ID_EVENTS,
+    "2800308": ARACAJU_S2ID_EVENTS,
+    "2927408": SALVADOR_S2ID_EVENTS,
+    "3304557": RIO_S2ID_EVENTS,
+    "3550308": SAO_PAULO_S2ID_EVENTS,
+    "5300108": BRASILIA_S2ID_EVENTS,
 }
 
 _SYNTHETIC_PLACEHOLDER_DANOS = 250_000.0

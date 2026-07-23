@@ -48,16 +48,14 @@ class Settings:
 
     REDIS_URL: str = os.getenv("REDIS_URL", "redis://redis:6379/0")
 
+    # Catálogo piloto — espelho de app.data_connectors.constants.TARGET_IBGE_CODES
     TARGET_IBGE_CODES: list[str] = [
-        "1200401", "2704302", "1600303", "1302603", "2927408", "2304400", "5300108",
-        "3205309", "5208707", "2111300", "5103403", "5002704", "3106200", "1501402",
-        "2507507", "4106902", "2611606", "2211001", "3304557", "2408102", "4314902",
-        "1100205", "1400100", "4205407", "2800308", "3550308", "1721000",
-        "3303906", "3303401", "3305802", "3550704", "3300100", "4202404", "1504208",
-        "3143906", "2914802", "2913606", "4316907", "3109006", "2602902", "4318903",
-        "3201506", "1702109", "1400233", "2604106", "2407104", "2924009", "2806701",
-        "5201108", "5208905", "5218805", "4302105", "4304606", "4104907", "4305108",
-        "3200607", "3509502", "3138203", "3548708", "3549904", "3305505",
+        "2611606",  # Recife
+        "2800308",  # Aracaju
+        "2927408",  # Salvador
+        "3550308",  # São Paulo
+        "3304557",  # Rio de Janeiro
+        "5300108",  # Brasília
     ]
 
     REPORTS_DIR: str = os.getenv("REPORTS_DIR", "/data/reports")
@@ -65,6 +63,8 @@ class Settings:
     ML_DATA_DIR: str = os.getenv("ML_DATA_DIR", "/data/ml")
     DEM_DIR: str = os.getenv("DEM_DIR", "/data/dem")
     LOCAL_DEM_DIR: str = os.getenv("LOCAL_DEM_DIR", "/data/dem/local")
+    CITYMODEL_DIR: str = os.getenv("CITYMODEL_DIR", "/data/citymodels")
+    TILES3D_DIR: str = os.getenv("TILES3D_DIR", "/data/3dtiles")
     IBGE_MESH_CACHE_DIR: str = os.getenv("IBGE_MESH_CACHE_DIR", "/data/ibge/censo_2022")
     REFINE_PILOT_DEM: bool = _env_bool("REFINE_PILOT_DEM", True)
     GOOGLE_MAPS_API_KEY: str = os.getenv("GOOGLE_MAPS_API_KEY", "")
@@ -111,6 +111,8 @@ class Settings:
         for origin in os.getenv("CORS_ORIGINS", "http://localhost:3000").split(",")
         if origin.strip()
     ]
+    # Aceita origens da rede privada (192.168/10/172.16–31) — útil para demo na LAN do MCID
+    CORS_ALLOW_LAN: bool = _env_bool("CORS_ALLOW_LAN", False)
 
     # Pipeline territorial agendado (Fase 8)
     SCHEDULED_PIPELINE_ENABLED: bool = _env_bool("SCHEDULED_PIPELINE_ENABLED", False)

@@ -20,6 +20,7 @@ from app.models import (
 from app.data_connectors.singedlab_rs_collector import catalog_status_for_row
 from app.data_connectors.snis_sinisa_collector import snis_status_label
 from app.data_connectors.external_sources_collector import catalog_status_from_quality
+from app.services.building_catalog_service import catalog_status_gemeo_digital
 
 # Fallback demo para municípios piloto (compatibilidade)
 _PILOT_FALLBACK: dict[str, dict[str, str]] = {
@@ -147,6 +148,7 @@ def resolve_catalog_status(
         "mapbiomas": lambda: _status_mapbiomas(db, codigo_ibge, muni),
         "cemaden_georiscos": lambda: _status_cemaden(db, muni),
         "ibge_singedlab_rs": lambda: _status_singedlab(db, codigo_ibge),
+        "gemeo_digital_3d": lambda: catalog_status_gemeo_digital(db, codigo_ibge, muni=muni),
     }
     if base_id in resolvers:
         return resolvers[base_id]()

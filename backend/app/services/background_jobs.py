@@ -13,6 +13,7 @@ from app.config import settings
 from app.services.job_store import load_job as load_persisted_job
 from app.services.job_store import save_job as persist_job
 from app.services.job_store import list_persisted_jobs
+from app.timeutil import utc_now_iso_z
 
 logger = logging.getLogger(__name__)
 
@@ -22,7 +23,7 @@ STALE_JOB_HOURS = int(getattr(settings, "STALE_JOB_HOURS", 6) or 6)
 
 
 def _utcnow() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return utc_now_iso_z()
 
 
 def _parse_ts(raw: str | None) -> datetime | None:
@@ -194,6 +195,38 @@ def run_onboarding_batch_job(limit: int, status_filter: str, force: bool) -> str
     return job_id
 
 
+def run_uf_bootstrap_job(uf: str, *, limit: int = 20, skip_existing: bool = True) -> str:
+    """Job de bootstrap mínimo por UF (18c.1)."""
+    from app.services.uf_bootstrap_service import normalize_uf
+
+    uf_code = normalize_uf(uf)
+    existing = find_active_job("uf_bootstrap")
+    if existing:
+        return str(existing["id"])
+
+    job_id = create_job(
+        "uf_bootstrap",
+        label=f"Bootstrap UF {uf_code} (até {limit})",
+    )
+
+    def _task() -> dict[str, Any]:
+        from app.services.uf_bootstrap_service import bootstrap_uf
+
+        db = SessionLocal()
+        try:
+            return bootstrap_uf(
+                db,
+                uf_code,
+                limit=limit,
+                skip_existing=skip_existing,
+            )
+        finally:
+            db.close()
+
+    run_in_background(job_id, _task)
+    return job_id
+
+
 def run_mapbiomas_batch_job(limit: int, force: bool) -> str:
     job_id = create_job("mapbiomas_batch", label=f"MapBiomas ({limit} municípios)")
 
@@ -210,7 +243,7 @@ def run_mapbiomas_batch_job(limit: int, force: bool) -> str:
     return job_id
 
 
-def run_pipeline_job(onboarding_limit: int = 61) -> str:
+def run_pipeline_job(onboarding_limit: int = 6) -> str:
     job_id = create_job("full_pipeline", label="Pipeline territorial completo")
 
     def _task() -> dict[str, Any]:
@@ -235,7 +268,7 @@ def run_pipeline_job(onboarding_limit: int = 61) -> str:
 
 def run_scheduled_pipeline() -> str | None:
     """Disparado pelo APScheduler quando SCHEDULED_PIPELINE_ENABLED=true."""
-    limit = min(max(settings.SCHEDULED_PIPELINE_LIMIT, 1), 61)
+    limit = min(max(settings.SCHEDULED_PIPELINE_LIMIT, 1), 6)
     logger.info("Pipeline territorial agendado iniciando (limit=%s)", limit)
     return run_pipeline_job(onboarding_limit=limit)
 
@@ -249,7 +282,7 @@ def find_active_job(job_type: str) -> dict[str, Any] | None:
     return None
 
 
-def run_diagnostics_batch_job(limit: int = 61, *, codigos: list[str] | None = None) -> str:
+def run_diagnostics_batch_job(limit: int = 6, *, codigos: list[str] | None = None) -> str:
     existing = find_active_job("diagnostics_batch")
     if existing:
         return str(existing["id"])
@@ -271,7 +304,7 @@ def run_diagnostics_batch_job(limit: int = 61, *, codigos: list[str] | None = No
 
 
 def run_reports_batch_job(
-    limit: int = 61,
+    limit: int = 6,
     force: bool = False,
     *,
     codigos: list[str] | None = None,
@@ -295,7 +328,7 @@ def run_reports_batch_job(
     return job_id
 
 
-def run_external_sources_batch_job(limit: int = 61) -> str:
+def run_external_sources_batch_job(limit: int = 6) -> str:
     job_id = create_job("fontes_externas_batch", label=f"Fontes externas ({limit})")
 
     def _task() -> dict[str, Any]:
@@ -304,7 +337,7 @@ def run_external_sources_batch_job(limit: int = 61) -> str:
 
         db = SessionLocal()
         try:
-            codigos = TARGET_IBGE_CODES[: min(limit, 61)]
+            codigos = TARGET_IBGE_CODES[: min(limit, 6)]
             return sync_external_sources_batch(db, codigos)
         finally:
             db.close()
@@ -313,7 +346,7 @@ def run_external_sources_batch_job(limit: int = 61) -> str:
     return job_id
 
 
-def run_bairros_batch_job(limit: int = 61, force: bool = False) -> str:
+def run_bairros_batch_job(limit: int = 6, force: bool = False) -> str:
     job_id = create_job("bairros_batch", label=f"Malha oficial IBGE ({limit})")
 
     def _task() -> dict[str, Any]:
@@ -324,6 +357,26 @@ def run_bairros_batch_job(limit: int = 61, force: bool = False) -> str:
             return sync_official_bairros_batch(db, limit=limit, force=force)
         finally:
             db.close()
+
+    run_in_background(job_id, _task)
+    return job_id
+
+
+def run_buildings_osm_queue_job(*, max_items: int = 20) -> str:
+    """Drena a fila de footprints OSM com rate-limit (18c.2)."""
+    existing = find_active_job("buildings_osm_queue")
+    if existing:
+        return str(existing["id"])
+
+    job_id = create_job(
+        "buildings_osm_queue",
+        label=f"Footprints OSM (até {max_items})",
+    )
+
+    def _task() -> dict[str, Any]:
+        from app.services.building_osm_queue_service import drain_queue
+
+        return drain_queue(max_items=max_items)
 
     run_in_background(job_id, _task)
     return job_id
@@ -348,7 +401,7 @@ def run_ctm_batch_job(*, force: bool = False, codigos: list[str] | None = None) 
     return job_id
 
 
-def run_dem_batch_job(limit: int = 61, force: bool = False) -> str:
+def run_dem_batch_job(limit: int = 6, force: bool = False) -> str:
     job_id = create_job("dem_batch", label=f"DEM LiDAR/SRTM ({limit})")
 
     def _task() -> dict[str, Any]:
@@ -364,8 +417,8 @@ def run_dem_batch_job(limit: int = 61, force: bool = False) -> str:
     return job_id
 
 
-def run_full_homologation_job(onboarding_limit: int = 61, force_dem: bool = False) -> str:
-    job_id = create_job("homologation_full", label="Pipeline MCID completo (61)")
+def run_full_homologation_job(onboarding_limit: int = 6, force_dem: bool = False) -> str:
+    job_id = create_job("homologation_full", label="Pipeline MCID completo (piloto 6)")
 
     def _task() -> dict[str, Any]:
         from app.data_connectors.mapbiomas_collector import sync_mapbiomas_batch

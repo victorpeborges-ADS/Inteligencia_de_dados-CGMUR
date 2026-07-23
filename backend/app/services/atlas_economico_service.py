@@ -43,8 +43,8 @@ def build_atlas_uf_context(uf_sigla: str, *, codigo_ibge: str | None = None) -> 
         ),
         "codigo_ibge_municipio": codigo_ibge,
         "kpis": [
-            {"label": "Atividades econômicas", "valor": str(ATLAS_ACTIVITIES)},
-            {"label": "Produtos na matriz", "valor": str(ATLAS_PRODUCTS)},
-            {"label": "Base de dados", "valor": f"NF-e {ATLAS_BASE_YEAR}"},
+            {"label": "Atividades", "valor": str(ATLAS_ACTIVITIES), "hint": "Atividades econômicas no Atlas"},
+            {"label": "Produtos", "valor": str(ATLAS_PRODUCTS), "hint": "Produtos na matriz inter-regional"},
+            {"label": "Base", "valor": f"NF-e {ATLAS_BASE_YEAR}", "hint": "Fonte microdados NF-e"},
         ],
     }

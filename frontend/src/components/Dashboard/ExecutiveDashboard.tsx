@@ -8,8 +8,15 @@ import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, LineChart, L
 import { Users, Trees, ShieldAlert, DollarSign, Waves, FileDown, Loader2, Award, ListChecks, Landmark } from 'lucide-react';
 import RotatingLoader, { PDF_DIAGNOSTIC_MESSAGES } from '@/components/UI/RotatingLoader';
 import TermTooltip from '@/components/UI/TermTooltip';
-import { KpiCard, PanelSection, SkeletonKpiGrid, SkeletonChart } from '@/design-system';
+import { Badge, KpiCard, PanelSection, SkeletonKpiGrid, SkeletonChart, qualityToBadgeTone } from '@/design-system';
 import ExecutiveNarrative from '@/components/Dashboard/ExecutiveNarrative';
+import RiskTrafficLightPanel from '@/components/Dashboard/RiskTrafficLightPanel';
+import {
+  UX_PROFILE_DASHBOARD_HIDDEN,
+  UX_PROFILE_HINTS,
+  UX_PROFILE_LABELS,
+  type UxProfile,
+} from '@/config/uxProfiles';
 import TerritorialRecommendations from '@/components/Dashboard/TerritorialRecommendations';
 
 const TIER_STYLE: Record<string, { bg: string; text: string; border: string }> = {
@@ -38,12 +45,15 @@ export default function ExecutiveDashboard({
   municipioLoaded,
   municipioEnsuring,
   municipioNome,
+  uxProfile = 'planejamento',
 }: {
   codigoIbge?: string;
   municipioLoaded?: boolean;
   municipioEnsuring?: boolean;
   municipioNome?: string;
+  uxProfile?: UxProfile;
 }) {
+  const hidden = new Set(UX_PROFILE_DASHBOARD_HIDDEN[uxProfile] || []);
   const [indicators, setIndicators] = useState<ExecutiveIndicators | null>(null);
   const [indices, setIndices] = useState<IndicesResponse | null>(null);
   const [coverage, setCoverage] = useState<DataCoverage | null>(null);
@@ -390,10 +400,17 @@ export default function ExecutiveDashboard({
     });
   };
 
+  /** Moeda compacta com espaço não-quebrável (evita "bi" sozinho na linha). */
   const formatCompactCurrency = (value: number) => {
-    if (value >= 1_000_000_000) return `R$ ${(value / 1_000_000_000).toFixed(1)} bi`;
-    if (value >= 1_000_000) return `R$ ${(value / 1_000_000).toFixed(1)} mi`;
-    if (value >= 1_000) return `R$ ${(value / 1_000).toFixed(1)} mil`;
+    if (value >= 1_000_000_000) return `R$\u00A0${(value / 1_000_000_000).toFixed(1)}\u00A0bi`;
+    if (value >= 1_000_000) return `R$\u00A0${(value / 1_000_000).toFixed(1)}\u00A0mi`;
+    if (value >= 1_000) return `R$\u00A0${(value / 1_000).toFixed(1)}\u00A0mil`;
+    return formatCurrency(value);
+  };
+
+  /** PIB per capita: compacto acima de 10 mil para caber no card. */
+  const formatPerCapita = (value: number) => {
+    if (value >= 10_000) return `R$\u00A0${(value / 1_000).toFixed(1)}\u00A0mil`;
     return formatCurrency(value);
   };
 
@@ -537,16 +554,30 @@ export default function ExecutiveDashboard({
       ano: item.ano,
       temp: item.temperatura_media ?? null,
       area: item.area_urbanizada_km2 ?? null,
+      pct: item.pct_area_municipal ?? null,
     })) || [];
   const estimatedClimateData = officialClimate?.estimated_timeline
     .map((item) => ({
       ano: item.ano,
       temp: item.temperatura_media,
       area: item.area_urbanizada_km2,
+      pct: item.pct_area_municipal ?? null,
     })) || [];
   const climateChartData = officialClimateData.length > 0 ? officialClimateData : estimatedClimateData;
   const hasMapBiomasSeries = officialClimateData.some((item) => item.area != null);
   const hasTemperatureSeries = climateChartData.some((item) => item.temp != null);
+  const urbanPctSeries = climateChartData.filter((item) => item.pct != null);
+  const urbanEvolutionNote =
+    urbanPctSeries.length >= 2
+      ? (() => {
+          const first = urbanPctSeries[0];
+          const last = urbanPctSeries[urbanPctSeries.length - 1];
+          const delta = (last.pct ?? 0) - (first.pct ?? 0);
+          return `Mancha urbana: ${first.pct}% (${first.ano}) → ${last.pct}% (${last.ano}) · ${delta >= 0 ? '+' : ''}${delta.toFixed(1)} p.p.`;
+        })()
+      : urbanPctSeries.length === 1
+        ? `Mancha urbana: ${urbanPctSeries[0].pct}% da área municipal (${urbanPctSeries[0].ano})`
+        : null;
   const isEstimatedClimateChart = !hasMapBiomasSeries && estimatedClimateData.length > 0;
   const tempLegendLabel = officialClimate?.temperatura_oficial
     ? 'Temp. média INMET (°C)'
@@ -605,6 +636,12 @@ export default function ExecutiveDashboard({
         </div>
       )}
 
+      <p className="text-[10px] text-zinc-500">
+        Visão {UX_PROFILE_LABELS[uxProfile]} — {UX_PROFILE_HINTS[uxProfile]}
+      </p>
+
+      <RiskTrafficLightPanel codigoIbge={codigoIbge} />
+
       <ExecutiveNarrative
         municipioNome={municipioNome}
         uf={indicators?.uf}
@@ -617,6 +654,7 @@ export default function ExecutiveDashboard({
         avgIri={avgIri}
       />
 
+      {!hidden.has('recommendations') && (
       <TerritorialRecommendations
         indicators={indicators}
         indices={indices}
@@ -625,7 +663,9 @@ export default function ExecutiveDashboard({
         avgIvc={avgIvc}
         avgIri={avgIri}
       />
+      )}
 
+      {!hidden.has('kpis') && (
       <PanelSection
         title="Indicadores prioritários"
         tier="primary"
@@ -684,6 +724,7 @@ export default function ExecutiveDashboard({
           )}
         </div>
       </PanelSection>
+      )}
 
       <div className="rounded-xl border border-indigo-500/20 bg-indigo-950/10 p-4 opacity-95">
         <div className="mb-3 flex items-start justify-between gap-3">
@@ -877,6 +918,7 @@ export default function ExecutiveDashboard({
         )}
       </div>
 
+      {!hidden.has('action_plan') && (
       <div className="rounded-xl border border-amber-500/30 bg-amber-950/15 p-4">
         <div className="mb-3 flex items-start justify-between gap-3">
           <div>
@@ -897,15 +939,17 @@ export default function ExecutiveDashboard({
         </div>
         {actionPlanError && <p className="mb-2 text-[10px] text-rose-300">{actionPlanError}</p>}
         {actionPlan ? (
-          <ActionPlanPanel plan={actionPlan} />
+          <ActionPlanPanel plan={actionPlan} onPlanChange={setActionPlan} />
         ) : (
           <p className="text-[10px] text-zinc-500">
             Nenhum plano salvo. Gere após o diagnóstico executivo ou manualmente.
           </p>
         )}
       </div>
+      )}
 
       {/* Indicadores complementares */}
+      {!hidden.has('complementary') && (
       <PanelSection title="Indicadores complementares" tier="secondary" description="Contexto demográfico, ambiental e histórico de desastres">
         <div className="grid grid-cols-2 gap-3">
           {secondaryCards.map((c) => {
@@ -964,8 +1008,9 @@ export default function ExecutiveDashboard({
           ) : null}
         </div>
       </PanelSection>
+      )}
 
-      {indicators && (
+      {!hidden.has('charts') && indicators && (
         <div className="rounded-xl border border-border bg-card/40 p-4">
           <div className="mb-3 flex items-center justify-between gap-2">
             <h4 className="text-xs font-extrabold uppercase tracking-wide text-zinc-200">Saúde Fiscal</h4>
@@ -1044,87 +1089,140 @@ export default function ExecutiveDashboard({
         </div>
       )}
 
-      {(indicators?.pib_per_capita != null || indicators?.pib_total_mil_reais != null || indicators?.idh != null || indicators?.atlas_uf_context) && (
+      {!hidden.has('charts') && (indicators?.pib_per_capita != null || indicators?.pib_total_mil_reais != null || indicators?.idh != null || indicators?.atlas_uf_context) && (
         <PanelSection
           title="Contexto socioeconômico"
           tier="secondary"
-          description="Indicadores municipais (IBGE/Atlas DH) e referência estadual (Atlas Econômico IPEA/RFB)"
+          description="IBGE / Atlas DH (município) · Atlas Econômico IPEA (UF)"
         >
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 2xl:grid-cols-4">
+          {/* Painel lateral ~450px: lista compacta, sem grid de 3 colunas */}
+          <div className="min-w-0 divide-y divide-zinc-800/80 overflow-hidden rounded-xl border border-border bg-card/60">
             {indicators?.pib_total_mil_reais != null && (
-              <KpiCard
-                tier="secondary"
-                title="PIB municipal"
-                value={formatCompactCurrency(indicators.pib_total_mil_reais * 1000)}
-                description={`Total a preços de mercado · IBGE ${indicators.pib_ano ?? 'série'}`}
-                icon={DollarSign}
-                iconClassName="text-emerald-300"
-                quality={kpiQuality(indicators.pib_qualidade)}
-              />
+              <div className="flex items-center gap-3 px-3 py-2.5">
+                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-zinc-800 bg-zinc-950/80 text-emerald-300">
+                  <DollarSign size={15} />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <span className="text-[9px] font-bold uppercase tracking-wider text-zinc-500">
+                      PIB municipal
+                    </span>
+                    {kpiQuality(indicators.pib_qualidade) && (
+                      <Badge tone={qualityToBadgeTone(kpiQuality(indicators.pib_qualidade))}>
+                        {kpiQuality(indicators.pib_qualidade)}
+                      </Badge>
+                    )}
+                  </div>
+                  <p className="text-[10px] leading-snug text-zinc-500">
+                    IBGE {indicators.pib_ano ?? 'série'} · preços de mercado
+                  </p>
+                </div>
+                <p className="shrink-0 text-right text-sm font-extrabold tabular-nums text-foreground">
+                  {formatCompactCurrency(indicators.pib_total_mil_reais * 1000)}
+                </p>
+              </div>
             )}
             {indicators?.pib_per_capita != null && (
-              <KpiCard
-                tier="secondary"
-                title="PIB per capita"
-                value={formatCurrency(indicators.pib_per_capita)}
-                description={indicators.pib_fonte || 'IBGE PIB Municipal'}
-                icon={DollarSign}
-                iconClassName="text-emerald-400"
-                quality={kpiQuality(indicators.pib_qualidade)}
-              />
+              <div className="flex items-center gap-3 px-3 py-2.5">
+                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-zinc-800 bg-zinc-950/80 text-emerald-400">
+                  <DollarSign size={15} />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <span className="text-[9px] font-bold uppercase tracking-wider text-zinc-500">
+                      PIB per capita
+                    </span>
+                    {kpiQuality(indicators.pib_qualidade) && (
+                      <Badge tone={qualityToBadgeTone(kpiQuality(indicators.pib_qualidade))}>
+                        {kpiQuality(indicators.pib_qualidade)}
+                      </Badge>
+                    )}
+                  </div>
+                  <p className="truncate text-[10px] leading-snug text-zinc-500" title={indicators.pib_fonte || undefined}>
+                    {indicators.pib_fonte || 'IBGE PIB Municipal'}
+                  </p>
+                </div>
+                <p className="shrink-0 text-right text-sm font-extrabold tabular-nums text-foreground">
+                  {formatPerCapita(indicators.pib_per_capita)}
+                </p>
+              </div>
             )}
             {indicators?.idh != null && (
-              <KpiCard
-                tier="secondary"
-                title="IDH Municipal"
-                value={indicators.idh.toFixed(3)}
-                description={`${indicators.idh_fonte || 'Atlas DH'}${indicators.idh_ano ? ` · ${indicators.idh_ano}` : ''}`}
-                icon={Award}
-                iconClassName="text-sky-400"
-                quality={kpiQuality(indicators.idh_qualidade)}
-              />
-            )}
-            {indicators?.atlas_uf_context && (
-              <KpiCard
-                tier="secondary"
-                className="col-span-full sm:col-span-2"
-                title={`Atlas Econômico · ${indicators.atlas_uf_context.uf_sigla}`}
-                value={`${indicators.atlas_uf_context.atividades_economicas} setores`}
-                description={indicators.atlas_uf_context.descricao}
-                icon={Landmark}
-                iconClassName="text-violet-400"
-                quality="REFERÊNCIA UF"
-              >
-                <div className="mt-3 space-y-2 border-t border-zinc-800 pt-2.5">
-                  <div className="grid grid-cols-1 gap-2 min-[420px]:grid-cols-3">
-                    {(indicators.atlas_uf_context.kpis || []).map((kpi) => (
-                      <div
-                        key={kpi.label}
-                        className="min-w-0 rounded-md border border-zinc-800/80 bg-zinc-950/50 px-2 py-1.5 text-center"
-                      >
-                        <span className="block text-[8px] uppercase leading-snug text-zinc-500 line-clamp-2">
-                          {kpi.label}
-                        </span>
-                        <span className="mt-0.5 block text-[11px] font-bold text-zinc-200">{kpi.valor}</span>
-                      </div>
-                    ))}
-                  </div>
-                  <p className="text-[9px] leading-snug text-zinc-500">
-                    Matrizes: {indicators.atlas_uf_context.matrizes.join(' · ')} · escopo estadual (NF-e{' '}
-                    {indicators.atlas_uf_context.referencia_ano})
-                  </p>
-                  <a
-                    href={indicators.atlas_uf_context.portal_url}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="inline-flex rounded-full border border-violet-500/30 bg-violet-500/10 px-2 py-0.5 text-[10px] font-bold text-violet-200 hover:bg-violet-500/20"
-                  >
-                    Abrir Atlas Econômico IPEA ↗
-                  </a>
+              <div className="flex items-center gap-3 px-3 py-2.5">
+                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-zinc-800 bg-zinc-950/80 text-sky-400">
+                  <Award size={15} />
                 </div>
-              </KpiCard>
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <span className="text-[9px] font-bold uppercase tracking-wider text-zinc-500">
+                      IDH municipal
+                    </span>
+                    {kpiQuality(indicators.idh_qualidade) && (
+                      <Badge tone={qualityToBadgeTone(kpiQuality(indicators.idh_qualidade))}>
+                        {kpiQuality(indicators.idh_qualidade)}
+                      </Badge>
+                    )}
+                  </div>
+                  <p className="text-[10px] leading-snug text-zinc-500">
+                    {indicators.idh_fonte || 'Atlas DH'}
+                    {indicators.idh_ano ? ` · ${indicators.idh_ano}` : ''}
+                  </p>
+                </div>
+                <p className="shrink-0 text-right text-sm font-extrabold tabular-nums text-foreground">
+                  {indicators.idh.toFixed(3)}
+                </p>
+              </div>
             )}
           </div>
+
+          {indicators?.atlas_uf_context && (
+            <div className="mt-3 min-w-0 overflow-hidden rounded-xl border border-border bg-card/60 p-3">
+              <div className="flex items-center gap-2">
+                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-zinc-800 bg-zinc-950/80 text-violet-400">
+                  <Landmark size={15} />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <span className="text-[9px] font-bold uppercase tracking-wider text-zinc-500">
+                      Atlas Econômico · {indicators.atlas_uf_context.uf_sigla}
+                    </span>
+                    <Badge tone="neutral">REFERÊNCIA UF</Badge>
+                  </div>
+                  <p className="text-sm font-extrabold text-foreground">
+                    {indicators.atlas_uf_context.atividades_economicas} setores
+                  </p>
+                </div>
+              </div>
+              <p className="mt-2 text-[10px] leading-relaxed text-zinc-400">
+                {indicators.atlas_uf_context.descricao}
+              </p>
+
+              <ul className="mt-3 space-y-0 divide-y divide-zinc-800/80 overflow-hidden rounded-lg border border-zinc-800/80 bg-zinc-950/40">
+                {(indicators.atlas_uf_context.kpis || []).map((kpi) => (
+                  <li key={kpi.label} className="flex items-baseline justify-between gap-3 px-3 py-2">
+                    <span className="min-w-0 text-[10px] font-medium text-zinc-400" title={kpi.hint}>
+                      {kpi.label}
+                    </span>
+                    <span className="shrink-0 text-sm font-bold tabular-nums text-zinc-100">{kpi.valor}</span>
+                  </li>
+                ))}
+              </ul>
+
+              <p className="mt-2 text-[9px] leading-snug text-zinc-500">
+                Matrizes {indicators.atlas_uf_context.matrizes.join(' · ')} · NF-e{' '}
+                {indicators.atlas_uf_context.referencia_ano}
+              </p>
+              <a
+                href={indicators.atlas_uf_context.portal_url}
+                target="_blank"
+                rel="noreferrer"
+                className="mt-2 inline-flex w-full items-center justify-center gap-1.5 rounded-lg border border-violet-500/30 bg-violet-500/10 px-3 py-2 text-[11px] font-bold text-violet-200 hover:bg-violet-500/20"
+              >
+                Abrir Atlas Econômico IPEA
+                <span aria-hidden>↗</span>
+              </a>
+            </div>
+          )}
           {indicators?.pib_serie && indicators.pib_serie.length >= 3 && (
             <div className="mt-4 rounded-xl border border-zinc-800 bg-zinc-950/40 p-3">
               <h5 className="mb-2 text-[10px] font-extrabold uppercase tracking-wide text-zinc-400">
@@ -1291,6 +1389,9 @@ export default function ExecutiveDashboard({
                 : 'Série estimada exibida porque as fontes oficiais ainda não retornaram dados completos'}
               {climateYears.length > 0 ? ` · ${climateYears.length} anos (${climateYears[0]}–${climateYears[climateYears.length - 1]})` : ''}
             </p>
+            {urbanEvolutionNote && (
+              <p className="mt-1 text-[10px] font-semibold text-indigo-200/90">{urbanEvolutionNote}</p>
+            )}
           </div>
           {climateChartData.length > 0 ? (
             <div className="h-56 w-full text-[10px]">
@@ -1300,7 +1401,17 @@ export default function ExecutiveDashboard({
                   <XAxis dataKey="ano" stroke="#71717a" />
                   <YAxis yAxisId="left" stroke="#10b981" domain={tempDomain} />
                   <YAxis yAxisId="right" orientation="right" stroke="#6366f1" domain={areaDomain} />
-                  <Tooltip contentStyle={{ backgroundColor: '#18181b', border: '1px solid #27272a', borderRadius: '8px' }} />
+                  <Tooltip
+                    contentStyle={{ backgroundColor: '#18181b', border: '1px solid #27272a', borderRadius: '8px' }}
+                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                    formatter={(value: any, name: any, item: any) => {
+                      const pct = item?.payload?.pct;
+                      if (typeof name === 'string' && name.includes('urbanizada') && pct != null) {
+                        return [`${value} km² (${pct}% do município)`, name];
+                      }
+                      return [value, name];
+                    }}
+                  />
                   <Legend iconSize={8} />
                   {hasTemperatureSeries && (
                     <Line yAxisId="left" type="monotone" dataKey="temp" stroke="#10b981" strokeWidth={2} name={tempLegendLabel} dot={{ r: 3 }} connectNulls />

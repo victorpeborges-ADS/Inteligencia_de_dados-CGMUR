@@ -37,7 +37,7 @@ def test_merge_into_seed_preserves_priority_municipios(tmp_path: Path):
     target = tmp_path / "seed.csv"
     import_rows = [
         {
-            "codigo_ibge": "4305108",
+            "codigo_ibge": "3304557",  # Rio — no catálogo piloto
             "escopo": "aplicavel",
             "populacao_area_afetada": "42000",
             "domicilios_area_afetada": "18000",
@@ -48,15 +48,15 @@ def test_merge_into_seed_preserves_priority_municipios(tmp_path: Path):
             "fonte_ref": "",
         }
     ]
-    merged = merge_into_seed(import_rows, target, source_label="caxias.csv")
+    merged = merge_into_seed(import_rows, target, source_label="rio.csv")
     assert merged == 1
 
     with target.open(encoding="utf-8", newline="") as handle:
         rows = {r["codigo_ibge"]: r for r in csv.DictReader(handle)}
     assert len(rows) == len(TARGET_IBGE_CODES)
-    caxias = rows["4305108"]
-    assert caxias["populacao_area_afetada"] == "42000"
-    assert "caxias.csv" in caxias["fonte_ref"]
+    rio = rows["3304557"]
+    assert rio["populacao_area_afetada"] == "42000"
+    assert "rio.csv" in rio["fonte_ref"]
     assert rows["2611606"]["escopo"] == "nao_aplicavel"
 
 

@@ -234,7 +234,11 @@ def is_official_ibge_mesh(db: Session, muni: Municipio) -> bool:
         )
         .count()
     )
-    if official_fonte > 0:
+    try:
+        official_n = int(official_fonte or 0)
+    except (TypeError, ValueError):
+        official_n = 0
+    if official_n > 0:
         return True
 
     rows = db.query(Bairro.codigo_bairro, Bairro.nome).filter(Bairro.municipio_id == muni.id).all()
@@ -395,7 +399,7 @@ def sync_official_bairros_municipality(db: Session, codigo_ibge: str, *, force: 
     return import_official_ibge_mesh(db, muni, force=force)
 
 
-def sync_official_bairros_batch(db: Session, *, limit: int = 61, force: bool = False) -> dict[str, Any]:
+def sync_official_bairros_batch(db: Session, *, limit: int = 6, force: bool = False) -> dict[str, Any]:
     from app.data_connectors.constants import TARGET_IBGE_CODES
 
     codes = TARGET_IBGE_CODES[:limit]

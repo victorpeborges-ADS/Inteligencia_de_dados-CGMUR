@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from app.timeutil import utc_now
 from pathlib import Path
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
@@ -55,7 +55,7 @@ def generate_diagnostic_pdf(record: DiagnosticoExecutivo, muni: Municipio) -> Pa
         lacunas=conteudo.get("lacunas") or {},
         fmt_num=_fmt_num,
         fmt_currency=_fmt_currency,
-        gerado_em=(record.gerado_em or datetime.utcnow()).strftime("%d/%m/%Y %H:%M"),
+        gerado_em=(record.gerado_em or utc_now()).strftime("%d/%m/%Y %H:%M"),
         narrativa_ia=record.narrativa_ia,
         narrativa_ia_meta=record.narrativa_ia_meta or {},
         narrativa_paragrafos=(record.narrativa_ia_meta or {}).get("paragrafos")

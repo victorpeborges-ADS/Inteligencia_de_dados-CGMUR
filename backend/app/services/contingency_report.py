@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from app.timeutil import utc_now
 from pathlib import Path
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
@@ -24,7 +24,7 @@ def generate_contingency_pdf(plan: ContingencyPlan, muni: Municipio | None) -> P
     html = template.render(
         plan=plan,
         muni=muni,
-        gerado_em=datetime.utcnow().strftime("%d/%m/%Y %H:%M UTC"),
+        gerado_em=utc_now().strftime("%d/%m/%Y %H:%M UTC"),
     )
     out_dir = Path(settings.REPORTS_DIR) / "contingency"
     out_dir.mkdir(parents=True, exist_ok=True)

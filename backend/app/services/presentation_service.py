@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import datetime
+from app.timeutil import utc_now
 from collections import Counter
 from typing import Any
 
@@ -106,7 +106,7 @@ def build_presentation_payload(db: Session, codigo_ibge: str) -> dict[str, Any]:
     )
 
     pdf_meta = diagnostic_download_meta(diagnostic)
-    gerado = diagnostic.gerado_em or datetime.datetime.utcnow()
+    gerado = diagnostic.gerado_em or utc_now()
 
     map_b64 = map_screenshot_base64(db, muni, "vulnerabilidade")
 

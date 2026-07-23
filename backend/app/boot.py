@@ -37,6 +37,7 @@ MIGRATIONS = (
     "020_educacao_inep.sql",
     "021_territorios_especiais.sql",
     "022_municipio_geoportal.sql",
+    "023_contingency_operacional.sql",
 )
 
 
@@ -143,11 +144,22 @@ def initialize_database() -> None:
     seed_sql = Path(__file__).resolve().parent.parent / "seeds" / "municipios_seed_50.sql"
     if seed_sql.exists():
         try:
+            raw = seed_sql.read_text(encoding="utf-8")
+            # Remove comentários de linha e executa statement a statement (DELETE + INSERT)
+            lines = []
+            for line in raw.splitlines():
+                stripped = line.strip()
+                if stripped.startswith("--"):
+                    continue
+                lines.append(line)
+            cleaned = "\n".join(lines)
+            statements = [s.strip() for s in cleaned.split(";") if s.strip()]
             with engine.connect() as conn:
-                conn.execute(text(seed_sql.read_text(encoding="utf-8")))
+                for stmt in statements:
+                    conn.execute(text(stmt))
                 conn.commit()
             boot_status.seed_ok = True
-            logger.info("Seed 61 municípios prioritários aplicado.")
+            logger.info("Seed catálogo piloto (6 municípios) aplicado.")
         except Exception as exc:
             boot_status.errors.append(f"seed: {exc}")
             logger.warning("Seed municípios falhou (continuando boot): %s", exc)

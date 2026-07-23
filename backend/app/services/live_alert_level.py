@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from app.timeutil import utc_now
 import datetime
 from typing import Any
 
@@ -30,7 +31,7 @@ def max_alert_level(niveis: list[str], *, default: str = "VERDE") -> str:
 def live_alert_snapshot(db: Session, codigo_ibge: str, *, hours: int = 24) -> dict[str, Any]:
     """Consolida nível máximo e contagens de alertas das últimas N horas."""
     code = str(codigo_ibge).zfill(7)[:7]
-    since = datetime.datetime.utcnow() - datetime.timedelta(hours=max(1, hours))
+    since = utc_now() - datetime.timedelta(hours=max(1, hours))
     alerts = (
         db.query(MonitoringAlert)
         .filter(MonitoringAlert.codigo_ibge == code, MonitoringAlert.created_at >= since)

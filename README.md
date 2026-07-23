@@ -24,7 +24,7 @@ docker compose up -d db backend frontend
 
 ### Território e análise
 
-- **61 municípios prioritários** com onboarding sob demanda (malhas IBGE, setores censitários e integrações)
+- **6 municípios piloto** (Recife, Aracaju, Salvador, São Paulo, Rio de Janeiro, Brasília) com onboarding sob demanda
 - Índices **IVC**, **IRI** e **Score Sinidu+Clima** por bairro e município
 - Painel executivo com KPIs, badges de qualidade de dado (Oficial / Derivado / Lacuna) e narrativa territorial
 - **Comparador** entre municípios (tabela, radar, IA, export PDF)

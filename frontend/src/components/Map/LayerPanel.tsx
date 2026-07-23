@@ -54,6 +54,12 @@ export const LAYER_PRESETS = {
     description: 'Bairros + vulnerabilidade climática + risco de inundação',
     layers: ['bairros', 'vulnerabilidade', 'inundacao'],
   },
+  riscoConsolidado: {
+    id: 'risco_consolidado',
+    label: 'Risco agora',
+    description: 'Mapa síntese Score Sinidu × alerta vivo (semáforo)',
+    layers: ['bairros', 'risco_consolidado'],
+  },
 } as const;
 
 const GROUP_ICONS: Record<LayerOption['group'], LucideIcon> = {
@@ -182,7 +188,7 @@ export default function LayerPanel({
 
   if (panelCollapsed) {
     return (
-      <div className={`absolute top-4 left-4 z-[999] ${className}`}>
+      <div className={`absolute top-4 left-4 z-[1200] ${className}`}>
         <button
           type="button"
           onClick={() => setPanelCollapsed(false)}
@@ -201,7 +207,7 @@ export default function LayerPanel({
 
   return (
     <div
-      className={`map-ui-chrome absolute top-4 bottom-4 left-4 z-[999] flex w-72 max-h-[calc(100%-2rem)] flex-col gap-2 overflow-hidden rounded-xl border border-border bg-card/85 p-3 shadow-2xl backdrop-blur-md transition-all duration-300 ${className}`}
+      className={`map-ui-chrome absolute top-4 bottom-4 left-4 z-[1200] flex w-72 max-h-[calc(100%-2rem)] flex-col gap-2 overflow-hidden rounded-xl border border-border bg-card/85 p-3 shadow-2xl backdrop-blur-md transition-all duration-300 ${className}`}
     >
       <div className="flex items-center justify-between border-b border-zinc-800 pb-1.5">
         <span className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-zinc-400">
@@ -232,7 +238,7 @@ export default function LayerPanel({
         />
       </div>
 
-      <div className="grid grid-cols-2 gap-1.5">
+      <div className="grid grid-cols-3 gap-1.5">
         <button
           type="button"
           onClick={() => setActiveLayers([...LAYER_PRESETS.cruzarRiscos.layers])}
@@ -240,6 +246,14 @@ export default function LayerPanel({
           className="rounded-lg border border-indigo-500/30 bg-indigo-500/10 px-2 py-1 text-[10px] font-bold text-indigo-300 hover:bg-indigo-500/20"
         >
           {LAYER_PRESETS.cruzarRiscos.label}
+        </button>
+        <button
+          type="button"
+          onClick={() => setActiveLayers([...LAYER_PRESETS.riscoConsolidado.layers])}
+          title={LAYER_PRESETS.riscoConsolidado.description}
+          className="rounded-lg border border-rose-500/30 bg-rose-500/10 px-2 py-1 text-[10px] font-bold text-rose-300 hover:bg-rose-500/20"
+        >
+          {LAYER_PRESETS.riscoConsolidado.label}
         </button>
         <button
           type="button"

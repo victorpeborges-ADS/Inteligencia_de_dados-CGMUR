@@ -7,8 +7,8 @@ from app.services.atlas_economico_service import ATLAS_ACTIVITIES, build_atlas_u
 
 def test_idhm_csv_covers_priority_municipios():
     rows = load_idhm_csv(DEFAULT_IDHM_CSV)
-    assert len(rows) == 61
-    assert set(rows) == set(TARGET_IBGE_CODES)
+    # CSV histórico pode ter mais códigos; o piloto atual deve estar coberto.
+    assert set(TARGET_IBGE_CODES).issubset(set(rows))
 
 
 def test_recife_idhm_from_seed():

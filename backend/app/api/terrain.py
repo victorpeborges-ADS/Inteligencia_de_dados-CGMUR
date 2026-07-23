@@ -2,8 +2,10 @@
 from __future__ import annotations
 
 import os
+from typing import Any
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.db import get_db
@@ -19,6 +21,12 @@ from app.services.dem_processor import (
 from app.security.municipio_access import get_accessible_municipio
 
 router = APIRouter()
+
+
+class TerrainProfileBody(BaseModel):
+    coordinates: list[list[float]] = Field(..., description="LineString [[lon,lat], ...]")
+    samples: int = Field(80, ge=10, le=200)
+    water_level_m: float | None = None
 DEM_STATIC_PREFIX = "/static/dem"
 
 
@@ -64,6 +72,33 @@ def get_slope_analysis(codigo_ibge: str, request: Request, db: Session = Depends
         return slope_analysis(db, codigo_ibge)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.post("/{codigo_ibge}/profile")
+def terrain_profile(
+    codigo_ibge: str,
+    body: TerrainProfileBody,
+    request: Request,
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """Seção transversal de elevação ao longo de uma linha (17f.5)."""
+    get_accessible_municipio(db, codigo_ibge, request=request)
+    from app.services.terrain_profile_service import build_terrain_profile
+
+    result = build_terrain_profile(
+        db,
+        codigo_ibge,
+        body.coordinates,
+        samples=body.samples,
+        water_level_m=body.water_level_m,
+    )
+    if result.get("erro") == "municipio_nao_encontrado":
+        raise HTTPException(status_code=404, detail="Município não encontrado")
+    if result.get("erro") == "dem_indisponivel":
+        raise HTTPException(status_code=404, detail=result.get("mensagem") or "DEM indisponível")
+    if result.get("erro") in {"linha_invalida", "linha_degenerada"}:
+        raise HTTPException(status_code=400, detail=result.get("mensagem") or result["erro"])
+    return result
 
 
 @router.post("/{codigo_ibge}/process")

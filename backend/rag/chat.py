@@ -68,13 +68,17 @@ class RagAssistant:
 
         if detect_fiscal_intent(message.lower()):
             fiscal = answer_fiscal_question(db, muni, message)
-            ctx = build_municipal_assistant_context(db, muni)
+            try:
+                ctx = build_municipal_assistant_context(db, muni)
+            except Exception:
+                logger.exception("Contexto municipal indisponível no ramo fiscal")
+                ctx = {"suggested_questions": []}
             elapsed = int((time.time() - start) * 1000)
             return {
                 "response": fiscal["response"],
                 "source_url": fiscal["source_url"],
                 "rag_sources": [],
-                "municipal_sources": format_sources_for_response(ctx),
+                "municipal_sources": format_sources_for_response(ctx) if ctx else [],
                 "suggested_questions": ctx.get("suggested_questions") or [],
                 "response_time_ms": elapsed,
                 "suggested_layer": None,

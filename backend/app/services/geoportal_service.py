@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
+from app.timeutil import utc_now
 import json
 import logging
 import subprocess
 import tempfile
 import zipfile
-from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -274,7 +274,7 @@ def import_geoportal_publication(
 
     pub.status = "importado"
     pub.feature_count = result.get("bairros") or pub.feature_count
-    pub.importado_em = datetime.utcnow()
+    pub.importado_em = utc_now()
     pub.mensagem = f"Malha importada — {result.get('bairros', 0)} bairros publicados."
     seed = db.query(MunicipioSeed).filter(MunicipioSeed.codigo_ibge == muni.codigo_ibge).first()
     if seed:

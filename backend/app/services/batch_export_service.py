@@ -16,11 +16,11 @@ logger = logging.getLogger(__name__)
 def run_batch_diagnostics(
     db: Session,
     *,
-    limit: int = 61,
+    limit: int = 6,
     codigos: list[str] | None = None,
     ensure_dem: bool = True,
 ) -> dict[str, Any]:
-    targets = (codigos or TARGET_IBGE_CODES)[: min(limit, 61)]
+    targets = (codigos or TARGET_IBGE_CODES)[: min(limit, 6)]
     processed = 0
     skipped = 0
     dem_prepared = 0
@@ -61,11 +61,11 @@ def run_batch_diagnostics(
 def run_batch_reports(
     db: Session,
     *,
-    limit: int = 61,
+    limit: int = 6,
     force: bool = False,
     codigos: list[str] | None = None,
 ) -> dict[str, Any]:
-    targets = (codigos or TARGET_IBGE_CODES)[: min(limit, 61)]
+    targets = (codigos or TARGET_IBGE_CODES)[: min(limit, 6)]
     processed = 0
     skipped = 0
     blocked = 0

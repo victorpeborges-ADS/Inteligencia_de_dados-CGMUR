@@ -248,7 +248,7 @@ def sync_singedlab_all_municipios(
     db: Session = Depends(get_db),
     _user: User = Depends(require_role(Role.GESTOR)),
 ):
-    """Recarrega CSV curado para os 61 municípios prioritários."""
+    """Recarrega CSV curado para o catálogo piloto."""
     summary = sync_singedlab_batch(db, force=True)
     return summary
 

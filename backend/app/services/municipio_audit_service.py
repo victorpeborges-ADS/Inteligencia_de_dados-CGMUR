@@ -1,4 +1,4 @@
-"""Auditoria de qualidade e rastreabilidade dos 61 municípios prioritários."""
+"""Auditoria de qualidade e rastreabilidade do catálogo piloto."""
 
 from __future__ import annotations
 

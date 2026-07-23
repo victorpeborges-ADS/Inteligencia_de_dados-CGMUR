@@ -17,7 +17,7 @@ def enable_cache(monkeypatch):
 def test_rainfall_cache_hit(monkeypatch):
     calls = {"n": 0}
 
-    def fake_run(db, muni_id, mm):
+    def fake_run(db, muni_id, mm, **kwargs):
         calls["n"] += 1
         return {"scenario_type": "ExtremeRainfall", "input_value": mm, "impact_value": 1}
 

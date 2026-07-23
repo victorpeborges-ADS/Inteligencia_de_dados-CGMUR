@@ -15,6 +15,7 @@ LAYER_FONTE_IDS: dict[str, list[str]] = {
     "bairros": ["ibge_cidades"],
     "infraestrutura": [],
     "educacao": ["inep_censo_escolar"],
+    "edificacoes": ["gemeo_digital_3d"],
     "territorios_especiais": ["incra_quilombos", "funai_ti", "ibge_aglomerados"],
     "socioeconomico": ["ibge_cidades", "sinter"],
     "cobertura": ["mapbiomas"],
@@ -26,6 +27,7 @@ LAYER_FONTE_IDS: dict[str, list[str]] = {
     "saneamento_drenagem": ["snis_sinisa"],
     "adaptacao_climatica": ["adapta_brasil", "mapbiomas"],
     "prioridade_planejamento": ["munic"],
+    "risco_consolidado": ["mapbiomas", "s2id", "cemaden_georiscos"],
     "lacunas_dados": ["brasil_mais", "inde"],
     "saude_risco": ["ibge_cidades"],
     "seguranca_publica": [],
@@ -39,6 +41,10 @@ LAYER_DESCRICOES: dict[str, str] = {
     "educacao": (
         "Escolas de educação básica com matrículas por etapa (infantil, fundamental, médio) — "
         "INEP Censo Escolar. Marcadores proporcionais ao volume de matrículas."
+    ),
+    "edificacoes": (
+        "Gêmeo digital urbano LOD1 — footprints OSM extrudados com altura por fonte "
+        "(OSM levels / nDSM LiDAR / heurística) e exports 3D Tiles / CityJSON."
     ),
     "territorios_especiais": (
         "Quilombos certificados (INCRA), terras indígenas (FUNAI) e comunidades urbanas "
@@ -60,6 +66,10 @@ LAYER_DESCRICOES: dict[str, str] = {
     "saneamento_drenagem": "Indicadores de saneamento (SNIS/SINISA) combinados com risco de drenagem territorial Sinidu+Clima.",
     "adaptacao_climatica": "Capacidade de adaptação climática municipal — AdaptaBrasil/INPE e proxies MapBiomas.",
     "prioridade_planejamento": "Priorização de intervenções urbanas com base em planos locais e score Sinidu+Clima.",
+    "risco_consolidado": (
+        "Mapa síntese 'onde está o risco agora': Score Sinidu (IVC+IRI+adaptação) por bairro "
+        "cruzado com alerta vivo CEMADEN — semáforo VERDE–VERMELHO."
+    ),
     "lacunas_dados": "Radar de maturidade e lacunas de integração de fontes oficiais no município.",
     "saude_risco": "Cruzamento de unidades de saúde (CNES/DataSUS) com manchas de risco climático territorial.",
     "seguranca_publica": "Indicadores de criminalidade municipal (SINESP/dados.gov.br) para contexto de vulnerabilidade urbana.",
@@ -73,6 +83,7 @@ LAYER_GRUPOS: dict[str, str] = {
     "bairros": "Base",
     "infraestrutura": "Dados urbanos",
     "educacao": "Dados urbanos",
+    "edificacoes": "Dados urbanos",
     "socioeconomico": "Dados urbanos",
     "cobertura": "Clima e riscos",
     "lst_observada": "Clima e riscos",
@@ -83,6 +94,7 @@ LAYER_GRUPOS: dict[str, str] = {
     "saneamento_drenagem": "Planejamento",
     "adaptacao_climatica": "Planejamento",
     "prioridade_planejamento": "Planejamento",
+    "risco_consolidado": "Clima e riscos",
     "lacunas_dados": "Planejamento",
     "saude_risco": "Saúde e segurança",
     "seguranca_publica": "Saúde e segurança",

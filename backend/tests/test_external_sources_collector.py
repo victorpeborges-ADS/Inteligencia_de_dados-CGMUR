@@ -41,8 +41,13 @@ def test_adapta_indicators_ausente_sem_dados():
 
 def test_adapta_indicators_from_stats():
     db = MagicMock()
-    stat = MagicMock(vegetacao_pct=40.0, floresta_pct=None)
-    db.query.return_value.filter.return_value.order_by.return_value.limit.return_value.all.return_value = [stat]
+    # Produção agrega area_ha × classe_uso (sem .limit())
+    floresta = MagicMock(ano=2022, classe_uso="Floresta", area_ha=40.0)
+    urbano = MagicMock(ano=2022, classe_uso="Área Urbana", area_ha=60.0)
+    db.query.return_value.filter.return_value.order_by.return_value.all.return_value = [
+        floresta,
+        urbano,
+    ]
     out = _adapta_indicators(db, None, "2611606")
     assert out["score"] is not None
     assert out["indicadores"]["vegetacao_pct"] == 40.0

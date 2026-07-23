@@ -29,6 +29,7 @@ def reset_auth(monkeypatch):
 
 
 def test_compare_rainfall_recife_api(client: TestClient):
+    pytest.importorskip("rasterio")
     res = client.post(
         "/api/v1/simulations/extreme-rainfall/compare",
         json={"baseline_mm": 80.0, "scenario_mm": 160.0, "codigo_ibge": RECIFE_IBGE},

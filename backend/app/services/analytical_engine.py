@@ -158,13 +158,24 @@ class AnalyticalEngine:
             ivc = ivc * (1.0 - (capacidade_adaptacao * 0.3)) # Adaptive capacity reduces vulnerability by up to 30%
             ivc = round(max(0.0, min(1.0, ivc)), 2)
             
+            pop_bairro = int(b.pop_censo2022) if b.pop_censo2022 is not None else int(total_pop)
             results.append({
                 "id": b.id,
                 "bairro_nome": b.nome,
                 "exposicao": round(exposicao, 2),
                 "sensibilidade": round(sensibilidade, 2),
                 "capacidade_adaptacao": round(capacidade_adaptacao, 2),
-                "indice_vulnerabilidade": ivc
+                "indice_vulnerabilidade": ivc,
+                # Fatores brutos (17h.2a) — não quebram consumidores que ignoram campos extras
+                "populacao": pop_bairro,
+                "densidade_hab_km2": round(density, 1),
+                "renda_media": round(float(avg_income), 2),
+                "density_score": round(density_score, 3),
+                "income_score": round(income_score, 3),
+                "s2id_desastres_count": int(disasters_count),
+                "alertas_peso": round(alert_weight, 2),
+                "veg_pct": round(veg_pct, 3),
+                "hospitais_count": int(hospitals_count),
             })
             
         return results
@@ -595,9 +606,21 @@ class AnalyticalEngine:
         return affected_bairros, min(affected_pop, cap), exposures
 
     @staticmethod
-    def run_chuva_extrema_simulation(db: Session, muni_id: int, precipitacao_mm: float) -> Dict[str, Any]:
+    def run_chuva_extrema_simulation(
+        db: Session,
+        muni_id: int,
+        precipitacao_mm: float,
+        *,
+        impermeability_offset: float = 0.0,
+        nivel_mar_m: float = 0.0,
+        chuva_antecedente_mm: float = 0.0,
+        sea_level_meta: dict | None = None,
+        drain_removed_mm: float = 0.0,
+        rede_saturada: bool = False,
+        drenagem_meta: dict | None = None,
+    ) -> Dict[str, Any]:
         """
-        Simula chuva extrema com DEM SRTM, IRI por bairro, deslizamento por declividade
+        Simula chuva extrema com DEM SRTM, IRI por bairro, deslizamento por declividade×chuva
         e métricas recalculadas após união das manchas finais.
         """
         from app.services.hydro_simulator import enrich_rainfall_simulation
@@ -606,7 +629,18 @@ class AnalyticalEngine:
         bairros = db.query(Bairro).filter(Bairro.municipio_id == muni_id).all()
         muni_shape = shape(json.loads(db.scalar(muni.geom.ST_AsGeoJSON())))
 
-        terrain = enrich_rainfall_simulation(db, muni, precipitacao_mm)
+        terrain = enrich_rainfall_simulation(
+            db,
+            muni,
+            precipitacao_mm,
+            impermeability_offset=impermeability_offset,
+            nivel_mar_m=nivel_mar_m,
+            chuva_antecedente_mm=chuva_antecedente_mm,
+            sea_level_meta=sea_level_meta,
+            drain_removed_mm=drain_removed_mm,
+            rede_saturada=rede_saturada,
+            drenagem_meta=drenagem_meta,
+        )
         flood_bands = terrain.get("flood_bands")
         intensity = 1.2 + (precipitacao_mm / 100.0)
 
@@ -665,6 +699,39 @@ class AnalyticalEngine:
                 "bairros_exposicao": bairro_exposures[:12],
                 "bairros_atingidos_count": len(bairro_exposures),
             }
+
+        # 17g.2e / 17g.2a — selo de confiança + validação contra histórico S2ID
+        try:
+            from app.services.simulation_confidence_service import enrich_simulation_confidence
+
+            sim_meta = enrich_simulation_confidence(
+                db,
+                muni,
+                sim_meta,
+                flood_geometry=fc,
+                affected_bairros=affected_bairros,
+            )
+        except Exception as exc:
+            import logging
+
+            logging.getLogger(__name__).warning("Selo/validação S2ID falhou: %s", exc)
+
+        # 17b.1 / 17b.5 — inundação × edifício + painel de exposição do cenário
+        try:
+            from app.services.building_exposure_service import enrich_simulation_building_exposure
+
+            sim_meta = enrich_simulation_building_exposure(
+                db,
+                muni,
+                sim_meta,
+                flood_geometry=fc,
+                affected_population=affected_pop,
+                precipitacao_mm=precipitacao_mm,
+            )
+        except Exception as exc:
+            import logging
+
+            logging.getLogger(__name__).warning("Exposição edifícios falhou: %s", exc)
 
         return {
             "scenario_type": "ExtremeRainfall",

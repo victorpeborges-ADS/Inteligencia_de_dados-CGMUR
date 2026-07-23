@@ -54,13 +54,24 @@ app.add_middleware(AuthMiddleware)
 app.add_middleware(RequestMetricsMiddleware)
 if settings.TRUST_PROXY_HEADERS:
     app.add_middleware(ProxyHeadersMiddleware, trusted_hosts="*")
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=settings.CORS_ORIGINS,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+
+_cors_kw: dict = {
+    "allow_origins": settings.CORS_ORIGINS,
+    "allow_credentials": True,
+    "allow_methods": ["*"],
+    "allow_headers": ["*"],
+}
+if settings.CORS_ALLOW_LAN:
+    # localhost + RFC1918 (acesso de colegas na mesma rede Wi‑Fi/Ethernet)
+    _cors_kw["allow_origin_regex"] = (
+        r"https?://("
+        r"localhost|127\.0\.0\.1|"
+        r"192\.168\.\d{1,3}\.\d{1,3}|"
+        r"10\.\d{1,3}\.\d{1,3}\.\d{1,3}|"
+        r"172\.(1[6-9]|2\d|3[0-1])\.\d{1,3}\.\d{1,3}"
+        r")(:\d+)?"
+    )
+app.add_middleware(CORSMiddleware, **_cors_kw)
 
 
 @app.get("/")
@@ -97,6 +108,7 @@ from app.api.municipios import router as municipios_router
 from app.api.routing import router as routing_router
 from app.api.map import router as map_router
 from app.api.geoportal import router as geoportal_router
+from app.api.buildings import router as buildings_router
 from app.services.alert_broadcaster import alert_manager
 
 app.include_router(health_router, tags=["health"])
@@ -123,6 +135,7 @@ app.include_router(municipios_router, prefix=f"{settings.API_V1_STR}/municipios"
 app.include_router(routing_router, prefix=f"{settings.API_V1_STR}/routing", tags=["routing"])
 app.include_router(map_router, prefix=f"{settings.API_V1_STR}/map", tags=["map"])
 app.include_router(geoportal_router, prefix=f"{settings.API_V1_STR}/geoportal", tags=["geoportal"])
+app.include_router(buildings_router, prefix=f"{settings.API_V1_STR}/buildings", tags=["buildings"])
 
 
 @app.websocket("/ws/alerts/{codigo_ibge}")
@@ -143,3 +156,19 @@ except OSError:
     _dem_static = Path(__file__).resolve().parent / ".data" / "dem"
     _dem_static.mkdir(parents=True, exist_ok=True)
 app.mount("/static/dem", StaticFiles(directory=str(_dem_static)), name="dem_static")
+
+_tiles3d_static = Path(os.getenv("TILES3D_DIR", "/data/3dtiles"))
+try:
+    _tiles3d_static.mkdir(parents=True, exist_ok=True)
+except OSError:
+    _tiles3d_static = Path(__file__).resolve().parent / ".data" / "3dtiles"
+    _tiles3d_static.mkdir(parents=True, exist_ok=True)
+app.mount("/static/3dtiles", StaticFiles(directory=str(_tiles3d_static)), name="tiles3d_static")
+
+_citymodel_static = Path(os.getenv("CITYMODEL_DIR", "/data/citymodels"))
+try:
+    _citymodel_static.mkdir(parents=True, exist_ok=True)
+except OSError:
+    _citymodel_static = Path(__file__).resolve().parent / ".data" / "citymodels"
+    _citymodel_static.mkdir(parents=True, exist_ok=True)
+app.mount("/static/citymodels", StaticFiles(directory=str(_citymodel_static)), name="citymodel_static")

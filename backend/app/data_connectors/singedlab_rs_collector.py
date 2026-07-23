@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import csv
 import logging
-from datetime import datetime, timezone
+from datetime import datetime
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any
@@ -18,6 +18,7 @@ from sqlalchemy.orm import Session
 
 from app.data_connectors.constants import TARGET_IBGE_CODES, TARGET_MUNICIPALITIES
 from app.models import Municipio, MunicipioSingedlabRs
+from app.timeutil import utc_now
 
 logger = logging.getLogger(__name__)
 
@@ -26,10 +27,6 @@ SINGEDLAB_EVENT = "enchentes_rs_2024"
 DEFAULT_CSV = Path(__file__).resolve().parents[2] / "data" / "singedlab_rs_enchentes_2024.csv"
 
 RS_IBGE_CODES = {m["codigo_ibge"] for m in TARGET_MUNICIPALITIES if m["uf"] == "RS"}
-
-
-def _utcnow() -> datetime:
-    return datetime.now(timezone.utc)
 
 
 def _parse_int(value: str | None) -> int | None:
@@ -144,7 +141,7 @@ def upsert_singedlab_row(
     row.data_quality = payload.get("data_quality") or "ausente"
     row.fonte_url = payload.get("fonte_url") or SINGEDLAB_PORTAL_URL
     row.fonte_ref = payload.get("fonte_ref")
-    row.sincronizado_em = _utcnow()
+    row.sincronizado_em = utc_now()
     row.indicadores = {
         "metodo": "csv_curado",
         "evento_label": "Enchentes Rio Grande do Sul — maio/2024",

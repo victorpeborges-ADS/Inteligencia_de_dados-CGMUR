@@ -102,8 +102,14 @@ class OfficialClimateService:
                 entry["area_urbanizada_km2"] = round(float(area_km2), 2)
                 if urban_point:
                     entry["qualidade_dado"] = urban_point.get("qualidade_dado", "Derivado")
+                    if urban_point.get("pct_area_municipal") is not None:
+                        entry["pct_area_municipal"] = urban_point["pct_area_municipal"]
                 else:
                     entry["qualidade_dado"] = "Estimado"
+                if "pct_area_municipal" not in entry and municipio.area_km2:
+                    entry["pct_area_municipal"] = round(
+                        100.0 * float(area_km2) / float(municipio.area_km2), 2
+                    )
             timeline.append(entry)
 
         if station and not inmet_live_ok:

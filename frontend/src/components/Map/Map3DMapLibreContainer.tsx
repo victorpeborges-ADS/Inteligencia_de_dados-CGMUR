@@ -1,14 +1,34 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { Droplets, Thermometer, MapPin } from 'lucide-react';
+import { Droplets, Thermometer, MapPin, Radio, Play, Sun, Landmark, Camera, Video, Ruler } from 'lucide-react';
+import { exportMapLibrePng, exportMapLibreWebm } from '@/utils/exportMapScene';
 import { api } from '@/utils/api';
-import { syncThematicLayers, setInspectMarker, clearInspectMarker, simulationLayerIds } from './maplibreLayers';
+import {
+  syncThematicLayers,
+  syncLiveSensorsOverlay,
+  syncCriticalPoisOverlay,
+  syncUrbanContextOverlay,
+  clearEdificacoesMvt,
+  pulseLiveSensorsHalo,
+  setInspectMarker,
+  clearInspectMarker,
+  simulationLayerIds,
+} from './maplibreLayers';
 import ActiveLayersPanel from './ActiveLayersPanel';
+import Map3DNavAssist from './Map3DNavAssist';
+import MapHudControls, { metersPerPixel, niceScaleMeters } from './MapHudControls';
 import { buildInspectResult, formatElevation, type FloodInspectResult } from '@/utils/floodInspect';
 import { MAPLIBRE_BASEMAPS } from '@/config/theme';
 import { useAppStore } from '@/stores/useAppStore';
+import { useAlertWebSocket } from '@/hooks/useAlertWebSocket';
 import type { ContingencyMapOverlay } from '@/utils/contingencyGeo';
+import { type CriticalPoisGeoJSON, type LiveSensorsGeoJSON, type UrbanContextGeoJSON } from '@/utils/api';
+import {
+  computeSceneLighting,
+  presetDefaultHour,
+  type WeatherPresetId,
+} from '@/utils/solarPosition';
 
 type BasemapId = 'satellite' | 'dark' | 'light';
 type MapLibreMap = any;
@@ -104,6 +124,7 @@ function buildStyle(basemap: BasemapId, exaggeration: number) {
   const bm = BASEMAPS[basemap];
   return {
     version: 8,
+    glyphs: 'https://demotiles.maplibre.org/font/{fontstack}/{range}.pbf',
     sources: {
       basemap: {
         type: 'raster',
@@ -181,6 +202,53 @@ function addSkyLayer(map: MapLibreMap) {
   });
 }
 
+/** Aplica iluminação solar + presets climáticos no céu, light e hillshade (17f.1 / 17f.2). */
+function applySceneAtmosphere(
+  map: MapLibreMap,
+  lat: number,
+  lon: number,
+  hourOfDay: number,
+  preset: WeatherPresetId,
+) {
+  const L = computeSceneLighting(lat, lon, hourOfDay, preset);
+  addSkyLayer(map);
+  try {
+    map.setPaintProperty('sky', 'sky-atmosphere-sun', [L.sunAzimuth, L.sunPolar]);
+    map.setPaintProperty('sky', 'sky-atmosphere-sun-intensity', L.sunIntensity);
+  } catch {
+    /* sky may be mid-transition */
+  }
+  try {
+    map.setLight({
+      anchor: 'map',
+      color: L.lightColor,
+      intensity: L.lightIntensity,
+      position: L.lightPosition,
+    });
+  } catch {
+    /* ignore */
+  }
+  try {
+    if (map.getLayer('hillshade')) {
+      map.setPaintProperty('hillshade', 'hillshade-exaggeration', L.hillshadeExaggeration);
+    }
+    if (map.getLayer('basemap')) {
+      map.setPaintProperty('basemap', 'raster-brightness-max', L.basemapBrightness);
+      map.setPaintProperty('basemap', 'raster-opacity', Math.min(1, 0.75 + L.basemapBrightness * 0.25));
+    }
+  } catch {
+    /* ignore */
+  }
+  return L;
+}
+
+const WEATHER_PRESETS: { id: WeatherPresetId; label: string }[] = [
+  { id: 'dia', label: 'Dia' },
+  { id: 'entardecer', label: 'Entardecer' },
+  { id: 'noite', label: 'Noite' },
+  { id: 'chuva', label: 'Chuva' },
+];
+
 export default function Map3DMapLibreContainer({
   activeLayers,
   simGeoJSON,
@@ -213,7 +281,6 @@ export default function Map3DMapLibreContainer({
       : null,
   );
 
-  const colorMode = useAppStore((s) => s.colorMode);
   const layerOpacityById = useAppStore((s) => s.layerOpacityById);
   const layerOptions = useAppStore((s) => s.layerOptions);
   const setLayerOpacity = useAppStore((s) => s.setLayerOpacity);
@@ -223,12 +290,52 @@ export default function Map3DMapLibreContainer({
   const [basemap, setBasemap] = useState<BasemapId>('satellite');
   const [exaggeration, setExaggeration] = useState(1.8);
   const [pitch, setPitch] = useState(62);
+  const [bearing, setBearing] = useState(-24);
+  const [scaleLabel, setScaleLabel] = useState('100 m');
   const [libReady, setLibReady] = useState(false);
   const [mapReady, setMapReady] = useState(false);
   const [layerData, setLayerData] = useState<Record<string, any>>({});
   const [layersLoading, setLayersLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [inspect, setInspect] = useState<FloodInspectResult | null>(null);
+  const [showLiveSensors, setShowLiveSensors] = useState(true);
+  const [liveSensors, setLiveSensors] = useState<LiveSensorsGeoJSON | null>(null);
+  const [liveSensorsTick, setLiveSensorsTick] = useState(0);
+  const [showCriticalPois, setShowCriticalPois] = useState(false);
+  const [criticalPois, setCriticalPois] = useState<CriticalPoisGeoJSON | null>(null);
+  const [ctxHidrografia, setCtxHidrografia] = useState(false);
+  const [ctxVias, setCtxVias] = useState(false);
+  const [ctxCurvas, setCtxCurvas] = useState(false);
+  const [urbanContext, setUrbanContext] = useState<UrbanContextGeoJSON | null>(null);
+  const [urbanCtxOpacity, setUrbanCtxOpacity] = useState(0.85);
+  const [tourRunning, setTourRunning] = useState(false);
+  const [solarHour, setSolarHour] = useState(12);
+  const [weatherPreset, setWeatherPreset] = useState<WeatherPresetId>('dia');
+  const [lightingLabel, setLightingLabel] = useState('Dia claro');
+  const [exporting, setExporting] = useState(false);
+  const [profileMode, setProfileMode] = useState(false);
+  const [profilePoints, setProfilePoints] = useState<[number, number][]>([]);
+  const [profileData, setProfileData] = useState<{
+    length_m: number;
+    elevation_min_m: number | null;
+    elevation_max_m: number | null;
+    water_level_m: number | null;
+    points: Array<{ distance_m: number; elevation_m: number | null; below_water?: boolean }>;
+  } | null>(null);
+  const [profileLoading, setProfileLoading] = useState(false);
+  const showLiveSensorsRef = useRef(true);
+  const liveSensorsRef = useRef<LiveSensorsGeoJSON | null>(null);
+  const showCriticalPoisRef = useRef(false);
+  const criticalPoisRef = useRef<CriticalPoisGeoJSON | null>(null);
+  const urbanContextRef = useRef<UrbanContextGeoJSON | null>(null);
+  const urbanCtxVisibleRef = useRef(false);
+  const urbanCtxOpacityRef = useRef(0.85);
+  const tourCancelRef = useRef(false);
+  const profileModeRef = useRef(false);
+  const profilePointsRef = useRef<[number, number][]>([]);
+  const showUrbanContext = ctxHidrografia || ctxVias || ctxCurvas;
+  profileModeRef.current = profileMode;
+  profilePointsRef.current = profilePoints;
   const hasSimulation = Boolean(simGeoJSON?.features?.length) && simOverlays.showFlood;
   const isHeatSim =
     simGeoJSON?.features?.some(
@@ -241,6 +348,13 @@ export default function Map3DMapLibreContainer({
   simContoursRef.current = simContours;
   simFlowPathsRef.current = simFlowPaths;
   simOverlaysRef.current = simOverlays;
+  showLiveSensorsRef.current = showLiveSensors;
+  liveSensorsRef.current = liveSensors;
+  showCriticalPoisRef.current = showCriticalPois;
+  criticalPoisRef.current = criticalPois;
+  urbanContextRef.current = urbanContext;
+  urbanCtxVisibleRef.current = showUrbanContext;
+  urbanCtxOpacityRef.current = urbanCtxOpacity;
   contingencyRef.current =
     showContingencyOnMap && contingencyOverlay
       ? {
@@ -252,18 +366,10 @@ export default function Map3DMapLibreContainer({
   layerDataRef.current = layerData;
   layerOpacityRef.current = layerOpacityById;
 
-  useEffect(() => {
-    setBasemap((prev) => {
-      if (colorMode === 'light' && prev === 'dark') return 'light';
-      if (colorMode === 'dark' && prev === 'light') return 'dark';
-      return prev;
-    });
-  }, [colorMode]);
-
   const applyThematicLayers = (map: MapLibreMap) => {
     syncThematicLayers(
       map,
-      activeLayersRef.current,
+      activeLayersRef.current.filter((id) => id !== 'edificacoes'),
       layerDataRef.current,
       simGeoJSONRef.current,
       simContoursRef.current,
@@ -274,7 +380,95 @@ export default function Map3DMapLibreContainer({
         contingency: contingencyRef.current,
       },
     );
+    clearEdificacoesMvt(map);
+    syncLiveSensorsOverlay(map, liveSensorsRef.current, showLiveSensorsRef.current);
+    syncCriticalPoisOverlay(map, criticalPoisRef.current, showCriticalPoisRef.current);
+    syncUrbanContextOverlay(
+      map,
+      urbanContextRef.current,
+      urbanCtxVisibleRef.current,
+      urbanCtxOpacityRef.current,
+    );
   };
+
+  useEffect(() => {
+    if (!selectedMunicipio) {
+      setLiveSensors(null);
+      return;
+    }
+    let cancelled = false;
+    api
+      .getLiveSensors3D(selectedMunicipio, { includeInmet: true })
+      .then((data) => {
+        if (!cancelled) setLiveSensors(data);
+      })
+      .catch(() => {
+        if (!cancelled) setLiveSensors(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedMunicipio, liveSensorsTick]);
+
+  useEffect(() => {
+    if (!selectedMunicipio || !showCriticalPois) {
+      if (!showCriticalPois) setCriticalPois(null);
+      return;
+    }
+    let cancelled = false;
+    api
+      .getCriticalPois3D(selectedMunicipio)
+      .then((data) => {
+        if (!cancelled) setCriticalPois(data);
+      })
+      .catch(() => {
+        if (!cancelled) setCriticalPois(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedMunicipio, showCriticalPois]);
+
+  useEffect(() => {
+    if (!selectedMunicipio || !showUrbanContext) {
+      if (!showUrbanContext) setUrbanContext(null);
+      return;
+    }
+    let cancelled = false;
+    api
+      .getUrbanContext3D(selectedMunicipio, {
+        hidrografia: ctxHidrografia,
+        vias: ctxVias,
+        curvas: ctxCurvas,
+      })
+      .then((data) => {
+        if (!cancelled) setUrbanContext(data);
+      })
+      .catch(() => {
+        if (!cancelled) setUrbanContext(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedMunicipio, showUrbanContext, ctxHidrografia, ctxVias, ctxCurvas]);
+
+  useAlertWebSocket(selectedMunicipio, () => {
+    setLiveSensorsTick((t) => t + 1);
+    if (activeLayersRef.current.includes('alertas')) {
+      api
+        .getLayerGeoJSON('alertas', selectedMunicipio)
+        .then((data) => {
+          setLayerData((prev) => ({ ...prev, alertas: data }));
+        })
+        .catch(() => undefined);
+    }
+  });
+
+  useEffect(() => {
+    return () => {
+      tourCancelRef.current = true;
+    };
+  }, []);
 
   useEffect(() => {
     loadMapLibre()
@@ -293,10 +487,12 @@ export default function Map3DMapLibreContainer({
     setLayersLoading(true);
 
     Promise.all(
-      activeLayers.map(async (layerName) => {
-        const data = await api.getLayerGeoJSON(layerName, selectedMunicipio);
-        return [layerName, data] as const;
-      }),
+      activeLayers
+        .filter((layerName) => layerName !== 'edificacoes')
+        .map(async (layerName) => {
+          const data = await api.getLayerGeoJSON(layerName, selectedMunicipio);
+          return [layerName, data] as const;
+        }),
     )
       .then((entries) => {
         if (!cancelled) setLayerData(Object.fromEntries(entries));
@@ -337,15 +533,35 @@ export default function Map3DMapLibreContainer({
         maxPitch: 85,
         antialias: true,
         attributionControl: true,
+        preserveDrawingBuffer: true, // 17f.9 — export PNG/WebM
       });
 
       map.addControl(new ml.NavigationControl({ visualizePitch: true }), 'top-left');
+      map.addControl(new ml.ScaleControl({ maxWidth: 100, unit: 'metric' }), 'bottom-left');
+
+      const syncHud = () => {
+        if (!map) return;
+        setBearing(map.getBearing());
+        setPitch(Math.round(map.getPitch()));
+        const c = map.getCenter();
+        const z = map.getZoom();
+        const mpp = metersPerPixel(c.lat, z);
+        setScaleLabel(niceScaleMeters(mpp).label);
+      };
+      map.on('move', syncHud);
+      map.on('zoom', syncHud);
+      map.on('rotate', syncHud);
+      map.on('pitch', syncHud);
 
       map.on('load', () => {
         if (cancelled || !map) return;
         map.resize();
         addSkyLayer(map);
+        const [lat0, lon0] = mapFocus;
+        const lit = applySceneAtmosphere(map, lat0, lon0, solarHour, weatherPreset);
+        setLightingLabel(lit.label);
         applyThematicLayers(map);
+        syncHud();
         setMapReady(true);
       });
 
@@ -376,6 +592,7 @@ export default function Map3DMapLibreContainer({
     mapReady,
     layerData,
     activeLayers,
+    selectedMunicipio,
     simGeoJSON,
     simContours,
     simFlowPaths,
@@ -383,7 +600,76 @@ export default function Map3DMapLibreContainer({
     layerOpacityById,
     contingencyOverlay,
     showContingencyOnMap,
+    liveSensors,
+    showLiveSensors,
+    criticalPois,
+    showCriticalPois,
+    urbanContext,
+    showUrbanContext,
+    urbanCtxOpacity,
   ]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !mapReady || !showLiveSensors || !liveSensors?.features?.length) return;
+    let raf = 0;
+    const tick = (t: number) => {
+      pulseLiveSensorsHalo(map, t);
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [mapReady, showLiveSensors, liveSensors]);
+
+  const runPresentationTour = () => {
+    const map = mapRef.current;
+    if (!map || tourRunning) return;
+    tourCancelRef.current = false;
+    setTourRunning(true);
+    setShowLiveSensors(true);
+
+    const center = map.getCenter();
+    const steps: Array<{ center?: [number, number]; zoom: number; pitch: number; bearing: number; duration: number }> = [
+      { zoom: 12.2, pitch: 45, bearing: -10, duration: 2200 },
+      { zoom: 13.6, pitch: 62, bearing: -40, duration: 2800 },
+      { zoom: 14.4, pitch: 70, bearing: 20, duration: 2800 },
+      { zoom: 13.2, pitch: 58, bearing: -24, duration: 2200 },
+    ];
+
+    const sensor = liveSensors?.features?.[0]?.geometry?.coordinates;
+    if (sensor && sensor.length >= 2) {
+      steps.splice(2, 0, {
+        center: [sensor[0], sensor[1]],
+        zoom: 14.8,
+        pitch: 68,
+        bearing: -55,
+        duration: 2600,
+      });
+    }
+
+    let i = 0;
+    const next = () => {
+      if (tourCancelRef.current || !mapRef.current) {
+        setTourRunning(false);
+        return;
+      }
+      if (i >= steps.length) {
+        setTourRunning(false);
+        return;
+      }
+      const step = steps[i++];
+      mapRef.current.easeTo({
+        center: step.center || [center.lng, center.lat],
+        zoom: step.zoom,
+        pitch: step.pitch,
+        bearing: step.bearing,
+        duration: step.duration,
+        essential: true,
+      });
+      window.setTimeout(next, step.duration + 200);
+    };
+    next();
+  };
 
   useEffect(() => {
     const map = mapRef.current;
@@ -408,6 +694,27 @@ export default function Map3DMapLibreContainer({
     if (!map || !mapReady) return;
 
     const onClick = (e: any) => {
+      if (profileModeRef.current) {
+        const pt: [number, number] = [e.lngLat.lng, e.lngLat.lat];
+        const next = [...profilePointsRef.current, pt].slice(-2);
+        setProfilePoints(next);
+        setInspectMarker(map, pt[0], pt[1]);
+        if (next.length === 2) {
+          setProfileLoading(true);
+          api
+            .getTerrainProfile(selectedMunicipio, {
+              coordinates: next,
+              samples: 80,
+            })
+            .then((data) => setProfileData(data))
+            .catch(() => setProfileData(null))
+            .finally(() => setProfileLoading(false));
+        } else {
+          setProfileData(null);
+        }
+        return;
+      }
+
       const layers = simulationLayerIds().filter((id) => map.getLayer(id));
       const hits = layers.length
         ? map.queryRenderedFeatures(e.point, { layers })
@@ -429,13 +736,14 @@ export default function Map3DMapLibreContainer({
     };
 
     map.on('click', onClick);
-    map.getCanvas().style.cursor = hasSimulation ? 'crosshair' : '';
+    map.getCanvas().style.cursor =
+      profileMode || hasSimulation ? 'crosshair' : '';
 
     return () => {
       map.off('click', onClick);
       map.getCanvas().style.cursor = '';
     };
-  }, [mapReady, hasSimulation]);
+  }, [mapReady, hasSimulation, profileMode, selectedMunicipio]);
 
   useEffect(() => {
     if (!hasSimulation) {
@@ -498,9 +806,20 @@ export default function Map3DMapLibreContainer({
       map.setPitch(currentPitch);
       map.resize();
       addSkyLayer(map);
+      const [lat0, lon0] = mapFocus;
+      const lit = applySceneAtmosphere(map, lat0, lon0, solarHour, weatherPreset);
+      setLightingLabel(lit.label);
       applyThematicLayers(map);
     });
   }, [basemap]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !mapReady) return;
+    const [lat0, lon0] = mapFocus;
+    const lit = applySceneAtmosphere(map, lat0, lon0, solarHour, weatherPreset);
+    setLightingLabel(lit.label);
+  }, [mapReady, mapFocus, solarHour, weatherPreset]);
 
   if (error) {
     return (
@@ -534,6 +853,17 @@ export default function Map3DMapLibreContainer({
         moveActiveLayer={moveActiveLayer}
         toggleLayer={toggleLayer}
       />
+      )}
+
+      {!focusMode && mapReady && (
+        <Map3DNavAssist
+          className="pointer-events-auto absolute left-4 top-[22.5rem] z-10 w-64"
+          map={mapRef.current}
+          mapReady={mapReady}
+          selectedMunicipio={selectedMunicipio}
+          mapFocus={mapFocus}
+          bearing={bearing}
+        />
       )}
 
       {!focusMode && (
@@ -601,10 +931,326 @@ export default function Map3DMapLibreContainer({
           className="w-full accent-teal-500"
         />
 
-        <p className="text-[9px] leading-snug text-zinc-600">
+        <label className="mt-3 block text-[10px] font-extrabold uppercase text-zinc-500">
+          <span className="inline-flex items-center gap-1">
+            <Sun size={11} className="text-amber-300" />
+            Hora solar: {String(Math.floor(solarHour)).padStart(2, '0')}:
+            {String(Math.round((solarHour % 1) * 60)).padStart(2, '0')}
+          </span>
+        </label>
+        <input
+          type="range"
+          min={0}
+          max={23.5}
+          step={0.5}
+          value={solarHour}
+          onChange={(e) => setSolarHour(Number(e.target.value))}
+          className="w-full accent-amber-400"
+          title="Iluminação solar por hora do dia (17f.1)"
+        />
+        <p className="mt-1 text-[9px] leading-snug text-zinc-500">{lightingLabel}</p>
+
+        <p className="mb-1.5 mt-3 text-[10px] font-extrabold uppercase text-zinc-500">Clima / hora</p>
+        <div className="grid grid-cols-2 gap-1">
+          {WEATHER_PRESETS.map((p) => (
+            <button
+              key={p.id}
+              type="button"
+              onClick={() => {
+                setWeatherPreset(p.id);
+                setSolarHour(presetDefaultHour(p.id));
+              }}
+              className={`rounded-lg py-1.5 text-[9px] font-bold uppercase ${
+                weatherPreset === p.id
+                  ? 'bg-amber-600 text-white'
+                  : 'bg-zinc-800 text-zinc-400 hover:text-zinc-200'
+              }`}
+              title="Preset visual dia/noite/clima (17f.2)"
+            >
+              {p.label}
+            </button>
+          ))}
+        </div>
+
+        <p className="mt-3 text-[9px] leading-snug text-zinc-600">
           {activeLayers.length} camada(s) · clique na mancha para ver profundidade
         </p>
+
+        <div className="mt-3 border-t border-zinc-800 pt-3">
+          <button
+            type="button"
+            onClick={() => setShowLiveSensors((v) => !v)}
+            className={`flex w-full items-center justify-between rounded-lg border px-2.5 py-2 text-left transition-colors ${
+              showLiveSensors
+                ? 'border-rose-500/40 bg-rose-500/15 text-rose-100'
+                : 'border-zinc-700 bg-zinc-900 text-zinc-400 hover:text-zinc-200'
+            }`}
+            title="Alertas CEMADEN e estações em tempo real (17e.3)"
+          >
+            <span className="flex items-center gap-1.5 text-[10px] font-extrabold uppercase tracking-wider">
+              <Radio size={12} className={showLiveSensors && liveSensors?.meta?.vivo ? 'animate-pulse' : undefined} />
+              Sensores vivos
+            </span>
+            <span className="text-[9px] font-bold tabular-nums text-zinc-400">
+              {liveSensors?.meta?.count ?? 0}
+            </span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setShowCriticalPois((v) => !v)}
+            className={`mt-1.5 flex w-full items-center justify-between rounded-lg border px-2.5 py-2 text-left transition-colors ${
+              showCriticalPois
+                ? 'border-sky-500/40 bg-sky-500/15 text-sky-100'
+                : 'border-zinc-700 bg-zinc-900 text-zinc-400 hover:text-zinc-200'
+            }`}
+            title="Escolas INEP, saúde CNES e abrigos (17f.3)"
+          >
+            <span className="flex items-center gap-1.5 text-[10px] font-extrabold uppercase tracking-wider">
+              <Landmark size={12} />
+              POIs críticos
+            </span>
+            <span className="text-[9px] font-bold tabular-nums text-zinc-400">
+              {criticalPois?.meta?.count ?? (showCriticalPois ? '…' : 'off')}
+            </span>
+          </button>
+          {showCriticalPois && criticalPois?.meta?.por_categoria && (
+            <p className="mt-1 text-[9px] leading-snug text-zinc-500">
+              {criticalPois.meta.por_categoria.escola ?? 0} escolas ·{' '}
+              {criticalPois.meta.por_categoria.saude ?? 0} saúde ·{' '}
+              {criticalPois.meta.por_categoria.abrigo ?? 0} abrigos
+            </p>
+          )}
+
+          <p className="mb-1.5 mt-3 text-[10px] font-extrabold uppercase text-zinc-500">
+            Contexto urbano
+          </p>
+          <div className="grid grid-cols-3 gap-1">
+            {(
+              [
+                { id: 'hidro' as const, label: 'Água', on: ctxHidrografia, set: setCtxHidrografia },
+                { id: 'vias' as const, label: 'Vias', on: ctxVias, set: setCtxVias },
+                { id: 'curvas' as const, label: 'Curvas', on: ctxCurvas, set: setCtxCurvas },
+              ] as const
+            ).map((item) => (
+              <button
+                key={item.id}
+                type="button"
+                onClick={() => item.set((v) => !v)}
+                className={`rounded-lg py-1.5 text-[9px] font-bold uppercase ${
+                  item.on
+                    ? 'bg-cyan-600 text-white'
+                    : 'bg-zinc-800 text-zinc-400 hover:text-zinc-200'
+                }`}
+                title="Hidrografia, vias e curvas de nível (17f.6)"
+              >
+                {item.label}
+              </button>
+            ))}
+          </div>
+          {showUrbanContext && (
+            <>
+              <label className="mt-2 block text-[9px] font-bold uppercase text-zinc-500">
+                Opacidade: {Math.round(urbanCtxOpacity * 100)}%
+              </label>
+              <input
+                type="range"
+                min={0.15}
+                max={1}
+                step={0.05}
+                value={urbanCtxOpacity}
+                onChange={(e) => setUrbanCtxOpacity(Number(e.target.value))}
+                className="w-full accent-cyan-500"
+              />
+              {urbanContext?.meta?.por_contexto && (
+                <p className="mt-1 text-[9px] leading-snug text-zinc-500">
+                  {urbanContext.meta.por_contexto.hidrografia ?? 0} água ·{' '}
+                  {urbanContext.meta.por_contexto.via ?? 0} vias ·{' '}
+                  {urbanContext.meta.por_contexto.curva ?? 0} curvas
+                </p>
+              )}
+            </>
+          )}
+
+          {showLiveSensors && liveSensors?.meta && (
+            <p className="mt-1.5 text-[9px] leading-snug text-zinc-500">
+              {liveSensors.meta.vivo ? (
+                <>
+                  Nível {liveSensors.meta.nivel_alerta}
+                  {liveSensors.meta.titulo_recente ? ` · ${liveSensors.meta.titulo_recente}` : ''}
+                </>
+              ) : (
+                'Sem alerta ativo nas últimas 24h'
+              )}
+            </p>
+          )}
+          <button
+            type="button"
+            onClick={() => {
+              if (tourRunning) {
+                tourCancelRef.current = true;
+                setTourRunning(false);
+                return;
+              }
+              runPresentationTour();
+            }}
+            className={`mt-2 flex w-full items-center justify-center gap-1.5 rounded-lg border px-2.5 py-2 text-[10px] font-extrabold uppercase tracking-wider transition-colors ${
+              tourRunning
+                ? 'border-amber-500/40 bg-amber-500/15 text-amber-100'
+                : 'border-teal-500/30 bg-teal-500/10 text-teal-200 hover:bg-teal-500/20'
+            }`}
+            title="Tour de câmera para demo institucional (17e.5)"
+          >
+            <Play size={12} />
+            {tourRunning ? 'Parar tour' : 'Tour apresentação'}
+          </button>
+
+          <p className="mb-1.5 mt-3 text-[10px] font-extrabold uppercase text-zinc-500">
+            Exportar / perfil
+          </p>
+          <div className="grid grid-cols-3 gap-1">
+            <button
+              type="button"
+              disabled={exporting || !mapReady}
+              onClick={async () => {
+                const map = mapRef.current;
+                if (!map) return;
+                setExporting(true);
+                try {
+                  await exportMapLibrePng(
+                    map,
+                    `sinidu-${selectedMunicipio}-cena.png`,
+                  );
+                } catch {
+                  /* ignore */
+                } finally {
+                  setExporting(false);
+                }
+              }}
+              className="flex items-center justify-center gap-1 rounded-lg border border-zinc-700 bg-zinc-900 py-1.5 text-[9px] font-bold uppercase text-zinc-300 hover:text-white disabled:opacity-40"
+              title="Exportar PNG da cena 3D (17f.9)"
+            >
+              <Camera size={11} />
+              PNG
+            </button>
+            <button
+              type="button"
+              disabled={exporting || !mapReady}
+              onClick={async () => {
+                const map = mapRef.current;
+                if (!map) return;
+                setExporting(true);
+                try {
+                  if (!tourRunning) runPresentationTour();
+                  const ok = await exportMapLibreWebm(
+                    map,
+                    5000,
+                    `sinidu-${selectedMunicipio}-tour.webm`,
+                  );
+                  if (!ok) {
+                    await exportMapLibrePng(
+                      map,
+                      `sinidu-${selectedMunicipio}-cena.png`,
+                    );
+                  }
+                } finally {
+                  setExporting(false);
+                }
+              }}
+              className="flex items-center justify-center gap-1 rounded-lg border border-zinc-700 bg-zinc-900 py-1.5 text-[9px] font-bold uppercase text-zinc-300 hover:text-white disabled:opacity-40"
+              title="Gravar tour curto em vídeo WebM (17f.9)"
+            >
+              <Video size={11} />
+              Vídeo
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setProfileMode((v) => !v);
+                setProfilePoints([]);
+                setProfileData(null);
+              }}
+              className={`flex items-center justify-center gap-1 rounded-lg border py-1.5 text-[9px] font-bold uppercase ${
+                profileMode
+                  ? 'border-lime-500/40 bg-lime-500/15 text-lime-100'
+                  : 'border-zinc-700 bg-zinc-900 text-zinc-300 hover:text-white'
+              }`}
+              title="Seção transversal — clique 2 pontos no mapa (17f.5)"
+            >
+              <Ruler size={11} />
+              Perfil
+            </button>
+          </div>
+          {profileMode && (
+            <p className="mt-1.5 text-[9px] leading-snug text-zinc-500">
+              {profilePoints.length === 0 && 'Clique o ponto A no mapa…'}
+              {profilePoints.length === 1 && 'Clique o ponto B para fechar o corte…'}
+              {profileLoading && ' Calculando perfil DEM…'}
+            </p>
+          )}
+          {profileData && profileData.points.length > 0 && (
+            <div className="mt-2 rounded-lg border border-lime-500/25 bg-zinc-900/80 p-2">
+              <p className="text-[9px] font-bold uppercase text-lime-300">
+                Corte · {profileData.length_m} m
+              </p>
+              <p className="mt-0.5 text-[9px] text-zinc-500">
+                Cota {profileData.elevation_min_m ?? '—'}–{profileData.elevation_max_m ?? '—'} m
+              </p>
+              <svg viewBox="0 0 120 36" className="mt-1 h-10 w-full" preserveAspectRatio="none">
+                {(() => {
+                  const pts = profileData.points.filter((p) => p.elevation_m != null);
+                  if (pts.length < 2) return null;
+                  const zs = pts.map((p) => p.elevation_m as number);
+                  const zMin = Math.min(...zs);
+                  const zMax = Math.max(...zs);
+                  const span = zMax - zMin || 1;
+                  const d = pts
+                    .map((p, i) => {
+                      const x = (i / (pts.length - 1)) * 120;
+                      const y = 32 - ((p.elevation_m as number) - zMin) / span * 28;
+                      return `${i === 0 ? 'M' : 'L'}${x.toFixed(1)},${y.toFixed(1)}`;
+                    })
+                    .join(' ');
+                  return (
+                    <>
+                      <path d={d} fill="none" stroke="#84cc16" strokeWidth="1.5" />
+                      {profileData.water_level_m != null && (
+                        <line
+                          x1="0"
+                          x2="120"
+                          y1={32 - ((profileData.water_level_m - zMin) / span) * 28}
+                          y2={32 - ((profileData.water_level_m - zMin) / span) * 28}
+                          stroke="#38bdf8"
+                          strokeWidth="1"
+                          strokeDasharray="3 2"
+                        />
+                      )}
+                    </>
+                  );
+                })()}
+              </svg>
+            </div>
+          )}
+        </div>
       </div>
+      )}
+
+      {!focusMode && (
+      <MapHudControls
+        className="absolute bottom-6 right-4 z-20"
+        bearing={bearing}
+        scaleLabel={scaleLabel}
+        activeLayers={activeLayers}
+        layerOptions={layerOptions}
+        hasSimulation={hasSimulation}
+        showLiveSensors={showLiveSensors && Boolean(liveSensors?.features?.length)}
+        showCriticalPois={showCriticalPois && Boolean(criticalPois?.features?.length)}
+        showUrbanContext={showUrbanContext && Boolean(urbanContext?.features?.length)}
+        onResetNorth={() => {
+          const map = mapRef.current;
+          if (!map) return;
+          map.easeTo({ bearing: 0, duration: 600 });
+        }}
+      />
       )}
 
       {showContingencyOnMap && contingencyOverlay && !focusMode && (

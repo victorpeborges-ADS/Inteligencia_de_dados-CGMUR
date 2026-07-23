@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import datetime
+from app.timeutil import utc_now
 import logging
 from typing import Any
 
@@ -114,7 +114,7 @@ def _step(status: str, detail: str = "", quality: str = "oficial") -> dict[str, 
         "status": status,
         "detail": detail,
         "quality": quality,
-        "at": datetime.datetime.utcnow().isoformat(),
+        "at": utc_now().isoformat(),
     }
 
 
@@ -155,7 +155,7 @@ def run_onboarding(db: Session, codigo_ibge: str, *, force: bool = False) -> dic
     seed.onboarding_status = "em_progresso"
     seed.integration_errors = []
     seed.integration_steps = steps
-    seed.updated_at = datetime.datetime.utcnow()
+    seed.updated_at = utc_now()
     db.commit()
 
     try:
@@ -271,7 +271,7 @@ def run_onboarding(db: Session, codigo_ibge: str, *, force: bool = False) -> dic
     seed.lacunas = lacunas
     seed.integration_errors = errors
     seed.integration_steps = steps
-    seed.updated_at = datetime.datetime.utcnow()
+    seed.updated_at = utc_now()
     db.commit()
     db.refresh(seed)
 
@@ -341,7 +341,7 @@ def run_batch_onboarding(
     query = db.query(MunicipioSeed).order_by(MunicipioSeed.prioridade.asc(), MunicipioSeed.nome.asc())
     if status_filter and status_filter != "todos":
         query = query.filter(MunicipioSeed.onboarding_status == status_filter)
-    seeds = query.limit(max(1, min(limit, 61))).all()
+    seeds = query.limit(max(1, min(limit, 6))).all()
 
     processed: list[dict[str, Any]] = []
     errors: list[dict[str, str]] = []

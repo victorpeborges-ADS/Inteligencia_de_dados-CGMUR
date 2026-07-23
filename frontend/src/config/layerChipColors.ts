@@ -10,6 +10,7 @@ export const LAYER_CHIP_COLORS: Record<string, string> = {
   lst_observada: '#f97316',
   vulnerabilidade: '#7f1d1d',
   inundacao: '#075985',
+  risco_consolidado: '#dc2626',
   alertas: '#f43f5e',
   desastres: '#ef4444',
   saneamento_drenagem: '#0e7490',

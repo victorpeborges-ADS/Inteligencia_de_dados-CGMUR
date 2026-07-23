@@ -15,15 +15,16 @@ def test_resolve_codigo_ibge_slug():
     assert resolve_codigo_ibge("recife") == "2611606"
     assert resolve_codigo_ibge("2611606") == "2611606"
     assert resolve_codigo_ibge("aracaju") == "2800308"
-    assert resolve_codigo_ibge("fortaleza") == "2304400"
+    assert resolve_codigo_ibge("sao_paulo") == "3550308"
 
 
-def test_ml_targets_expanded():
+def test_ml_targets_piloto():
     from ml.baseline import TERRAIN_PRESETS
     from ml.constants import ML_TARGET_IBGE_CODES, SLUG_BY_IBGE
 
-    assert len(ML_TARGET_IBGE_CODES) >= 10
+    assert len(ML_TARGET_IBGE_CODES) == 6
     assert "2800308" in ML_TARGET_IBGE_CODES
+    assert "3550308" in ML_TARGET_IBGE_CODES
     assert set(ML_TARGET_IBGE_CODES) <= set(SLUG_BY_IBGE)
     assert set(ML_TARGET_IBGE_CODES) <= set(TERRAIN_PRESETS)
 
@@ -100,7 +101,7 @@ def test_predictor_with_mock_model(mock_path, tmp_path):
 
 
 def test_municipality_slugs_count():
-    assert len(MUNICIPALITY_SLUGS) >= 10
+    assert len(MUNICIPALITY_SLUGS) == 6
     assert MUNICIPALITY_SLUGS["aracaju"] == "2800308"
 
 

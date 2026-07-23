@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from app.timeutil import utc_now
 import datetime
 import logging
 from typing import Any
@@ -31,7 +32,7 @@ def fetch_openmeteo(lat: float, lng: float) -> dict[str, Any]:
     params = {
         "latitude": lat,
         "longitude": lng,
-        "hourly": "precipitation",
+        "hourly": "precipitation,temperature_2m",
         "forecast_days": 3,
         "timezone": "America/Sao_Paulo",
     }
@@ -185,7 +186,7 @@ async def sync_weather_for_municipalities(db: Session, codigos: list[str] | None
                 titulo=f"Risco hidrológico elevado — {nivel}",
                 mensagem=f"Precipitação prevista 24h: {p24:.0f} mm · prob.: {risk:.0%}",
                 payload={"precip_24h_mm": p24, "risk_probability": risk},
-                expires_at=datetime.datetime.utcnow() + datetime.timedelta(hours=24),
+                expires_at=utc_now() + datetime.timedelta(hours=24),
             ))
             alerts_created += 1
             await alert_manager.broadcast(muni.codigo_ibge, {
@@ -211,7 +212,7 @@ async def sync_weather_for_municipalities(db: Session, codigos: list[str] | None
 
 
 def cleanup_old_records(db: Session, days: int = 7) -> dict:
-    cutoff = datetime.datetime.utcnow() - datetime.timedelta(days=days)
+    cutoff = utc_now() - datetime.timedelta(days=days)
     alerts_del = db.query(MonitoringAlert).filter(MonitoringAlert.created_at < cutoff).delete()
     weather_del = db.query(WeatherForecastCache).filter(WeatherForecastCache.fetched_at < cutoff).delete()
     db.commit()

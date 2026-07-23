@@ -17,7 +17,18 @@ def _progress(job_id: str, pct: int, stage: str, label: str) -> None:
     )
 
 
-def run_rainfall_simulation_job(codigo_ibge: str, muni_id: int, precip_mm: float) -> str:
+def run_rainfall_simulation_job(
+    codigo_ibge: str,
+    muni_id: int,
+    precip_mm: float,
+    *,
+    nivel_mar_m: float = 0.0,
+    chuva_antecedente_mm: float = 0.0,
+    sea_level_meta: dict | None = None,
+    drain_removed_mm: float = 0.0,
+    rede_saturada: bool = False,
+    drenagem_meta: dict | None = None,
+) -> str:
     job_id = create_job(
         "rainfall_simulation",
         label=f"Simulação pluvial {precip_mm:.0f} mm ({codigo_ibge})",
@@ -28,7 +39,25 @@ def run_rainfall_simulation_job(codigo_ibge: str, muni_id: int, precip_mm: float
         db = SessionLocal()
         try:
             _progress(job_id, 25, "hydro", "Calculando acúmulo D8 e manchas de alagamento…")
-            result = run_rainfall_cached(db, muni_id, codigo_ibge, precip_mm)
+            result = run_rainfall_cached(
+                db,
+                muni_id,
+                codigo_ibge,
+                precip_mm,
+                nivel_mar_m=nivel_mar_m,
+                chuva_antecedente_mm=chuva_antecedente_mm,
+                sea_level_meta=sea_level_meta,
+                drain_removed_mm=drain_removed_mm,
+                rede_saturada=rede_saturada,
+                drenagem_meta=drenagem_meta,
+            )
+            _progress(job_id, 70, "uncertainty", "Calculando bandas de incerteza (±15%)…")
+            try:
+                from app.services.uncertainty_bands_service import attach_uncertainty_bands
+
+                result = attach_uncertainty_bands(db, muni_id, codigo_ibge, result)
+            except Exception:
+                pass
             _progress(job_id, 85, "metrics", "Consolidando métricas de impacto…")
             return {
                 "kind": "rainfall",

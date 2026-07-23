@@ -27,6 +27,7 @@ BASE_CATALOG = [
     {"id": "funai_ti", "nome": "FUNAI Terras Indígenas", "grupo": "Territórios especiais", "camada": "territorios_especiais"},
     {"id": "ibge_aglomerados", "nome": "IBGE Aglomerados Subnormais", "grupo": "Territórios especiais", "camada": "territorios_especiais"},
     {"id": "ibge_singedlab_rs", "nome": "IBGE SINGED Lab (RS 2024)", "grupo": "Exposição oficial", "camada": "desastres"},
+    {"id": "gemeo_digital_3d", "nome": "Gêmeo digital 3D (LOD1)", "grupo": "Modelo urbano 3D", "camada": "edificacoes"},
 ]
 
 MUNICIPALITY_STATUS = {

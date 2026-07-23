@@ -330,6 +330,15 @@ export default function DataCatalogPanel({ codigoIbge, isGestorOrAdmin }: DataCa
               {base.status === 'Ausente' && base.requisito && (
                 <p className="mt-1 text-[9px] text-rose-400/80">O que falta: {base.requisito}</p>
               )}
+              {base.id === 'gemeo_digital_3d' && base.modelo_3d && (
+                <p className="mt-1 text-[9px] text-zinc-500">
+                  {base.modelo_3d.lod || 'LOD1'} · maturidade {base.modelo_3d.maturidade_3d_pct ?? 0}%
+                  {base.modelo_3d.fonte_altura_predominante
+                    ? ` · altura: ${base.modelo_3d.fonte_altura_predominante}`
+                    : ''}
+                  {base.modelo_3d.tileset_url || base.modelo_3d.cityjson_url ? ' · export pronto' : ''}
+                </p>
+              )}
 
               <div className="mt-2 flex flex-wrap gap-1">
                 {base.status === 'Integrado' && (

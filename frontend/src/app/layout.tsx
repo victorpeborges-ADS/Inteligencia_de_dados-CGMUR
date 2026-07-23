@@ -2,6 +2,7 @@ import './globals.css'
 import type { Metadata } from 'next'
 import { AuthProvider } from '@/components/Auth/AuthProvider'
 import ThemeProvider from '@/components/UI/ThemeProvider'
+import ErrorBoundary from '@/components/UI/ErrorBoundary'
 import { COLOR_MODE_STORAGE_KEY } from '@/config/theme'
 
 export const metadata: Metadata = {
@@ -25,7 +26,9 @@ export default function RootLayout({
       </head>
       <body className="bg-background text-foreground antialiased min-h-screen">
         <ThemeProvider>
-          <AuthProvider>{children}</AuthProvider>
+          <ErrorBoundary>
+            <AuthProvider>{children}</AuthProvider>
+          </ErrorBoundary>
         </ThemeProvider>
       </body>
     </html>

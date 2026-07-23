@@ -30,6 +30,6 @@ def test_fonte_registry_has_all_catalog_ids():
         "ibge_cidades", "snis_sinisa", "s2id", "mapbiomas", "cemaden_georiscos",
         "adapta_brasil", "geosgb", "sinter", "munic", "sirene", "inde", "brasil_mais",
         "ibge_singedlab_rs", "inep_censo_escolar", "incra_quilombos", "funai_ti",
-        "ibge_aglomerados",
+        "ibge_aglomerados", "gemeo_digital_3d",
     }
     assert expected == set(FONTE_REGISTRY.keys())
