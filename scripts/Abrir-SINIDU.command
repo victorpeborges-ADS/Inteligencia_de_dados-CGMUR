@@ -6,13 +6,24 @@
 
 set -u
 
-PROJECT_DIR="/Users/vic/MCID/sinidu mvp"
+# Detecta a pasta do projeto (atalho na Area de Trabalho OU script dentro de scripts/)
+SCRIPT_PATH="${0:A}"
+SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
+if [[ -f "$SCRIPT_DIR/docker-compose.yml" ]]; then
+  PROJECT_DIR="$SCRIPT_DIR"
+elif [[ -f "$SCRIPT_DIR/../docker-compose.yml" ]]; then
+  PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+else
+  PROJECT_DIR="/Users/vic/MCID/sinidu mvp"
+fi
+
 API_URL="http://localhost:8000"
 APP_URL="http://localhost:3000"
 CORE_SERVICES=(db redis backend frontend)
 COMPOSE=(docker compose -f docker-compose.yml -f docker-compose.dev.yml)
 
 echo "Iniciando o SINIDU..."
+echo "Projeto: $PROJECT_DIR"
 echo
 
 # PATH do Docker Desktop (Terminal.app às vezes nao herda)
@@ -72,13 +83,22 @@ for attempt in {1..150}; do
 done
 
 echo "Docker pronto."
-echo"
+echo
 
 cd "$PROJECT_DIR" || {
   echo "Nao encontrei a pasta do projeto: $PROJECT_DIR"
   read "REPLY?Pressione Enter para sair..."
   exit 1
 }
+
+if [[ ! -f "$PROJECT_DIR/docker-compose.yml" ]]; then
+  echo "ERRO: docker-compose.yml nao encontrado em:"
+  echo "  $PROJECT_DIR"
+  echo "Atualize o atalho com o script corrigido em scripts/Abrir-SINIDU.command"
+  echo
+  read "REPLY?Pressione Enter para sair..."
+  exit 1
+fi
 
 # Container legado de produção costuma ficar com Cmd=node server.js (quebra o dev)
 frontend_cmd="$(docker inspect sinidu_frontend --format '{{json .Config.Cmd}}' 2>/dev/null || true)"
