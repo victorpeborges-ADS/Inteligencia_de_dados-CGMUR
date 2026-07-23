@@ -108,7 +108,7 @@ export default function SimulationPanel({
   const [planLoading, setPlanLoading] = useState(false);
   const [contingencyLoading, setContingencyLoading] = useState(false);
   const [mitigationPlan, setMitigationPlan] = useState<MitigationPlan | null>(null);
-  const [exportLoading, setExportLoading] = useState<'geojson' | 'pdf' | null>(null);
+  const [exportLoading, setExportLoading] = useState<'geojson' | 'pdf' | 'kmz' | null>(null);
   const [simInterpret, setSimInterpret] = useState<SimulationInterpret | null>(null);
   const [slopeInterpret, setSlopeInterpret] = useState<SlopeInterpretation | null>(null);
   const [analysisLoading, setAnalysisLoading] = useState(false);
@@ -495,6 +495,23 @@ export default function SimulationPanel({
       await api.downloadReport(meta.download_url, meta.nome_arquivo);
     } catch (err) {
       console.error('Export PDF failed:', err);
+    } finally {
+      setExportLoading(null);
+    }
+  };
+
+  const handleExportKmz = async () => {
+    if (!result) return;
+    setExportLoading('kmz');
+    try {
+      const meta = await api.exportSimulationKmz(
+        result,
+        codigoIbge,
+        rainfallComparison?.delta,
+      );
+      await api.downloadReport(meta.download_url, meta.nome_arquivo);
+    } catch (err) {
+      console.error('Export KMZ failed:', err);
     } finally {
       setExportLoading(null);
     }
@@ -1588,6 +1605,15 @@ export default function SimulationPanel({
               className="rounded-lg border border-lime-500/30 bg-lime-950/20 px-3 py-1.5 text-[10px] font-bold uppercase text-lime-200 hover:bg-lime-950/40 disabled:opacity-50"
             >
               {exportLoading === 'geojson' ? 'Exportando…' : 'Exportar GeoJSON'}
+            </button>
+            <button
+              type="button"
+              onClick={handleExportKmz}
+              disabled={exportLoading !== null || !result.geometry}
+              title="Abre no Google Earth, QGIS ou ArcGIS"
+              className="rounded-lg border border-amber-500/30 bg-amber-950/20 px-3 py-1.5 text-[10px] font-bold uppercase text-amber-200 hover:bg-amber-950/40 disabled:opacity-50"
+            >
+              {exportLoading === 'kmz' ? 'Gerando KMZ…' : 'Exportar KMZ'}
             </button>
             <button
               type="button"

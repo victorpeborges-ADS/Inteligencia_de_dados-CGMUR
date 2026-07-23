@@ -2958,6 +2958,24 @@ export const api = {
     return res.json();
   },
 
+  exportSimulationKmz: async (
+    simulation: SimulationOutput,
+    codigoIbge?: string,
+    comparisonDelta?: RainfallComparison['delta'],
+  ): Promise<{ download_url: string; nome_arquivo: string }> => {
+    const res = await apiFetch(`${getApiBaseUrl()}/api/v1/simulations/export/kmz`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        codigo_ibge: codigoIbge,
+        simulation,
+        comparison_delta: comparisonDelta ?? null,
+      }),
+    });
+    if (!res.ok) throw await httpError(res, 'Exportação KMZ falhou');
+    return res.json();
+  },
+
   generateMitigationPlan: async (scenarioType: SimulationOutput['scenario_type'], inputValue: number, codigoIbge?: string): Promise<MitigationPlan> => {
     const res = await apiFetch(`${getApiBaseUrl()}/api/v1/simulations/mitigation-plan`, {
       method: 'POST',

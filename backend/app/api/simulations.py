@@ -57,6 +57,7 @@ from app.services.simulation_export import (
     export_download_meta,
     generate_simulation_pdf,
     save_simulation_geojson,
+    save_simulation_kmz,
     simulation_export_dir,
 )
 from app.security.municipio_access import get_accessible_municipio
@@ -628,6 +629,32 @@ def export_simulation_pdf(payload: SimulationExportRequest, request: Request, db
     return SimulationExportResponse(format="pdf", **meta)
 
 
+@router.post("/export/kmz", response_model=SimulationExportResponse)
+def export_simulation_kmz(payload: SimulationExportRequest, request: Request, db: Session = Depends(get_db)):
+    """Exporta mancha/curvas/escoamento da simulação como KMZ (Google Earth / QGIS / ArcGIS)."""
+    muni = get_accessible_municipio(db, payload.codigo_ibge, request=request)
+    if not payload.simulation.get("geometry"):
+        raise HTTPException(status_code=400, detail="Simulação sem geometria para exportar.")
+    path = save_simulation_kmz(
+        payload.simulation,
+        muni,
+        comparison=payload.comparison_delta,
+    )
+    actor = resolve_actor(request)
+    log_audit(
+        db,
+        user=actor,
+        action="simulation.export_kmz",
+        resource_type="simulation",
+        resource_id=muni.codigo_ibge,
+        codigo_ibge=muni.codigo_ibge,
+        metadata={"filename": path.name, "scenario": payload.simulation.get("scenario_type")},
+        request=request,
+    )
+    meta = export_download_meta(path)
+    return SimulationExportResponse(format="kmz", **meta)
+
+
 @router.get("/download/{filename}")
 def download_simulation_export(filename: str, request: Request, db: Session = Depends(get_db)):
     safe = Path(filename).name
@@ -636,6 +663,13 @@ def download_simulation_export(filename: str, request: Request, db: Session = De
     path = simulation_export_dir() / safe
     if not path.exists():
         raise HTTPException(status_code=404, detail="Arquivo não encontrado.")
-    media = "application/pdf" if path.suffix.lower() == ".pdf" else "application/geo+json"
+    suffix = path.suffix.lower()
+    media = {
+        ".pdf": "application/pdf",
+        ".geojson": "application/geo+json",
+        ".json": "application/geo+json",
+        ".kmz": "application/vnd.google-earth.kmz",
+        ".kml": "application/vnd.google-earth.kml+xml",
+    }.get(suffix, "application/octet-stream")
     return FileResponse(path, media_type=media, filename=safe)
 

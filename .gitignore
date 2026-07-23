@@ -63,3 +63,6 @@ docs/panorama-sinidu-gestor.pdf
 backend/ml/artifacts/*.pkl
 backend/ml/artifacts/_build/
 backend/ml/artifacts/_ml_data/
+
+# Relatório gerado pelos scripts Avaliar-SINIDU.*
+scripts/avaliacao_ultimo_relatorio.txt
