@@ -1,27 +1,61 @@
 @echo off
 setlocal EnableExtensions EnableDelayedExpansion
 chcp 65001 >nul 2>&1
-title SINIDU — Iniciar sistema
+title SINIDU - Iniciar sistema
 
 rem =====================================================================
-rem  Abrir SINIDU (Windows)
-rem  Duplo clique neste arquivo ou copie para a Area de Trabalho.
-rem  Requisitos: Docker Desktop instalado e em execucao.
+rem  Abrir SINIDU (Windows) - salve este arquivo com encoding CRLF
+rem  Pode ficar em scripts\ ou na Area de Trabalho.
+rem  Se estiver na Area de Trabalho, crie SINIDU_DIR.txt ao lado com
+rem  o caminho completo da pasta do projeto (uma linha).
+rem  Requisitos: Docker Desktop instalado.
 rem =====================================================================
 
-cd /d "%~dp0.."
-set "PROJECT_DIR=%CD%"
+if exist "%~dp0_sinidu_find_project.bat" (
+  call "%~dp0_sinidu_find_project.bat"
+) else (
+  echo [ERRO] Falta _sinidu_find_project.bat ao lado deste arquivo.
+  echo Copie tambem _sinidu_find_project.bat ^(e SINIDU_DIR.txt se estiver na Area de Trabalho^).
+  pause
+  exit /b 1
+)
+if not defined PROJECT_DIR (
+  echo [ERRO] Nao encontrei a pasta do projeto SINIDU.
+  echo.
+  echo Opcoes:
+  echo   1^) Rode este .bat de dentro de: pasta-do-projeto\scripts\
+  echo   2^) Crie o arquivo SINIDU_DIR.txt ao lado deste .bat
+  echo      com uma linha: C:\caminho\completo\sinidu mvp
+  echo.
+  pause
+  exit /b 1
+)
+
+cd /d "%PROJECT_DIR%"
+if errorlevel 1 (
+  echo [ERRO] Nao consegui entrar em: %PROJECT_DIR%
+  pause
+  exit /b 1
+)
+if not exist "%CD%\docker-compose.yml" (
+  echo [ERRO] docker-compose.yml nao encontrado em:
+  echo   %CD%
+  echo Ajuste SINIDU_DIR.txt ou rode o .bat de scripts\
+  pause
+  exit /b 1
+)
+
 set "API_URL=http://localhost:8000"
 set "APP_URL=http://localhost:3000"
 set "COMPOSE=docker compose -f docker-compose.yml -f docker-compose.dev.yml"
 
 echo.
 echo  ========================================
-echo   SINIDU+Clima — iniciando o sistema
+echo   SINIDU+Clima - iniciando o sistema
 echo  ========================================
 echo.
 echo  Pasta do projeto:
-echo    %PROJECT_DIR%
+echo    %CD%
 echo.
 
 where docker >nul 2>&1
@@ -36,7 +70,7 @@ if errorlevel 1 (
 echo [1/5] Verificando Docker Desktop...
 docker info >nul 2>&1
 if errorlevel 1 (
-  echo Docker ainda nao responde — tentando abrir o Docker Desktop...
+  echo Docker ainda nao responde - tentando abrir o Docker Desktop...
   if exist "%ProgramFiles%\Docker\Docker\Docker Desktop.exe" (
     start "" "%ProgramFiles%\Docker\Docker\Docker Desktop.exe"
   ) else if exist "%ProgramFiles(x86)%\Docker\Docker\Docker Desktop.exe" (
@@ -122,7 +156,7 @@ if !_attempt! geq 150 goto frontend_done
 if !_attempt! equ 15 (
   docker inspect -f "{{.State.Status}}" sinidu_frontend 2>nul | findstr /i "running" >nul
   if errorlevel 1 (
-    echo Frontend parado — recriando...
+    echo Frontend parado - recriando...
     %COMPOSE% up -d --force-recreate --build frontend >nul 2>&1
   )
 )

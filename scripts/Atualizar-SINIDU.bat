@@ -1,40 +1,62 @@
 @echo off
 setlocal EnableExtensions EnableDelayedExpansion
 chcp 65001 >nul 2>&1
-title SINIDU — Atualizar do Git
+title SINIDU - Atualizar do Git
 
 rem =====================================================================
-rem  Atualizar SINIDU (Windows)
-rem  Duplo clique para baixar atualizacoes do GitHub e reconstruir
-rem  os containers essenciais.
+rem  Atualizar SINIDU (Windows) - salve este arquivo com encoding CRLF
+rem  Baixa atualizacoes do GitHub e reconstrói containers essenciais.
+rem  Se estiver na Area de Trabalho, use SINIDU_DIR.txt ao lado.
 rem =====================================================================
 
-cd /d "%~dp0.."
-set "PROJECT_DIR=%CD%"
+if exist "%~dp0_sinidu_find_project.bat" (
+  call "%~dp0_sinidu_find_project.bat"
+) else (
+  echo [ERRO] Falta _sinidu_find_project.bat ao lado deste arquivo.
+  echo Copie tambem _sinidu_find_project.bat ^(e SINIDU_DIR.txt se estiver na Area de Trabalho^).
+  pause
+  exit /b 1
+)
+if not defined PROJECT_DIR (
+  echo [ERRO] Nao encontrei a pasta do projeto SINIDU.
+  echo Crie SINIDU_DIR.txt ao lado deste .bat com o caminho do projeto.
+  echo.
+  pause
+  exit /b 1
+)
+
+cd /d "%PROJECT_DIR%"
+if errorlevel 1 (
+  echo [ERRO] Nao consegui entrar em: %PROJECT_DIR%
+  pause
+  exit /b 1
+)
+if not exist "%CD%\.git" (
+  echo [ERRO] Esta pasta nao e um repositorio Git:
+  echo   %CD%
+  echo Clone o projeto e ajuste SINIDU_DIR.txt.
+  echo.
+  pause
+  exit /b 1
+)
+
 set "COMPOSE=docker compose -f docker-compose.yml -f docker-compose.dev.yml"
 set "CORE=db redis backend frontend"
 set "EXITCODE=0"
+set "DID_STASH=0"
 
 echo.
 echo  ========================================
-echo   SINIDU+Clima — atualizar do Git
+echo   SINIDU+Clima - atualizar do Git
 echo  ========================================
 echo.
-echo  Pasta: %PROJECT_DIR%
+echo  Pasta: %CD%
 echo.
 
 where git >nul 2>&1
 if errorlevel 1 (
   echo [ERRO] Git nao encontrado no PATH.
   echo Instale o Git for Windows: https://git-scm.com/download/win
-  echo.
-  pause
-  exit /b 1
-)
-
-if not exist "%PROJECT_DIR%\.git" (
-  echo [ERRO] Esta pasta nao e um repositorio Git.
-  echo Clone o projeto primeiro e rode este script de dentro da copia.
   echo.
   pause
   exit /b 1
@@ -50,10 +72,8 @@ echo  Branch atual: %BRANCH%
 echo  Remote:       %REMOTE%
 echo.
 
-rem --- Mudancas locais ---
 git status --porcelain > "%TEMP%\sinidu_git_status.txt" 2>nul
 set "DIRTY=0"
-for /f %%A in ("%TEMP%\sinidu_git_status.txt") do set "DIRTY=1"
 if exist "%TEMP%\sinidu_git_status.txt" (
   for %%A in ("%TEMP%\sinidu_git_status.txt") do if %%~zA gtr 0 set "DIRTY=1"
 )
@@ -86,8 +106,6 @@ if "%DIRTY%"=="1" (
   set "DID_STASH=1"
   echo Stash criado. Para recuperar depois: git stash pop
   echo.
-) else (
-  set "DID_STASH=0"
 )
 
 echo [1/4] Buscando atualizacoes no GitHub...
@@ -100,7 +118,6 @@ if errorlevel 1 (
   exit /b 1
 )
 
-rem Detecta upstream
 set "UPSTREAM="
 for /f "delims=" %%u in ('git rev-parse --abbrev-ref --symbolic-full-name @{u} 2^>nul') do set "UPSTREAM=%%u"
 if not defined UPSTREAM (
@@ -158,14 +175,14 @@ echo.
 
 where docker >nul 2>&1
 if errorlevel 1 (
-  echo [AVISO] Docker nao encontrado — pulei a reconstrucao dos containers.
+  echo [AVISO] Docker nao encontrado - pulei a reconstrucao dos containers.
   echo Depois de instalar o Docker Desktop, rode Abrir-SINIDU.bat.
   goto finish
 )
 
 docker info >nul 2>&1
 if errorlevel 1 (
-  echo [AVISO] Docker Desktop nao esta pronto — pulei a reconstrucao.
+  echo [AVISO] Docker Desktop nao esta pronto - pulei a reconstrucao.
   echo Abra o Docker e rode Abrir-SINIDU.bat depois.
   goto finish
 )
@@ -207,10 +224,10 @@ echo  ========================================
 if "!EXITCODE!"=="0" (
   echo  RESULTADO: atualizacao concluida
 ) else (
-  echo  RESULTADO: falhou — veja mensagens acima
+  echo  RESULTADO: falhou - veja mensagens acima
 )
 echo  Branch: %BRANCH%
-if "%DID_STASH%"=="1" echo  Stash local criado — recupere com: git stash pop
+if "%DID_STASH%"=="1" echo  Stash local criado - recupere com: git stash pop
 echo  Abrir sistema:  Abrir-SINIDU.bat
 echo  Avaliar saude:  Avaliar-SINIDU.bat
 echo  ========================================

@@ -1,0 +1,3 @@
+# Launchers Windows: forçar CRLF
+scripts/*.bat text eol=crlf
+scripts/*.txt text eol=crlf
