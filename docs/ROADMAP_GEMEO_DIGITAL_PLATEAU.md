@@ -145,6 +145,22 @@ Itens que estavam em 19d foram priorizados na **Fase 20** (abaixo).
 | 20e.2 | **KMZ pacote completo** (mancha + bairros afetados + pontos de contingência, se houver) | P2 | M | ⏳ |
 | 20e.3 | **Unificar narrativa de previsão** (OpenMeteo + CEMADEN + fallback — um selo só na UI) | P1 | M | ⏳ |
 
+### 20h — Honestidade e acurácia metodológica das simulações (P0)
+
+> As simulações usam **dados oficiais de entrada** e pedaços de GIS/literatura clássicos, mas **não** são metodologias oficiais ANA/CEMADEN/CPRM/INMET-IDF nem hidrodinâmica 2D. O produto deve deixar isso inequívoco na UI e elevar o que for viável (IDF oficial, validação espacial).
+
+| # | Item | Prioridade | Esforço | Status |
+|---|------|-----------|---------|--------|
+| 20h.1 | **Copy e UI alinhados ao `method_note`** — nunca apresentar simulação como “metodologia oficial”; selo Derivado/Estimado visível no painel e no mapa | P0 | S | ⏳ |
+| 20h.2 | **Painel de limites metodológicos** na aba Simulações (o que é / o que não é: não-laudo, não-HEC-RAS, não-alerta CEMADEN) | P0 | S | ⏳ |
+| 20h.3 | **Separar na UI** “cenário Sinidu (Derivado)” vs “LST/observado GeoReDUS (Oficial)” no comparador de calor | P0 | S | ⏳ |
+| 20h.4 | **IDF oficial onde existir** (ANA/INMET/PDF municipal) substituindo tabelas internas `Estimado` | P1 | M | ⏳ |
+| 20h.5 | **Camada de validação** com manchas/estudos oficiais (Defesa Civil/CPRM) quando houver — além do hit-rate pontual S2ID | P1 | M | ⏳ |
+| 20h.6 | **Checklist de linguagem** (demo MCID / apresentação / agente): proibir “oficial”, “homologado”, “preciso como engenharia” sem qualificador | P0 | S | ⏳ |
+| 20h.7 | Documentar teto de acurácia em `DOCUMENTACAO_TECNICA` + `ESTADO_ATUAL` (triagem ≠ laudo) | P1 | S | ⏳ |
+
+**Fora do horizonte imediato (não fingir que cabe no MVP):** hidrodinâmica 2D / SWMM / inventário completo de galerias — só com projeto dedicado e dado de rede.
+
 ### 20f — UX / manutenção (P2)
 
 | # | Item | Prioridade | Esforço | Status |
@@ -185,8 +201,9 @@ Depois: rebuild do frontend (`docker compose ... up -d --build frontend` ou equi
 | Escala nacional real (S2ID/MapBiomas API) | Dependência de dado/API oficial |
 | gov.br produção (OIDC) | Fora de escopo do protótipo (decisão jul/2026) |
 | Ruflo embutido no produto | Desencaixe de domínio; risco/ops altos |
+| Hidrodinâmica 2D / SWMM / galerias completas | Exige dado de rede + projeto dedicado; fora do MVP de triagem |
 
-**Progresso Fase 20:** **0/~19 itens ativos** — planejada (jul/2026). Ordem sugerida: **20f.4 (com checkpoint)** em paralelo a **20a → 20b → 20e → 20c → 20f**; 20d só se houver dono e 2 semanas de experimento.
+**Progresso Fase 20:** **0/~26 itens ativos** — planejada (jul/2026). Ordem sugerida: **20h (honestidade metodológica)** + **20f.4 (com checkpoint)** em paralelo a **20a → 20b → 20e → 20c → 20f**; 20d só se houver dono e 2 semanas de experimento.
 
 ---
 
