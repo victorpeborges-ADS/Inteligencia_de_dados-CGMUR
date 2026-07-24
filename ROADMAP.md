@@ -397,6 +397,11 @@ saúde+educação+população, basemap MapTiler, substituir simulação por LST.
 Consolidação do que **ainda falta**, cruzando roadmap, `PLANO_LACUNAS_INSTITUCIONAIS.md`,
 `RESUMO_EXECUCAO_5_PASSOS.md` e marcadores no código. Nenhum item é bloqueador de demo.
 
+> **Fase 20 (jul/2026)** — plano detalhado em `docs/ROADMAP_GEMEO_DIGITAL_PLATEAU.md`:
+> confiança (testes HTTP, secrets), unificação dos agentes de domínio, MCP fino read-only
+> para a equipe, MapBiomas oficial no piloto, playbook Dev Tunnel. Ruflo = spike opcional
+> **fora** do produto (P3), não embutido no compose.
+
 ### A. Integrações institucionais (dependem de convênio/credencial) — P2/P3
 | # | Fonte | Situação atual | O que falta |
 |---|-------|----------------|-------------|

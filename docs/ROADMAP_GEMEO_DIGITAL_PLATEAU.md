@@ -79,15 +79,114 @@ já é o núcleo do Sinidu, cruzando os dados e sistemas que já temos.
 | 19c.1 | **S2ID curado (6 municípios)** | P1 | M | ✅ Eventos ancorados em Defesa Civil/imprensa para Aracaju, Salvador, Rio, São Paulo e Brasília (antes só Recife). Aplicado via `ensure_s2id_loaded` no sync/onboarding. |
 | 19c.2 | **MapBiomas oficial (6 municípios)** | P1 | M | ⏳ Pipeline já lê CSV oficial (`MAPBIOMAS_STATS_DIR`); pendente **obter e depositar** a estatística Coleção 10.1 por município (não fabricar hectares). |
 
-### 19d — Backlog (fora das limitações atuais)
+### 19e — Entregas extras (jul/2026)
 
-- Testes HTTP dos routers críticos (`simulations`, `monitoring`, `buildings`, `integrations`).
-- Endurecer auth/secrets (JWT/senhas default) antes de demo externa.
-- Unificar `AssistantPanel` × `AgenteSinidu`.
-- Layout mobile/responsivo e acessibilidade (tablist/foco).
-- Quebrar `SimulationPanel` (~2,7 mil linhas) e `MapContainer` (~1,4 mil).
+| # | Item | Prioridade | Esforço | Como |
+|---|------|-----------|---------|------|
+| 19e.1 | **Export KMZ das simulações** | P1 | M | ✅ `POST /simulations/export/kmz` + botão no `SimulationPanel` (mancha/curvas/escoamento → Google Earth/QGIS). |
+| 19e.2 | **Launchers Windows/Mac** | P1 | M | ✅ `Abrir` / `Atualizar` / `Avaliar` (.bat CRLF + `.command`); finder `SINIDU_DIR.txt`; fix do atalho Mac (`echo"`). |
 
-**Progresso Fase 19:** **9/10 (~90%)** — 19a+19b ✅; 19c.1 ✅; 19c.2 aguarda CSV oficial MapBiomas.
+### 19d — Migrado para Fase 20
+
+Itens que estavam em 19d foram priorizados na **Fase 20** (abaixo).
+
+**Progresso Fase 19:** **11/12 (~92%)** — 19a+19b+19e ✅; 19c.1 ✅; 19c.2 aguarda CSV oficial MapBiomas.
+
+---
+
+## Fase 20 — Confiança, produto IA e operação multi-máquina
+
+> Fechar o que ainda limita demo externa e escala operacional: confiança (auth/testes), produto de IA de domínio (não swarm genérico), dados oficiais no piloto e operação Mac↔Windows↔Dev Tunnel.
+
+### 20a — Confiança e homologação (P0)
+
+| # | Item | Prioridade | Esforço | Status |
+|---|------|-----------|---------|--------|
+| 20a.1 | **Testes HTTP** dos routers críticos (`simulations`, `monitoring`, `integrations`, export KMZ) | P0 | M | ⏳ |
+| 20a.2 | **Endurecer auth/secrets** (JWT/senhas default, CORS, superfície em Dev Tunnel) | P0 | M | ⏳ |
+| 20a.3 | **Policy gate em ações sensíveis** (agente/UI não ativa plano, SMS ou alerta público sem confirmação humana) | P0 | S | ⏳ |
+| 20a.4 | **Documento único `ESTADO_ATUAL_SINIDU.md`** (tecnologias, features, falhas, ✅/⏳) | P1 | S | ⏳ |
+
+### 20b — Agentes de domínio (P0/P1)
+
+> Evoluir o que já existe (`contextual_agent_*` + assistente RAG). **Não** substituir por swarm genérico.
+
+| # | Item | Prioridade | Esforço | Status |
+|---|------|-----------|---------|--------|
+| 20b.1 | **Unificar `AssistantPanel` × `AgenteSinidu`** (um produto, dois modos ou um só) | P0 | M | ⏳ |
+| 20b.2 | **Contrato rígido de tools** (schema, testes, proibição de inventar nível de alerta / VERDE silencioso) | P0 | M | ⏳ |
+| 20b.3 | **Tools de domínio em falta** (export KMZ/PDF via agente; lacunas do catálogo; “explique esta mancha”) | P1 | M | ⏳ |
+| 20b.4 | **Telemetria de IA** (latência, fallback determinístico, tokens, taxa de tool-error) | P1 | S | ⏳ |
+
+### 20c — MCP (adapter, não runtime do produto) (P1)
+
+> MCP como ponte para a **equipe** (Cursor/Claude Desktop), espelhando a API. Não é o runtime do painel web.
+
+| # | Item | Prioridade | Esforço | Status |
+|---|------|-----------|---------|--------|
+| 20c.1 | **Servidor MCP fino** (5–10 tools read-only: overview, layers/meta, diagnostic, monitoring, simulation status, catalog gaps) | P1 | M | ⏳ |
+| 20c.2 | **Auth no MCP** (token/JWT tenant-aware; rate-limit; sem write por padrão) | P0 | M | ⏳ (junto com 20c.1) |
+| 20c.3 | **Documentar uso MCP** para equipe (Cursor config + limites) | P2 | S | ⏳ |
+
+### 20d — Ruflo / multiagente de coding (P3 — experimento opcional)
+
+> **Fora do produto Sinidu entregue ao MCID.** Só tooling da equipe, com prazo e métrica.
+
+| # | Item | Prioridade | Esforço | Status |
+|---|------|-----------|---------|--------|
+| 20d.1 | **Spike Ruflo 2 semanas** (fora do `docker-compose` do produto; métrica: tempo de PR / cobertura de testes gerada) | P3 | M | ⏳ opcional |
+| 20d.2 | **Go/No-go**: manter só se houver ganho medido; senão descartar (não embutir no compose) | P3 | S | ⏳ |
+
+### 20e — Dados e simulação (P1)
+
+| # | Item | Prioridade | Esforço | Status |
+|---|------|-----------|---------|--------|
+| 20e.1 | **MapBiomas Coleção 10.1** nos 6 municípios (CSV oficial em `MAPBIOMAS_STATS_DIR`) | P1 | M | ⏳ (herdado 19c.2) |
+| 20e.2 | **KMZ pacote completo** (mancha + bairros afetados + pontos de contingência, se houver) | P2 | M | ⏳ |
+| 20e.3 | **Unificar narrativa de previsão** (OpenMeteo + CEMADEN + fallback — um selo só na UI) | P1 | M | ⏳ |
+
+### 20f — UX / manutenção (P2)
+
+| # | Item | Prioridade | Esforço | Status |
+|---|------|-----------|---------|--------|
+| 20f.1 | Layout **mobile/responsivo** + acessibilidade (tablist/foco) | P2 | L | ⏳ |
+| 20f.2 | Quebrar `SimulationPanel` / `MapContainer` (hotspots) | P2 | L | ⏳ |
+| 20f.3 | Playbook **Mac ↔ Windows ↔ Dev Tunnel** (git pull, rebuild, checagem API pública) | P1 | S | ⏳ |
+| 20f.4 | **Estética sóbria e profissional** (tokens, tipografia, densidades, chrome do shell — sem mudar fluxos) | P1 | M | ⏳ |
+
+#### Checkpoint de aparência (rollback exato)
+
+Antes de qualquer mudança visual da **20f.4**, o estado atual da UI fica congelado em:
+
+| Artefato Git | Nome | Commit base |
+|--------------|------|-------------|
+| **Tag anotada** | `ui-checkpoint-pre-estetica-sobria` | `3e793f2` |
+| **Branch** | `checkpoint/ui-antes-estetica-sobria` | mesmo commit |
+
+**Restaurar a aparência anterior (exatamente igual):**
+
+```bash
+# Opção A — só frontend (recomendado se o resto do branch avançou)
+git checkout ui-checkpoint-pre-estetica-sobria -- frontend/
+
+# Opção B — voltar o working tree do frontend via branch de checkpoint
+git checkout checkpoint/ui-antes-estetica-sobria -- frontend/
+```
+
+Depois: rebuild do frontend (`docker compose ... up -d --build frontend` ou equivalente).
+
+**Não apagar** a tag/branch de checkpoint até a estética nova estar homologada.
+
+### 20g — Pausado / fora do horizonte imediato
+
+| Item | Motivo |
+|------|--------|
+| LOD1/LOD2 UI de edificações | Qualidade insuficiente; backend mantido |
+| Escala nacional real (S2ID/MapBiomas API) | Dependência de dado/API oficial |
+| gov.br produção (OIDC) | Fora de escopo do protótipo (decisão jul/2026) |
+| Ruflo embutido no produto | Desencaixe de domínio; risco/ops altos |
+
+**Progresso Fase 20:** **0/~19 itens ativos** — planejada (jul/2026). Ordem sugerida: **20f.4 (com checkpoint)** em paralelo a **20a → 20b → 20e → 20c → 20f**; 20d só se houver dono e 2 semanas de experimento.
 
 ---
 
