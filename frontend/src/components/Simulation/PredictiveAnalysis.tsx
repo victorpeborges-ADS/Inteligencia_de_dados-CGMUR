@@ -36,6 +36,7 @@ export default function PredictiveAnalysis({
   const [precip24, setPrecip24] = useState(80);
   const [precip48, setPrecip48] = useState(120);
   const [precip72, setPrecip72] = useState(150);
+  const [precip7d, setPrecip7d] = useState(280);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<FloodRiskPrediction | null>(null);
@@ -47,7 +48,7 @@ export default function PredictiveAnalysis({
     setLoading(true);
     setError(null);
     try {
-      const data = await api.predictFloodRisk(codigoIbge, precip24, precip48, precip72);
+      const data = await api.predictFloodRisk(codigoIbge, precip24, precip48, precip72, precip7d);
       setResult(data);
       if (data.flood_geojson?.features?.length) {
         onPredict(data.flood_geojson);
@@ -57,7 +58,7 @@ export default function PredictiveAnalysis({
       if (msg.includes('não treinado') || msg.includes('503')) {
         try {
           await api.bootstrapFloodModels();
-          const data = await api.predictFloodRisk(codigoIbge, precip24, precip48, precip72);
+          const data = await api.predictFloodRisk(codigoIbge, precip24, precip48, precip72, precip7d);
           setResult(data);
           if (data.flood_geojson?.features?.length) onPredict(data.flood_geojson);
           return;
@@ -76,6 +77,7 @@ export default function PredictiveAnalysis({
 
   const probPct = result ? Math.round(result.risk_probability * 100) : 0;
   const arc = result ? result.risk_probability * 283 : 0;
+  const isSynthetic = result?.model_kind === 'baseline_synthetic' || result?.production_ready === false;
 
   return (
     <div className="flex flex-col gap-4">
@@ -84,7 +86,8 @@ export default function PredictiveAnalysis({
           <Brain size={16} className="text-violet-400" /> Análise Preditiva de Alagamento
         </h4>
         <p className="mt-1 text-[11px] text-zinc-400">
-          Random Forest com precipitação simulada + terreno municipal para {municipioNome || 'o município selecionado'}.
+          Inferência experimental com precipitação + terreno para {municipioNome || 'o município selecionado'}.
+          O Monitor operacional só usa modelo com lastro observacional (`full`).
         </p>
       </div>
 
@@ -95,9 +98,9 @@ export default function PredictiveAnalysis({
       )}
 
       {ready && (
-        <p className="rounded-lg border border-violet-500/20 bg-violet-950/15 px-3 py-2 text-[10px] text-violet-200/90">
-          10 alvos com artefato dedicado (Recife, Salvador, POA, JP, Londrina, Aracaju, Fortaleza, Belém, Curitiba, Rio);
-          demais municípios geram baseline on-demand pelo terreno local.
+        <p className="rounded-lg border border-amber-500/25 bg-amber-950/15 px-3 py-2 text-[10px] text-amber-100/90">
+          Artefatos atuais são em geral <strong>baseline sintético</strong> — score experimental, não probabilidade
+          calibrada. O Monitor usa curva heurística de chuva até existir modelo `full` (Fase 21).
         </p>
       )}
 
@@ -106,6 +109,7 @@ export default function PredictiveAnalysis({
           { label: 'Precipitação 24h', value: precip24, set: setPrecip24, max: 200 },
           { label: 'Precipitação 48h', value: precip48, set: setPrecip48, max: 300 },
           { label: 'Precipitação 72h', value: precip72, set: setPrecip72, max: 400 },
+          { label: 'Precipitação 7d (antecedente)', value: precip7d, set: setPrecip7d, max: 800 },
         ].map((slider) => (
           <div key={slider.label}>
             <div className="mb-1 flex justify-between text-xs text-zinc-300">
@@ -158,12 +162,28 @@ export default function PredictiveAnalysis({
             </svg>
             <div>
               <p className={`text-2xl font-black ${riskColor(result.risk_level)}`}>{probPct}%</p>
+              {result.uncertainty && (
+                <p className="text-[10px] font-mono text-zinc-500">
+                  IC≈{Math.round((result.uncertainty.confidence_level ?? 0.9) * 100)}%:{' '}
+                  {Math.round(result.uncertainty.ci_low * 100)}–
+                  {Math.round(result.uncertainty.ci_high * 100)}%
+                </p>
+              )}
               <p className="text-[10px] uppercase tracking-wide text-zinc-400">
-                {result.risk_level.replace('_', ' ')} · confiança {result.confidence}
+                {result.risk_level.replace('_', ' ')} ·{' '}
+                {isSynthetic ? 'score experimental' : `confiança ${result.confidence}`}
               </p>
-              {result.model_kind === 'baseline_synthetic' && (
-                <span className="mt-1 inline-block rounded bg-amber-500/15 px-1.5 py-0.5 text-[8px] font-bold uppercase text-amber-300">
-                  Baseline on-demand
+              <span className="mt-1 inline-block rounded bg-teal-500/15 px-1.5 py-0.5 text-[8px] font-bold uppercase text-teal-200">
+                {isSynthetic ? 'Sintético · Estimado' : 'ML full · Derivado'}
+              </span>
+              {isSynthetic && (
+                <span className="mt-1 ml-1 inline-block rounded bg-amber-500/15 px-1.5 py-0.5 text-[8px] font-bold uppercase text-amber-300">
+                  Não é probabilidade calibrada
+                </span>
+              )}
+              {result.model_auc_roc != null && (
+                <span className="mt-1 ml-1 inline-block rounded bg-emerald-500/15 px-1.5 py-0.5 text-[8px] font-bold uppercase text-emerald-300">
+                  AUC {result.model_auc_roc.toFixed(2)}
                 </span>
               )}
             </div>
@@ -188,6 +208,105 @@ export default function PredictiveAnalysis({
               </p>
             </div>
           </div>
+          {result.horizons && result.horizons.length > 0 && (
+            <div className="mt-2">
+              <p className="mb-1 text-[9px] font-bold uppercase tracking-wider text-zinc-500">
+                Horizonte D+1 · D+2 · D+3
+              </p>
+              <div className="grid grid-cols-3 gap-1.5">
+                {result.horizons.map((h) => (
+                  <div
+                    key={h.horizon}
+                    className="rounded-lg border border-zinc-700/50 bg-zinc-950/50 px-2 py-1.5 text-center"
+                  >
+                    <p className="text-[9px] font-bold uppercase text-zinc-500">{h.horizon}</p>
+                    <p className="text-sm font-black text-violet-200">
+                      {Math.round(h.risk_probability * 100)}%
+                    </p>
+                    {h.ci_low != null && h.ci_high != null && (
+                      <p className="text-[8px] font-mono text-zinc-600">
+                        {Math.round(h.ci_low * 100)}–{Math.round(h.ci_high * 100)}
+                      </p>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+          {result.impact?.disponivel && (
+            <div className="mt-2 rounded-lg border border-amber-500/25 bg-amber-950/15 p-2.5">
+              <p className="mb-1 text-[9px] font-bold uppercase tracking-wider text-amber-200/90">
+                Impacto estimado
+              </p>
+              <p className="text-[10px] leading-snug text-zinc-300">
+                {result.impact.narrativa ||
+                  `${result.impact.n_bairros_prioritarios ?? 0} bairros prioritários`}
+              </p>
+              <div className="mt-1.5 flex flex-wrap gap-2 text-[9px] text-zinc-500">
+                {result.impact.populacao_exposta_estimada != null && (
+                  <span>
+                    Pop. exposta ~{' '}
+                    <strong className="text-amber-200">
+                      {result.impact.populacao_exposta_estimada.toLocaleString('pt-BR')}
+                    </strong>
+                    {result.impact.pct_populacao_exposta != null
+                      ? ` (${result.impact.pct_populacao_exposta}%)`
+                      : ''}
+                  </span>
+                )}
+                {result.impact.capag_nota && (
+                  <span>
+                    CAPAG <strong className="text-zinc-300">{result.impact.capag_nota}</strong>
+                  </span>
+                )}
+                {result.impact.porte && (
+                  <span>
+                    Porte <strong className="text-zinc-300">{result.impact.porte}</strong>
+                  </span>
+                )}
+              </div>
+              {result.impact.medidas_cabiveis && result.impact.medidas_cabiveis.length > 0 && (
+                <ul className="mt-2 space-y-1 border-t border-zinc-800/80 pt-2">
+                  {result.impact.medidas_cabiveis.slice(0, 3).map((m) => (
+                    <li key={m.id || m.titulo} className="text-[10px] text-zinc-400">
+                      <span className="font-semibold text-zinc-200">{m.titulo}</span>
+                      {m.custo ? (
+                        <span className="ml-1 text-[9px] text-zinc-500">· {m.custo}</span>
+                      ) : null}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
+          {result.explanation?.disponivel && result.explanation.domains?.length > 0 && (
+            <div className="mt-2">
+              <p className="mb-1 text-[9px] font-bold uppercase tracking-wider text-zinc-500">
+                Contribuição por domínio
+              </p>
+              {result.explanation.narrativa && (
+                <p className="mb-1.5 text-[10px] leading-snug text-zinc-400">
+                  {result.explanation.narrativa}
+                </p>
+              )}
+              <ul className="space-y-1">
+                {result.explanation.domains.slice(0, 5).map((d) => (
+                  <li key={d.id} className="text-[10px] text-zinc-400">
+                    <div className="mb-0.5 flex justify-between gap-2">
+                      <span className="text-zinc-300">{d.label}</span>
+                      <span className="font-mono text-violet-200">{d.contribution_pct.toFixed(0)}%</span>
+                    </div>
+                    <div className="h-1 overflow-hidden rounded-full bg-zinc-800">
+                      <div
+                        className="h-full rounded-full bg-violet-500/70"
+                        style={{ width: `${Math.min(100, Math.max(2, d.contribution_pct))}%` }}
+                      />
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
           {result.top_features && result.top_features.length > 0 && (
             <div className="mt-2">
               <p className="mb-1 text-[9px] font-bold uppercase tracking-wider text-zinc-500">

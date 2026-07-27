@@ -1,0 +1,31 @@
+idestacao,uf,codibge,cidade,nomeestacao,ultimovalor,datahoraUltimovalor,acc1hr,acc3hr,acc6hr,acc12hr,acc24hr,acc48hr,acc72hr,acc96hr,tipoestacao,status
+7600,RJ,3304557,RIO DE JANEIRO,Jacarepaguá,0,22/02/26 21:00,-,-,-,-,-,-,-,-,1,0
+7594,RJ,3304557,RIO DE JANEIRO,Padre Miguel,0,24/07/26 20:20,-,-,-,-,-,-,-,-,1,0
+7615,RJ,3304557,RIO DE JANEIRO,Ilha de Paquetá,0,26/03/24 18:50,-,-,-,-,-,-,-,-,1,0
+7595,RJ,3304557,RIO DE JANEIRO,Salgueiro,0,24/04/25 18:30,-,-,-,-,-,-,-,-,1,0
+7607,RJ,3304557,RIO DE JANEIRO,Defesa Civil Santa Cruz,0,27/06/23 17:00,-,-,-,-,-,-,-,-,1,0
+8680,RJ,3304557,RIO DE JANEIRO,Campo Golf-RJ,,,-,-,-,-,-,-,-,-,4,0
+7611,RJ,3304557,RIO DE JANEIRO,Tijuca,0,10/06/26 18:50,-,-,-,-,-,-,-,-,1,0
+7605,RJ,3304557,RIO DE JANEIRO,Pavuna,0,21/07/26 14:40,-,-,-,-,-,-,-,-,1,0
+3215,RJ,3304557,RIO DE JANEIRO,Est. Pedra Bonita,0,06/03/26 12:10,-,-,-,-,-,-,-,-,1,0
+8679,RJ,3304557,RIO DE JANEIRO,Clube Naval RJ,,,-,-,-,-,-,-,-,-,4,0
+3045,RJ,3304557,RIO DE JANEIRO,Praça Seca,0,24/07/26 20:20,-,-,-,-,-,-,-,-,1,0
+7603,RJ,3304557,RIO DE JANEIRO,Catete,0,18/07/26 17:20,-,-,-,-,-,-,-,-,1,0
+7596,RJ,3304557,RIO DE JANEIRO,Andaraí,0,15/09/24 01:40,-,-,-,-,-,-,-,-,1,0
+3044,RJ,3304557,RIO DE JANEIRO,Penha,0,14/11/25 12:10,-,-,-,-,-,-,-,-,1,0
+7606,RJ,3304557,RIO DE JANEIRO,Vigário Geral,0,24/07/26 20:50,-,-,0.2,0.2,0.2,0.2,0.2,0.2,1,0
+7610,RJ,3304557,RIO DE JANEIRO,Alto da Boa Vista,0.2,24/07/26 20:50,0.8,0.8,4.8,9.6,11.6,11.6,11.6,11.6,1,0
+7597,RJ,3304557,RIO DE JANEIRO,CIEP Samuel Wainer,0,24/07/26 17:50,-,-,-,-,-,-,-,-,1,0
+7601,RJ,3304557,RIO DE JANEIRO,CIEP Dr. João Ramos de Souza,0,26/02/25 17:20,-,-,-,-,-,-,-,-,1,0
+7602,RJ,3304557,RIO DE JANEIRO,São Conrado,0.4,24/07/26 20:40,0.4,0.4,1.6,4.6,4.6,4.6,4.6,4.6,1,0
+3043,RJ,3304557,RIO DE JANEIRO,Tanque Jacarepagua,0,10/07/26 06:30,-,-,-,-,-,-,-,-,1,0
+7593,RJ,3304557,RIO DE JANEIRO,Realengo Batan,0,24/07/26 21:10,0.2,0.2,0.8,0.8,0.8,0.8,0.8,0.8,1,0
+7612,RJ,3304557,RIO DE JANEIRO,Usina,0,24/07/26 20:20,-,-,-,-,-,-,-,-,1,0
+3042,RJ,3304557,RIO DE JANEIRO,Abolição,0,26/05/23 18:10,-,-,-,-,-,-,-,-,1,0
+7592,RJ,3304557,RIO DE JANEIRO,Santa Cruz,0.2,24/07/26 20:50,0.6,0.6,0.6,0.6,1.4,1.4,1.4,1.4,1,0
+7599,RJ,3304557,RIO DE JANEIRO,Vargem Pequena,0.2,08/10/25 06:30,-,-,-,-,-,-,-,-,1,0
+7609,RJ,3304557,RIO DE JANEIRO,Vicente de Carvalho,0,26/03/26 21:10,-,-,-,-,-,-,-,-,1,0
+7614,RJ,3304557,RIO DE JANEIRO,Pilares,0,26/04/26 09:40,-,-,-,-,-,-,-,-,1,0
+3114,RJ,3304557,RIO DE JANEIRO,Glória,0,24/07/26 20:50,-,-,0.2,0.2,0.2,0.2,0.2,0.2,1,0
+7613,RJ,3304557,RIO DE JANEIRO,Higienópolis,0,24/07/26 20:30,-,-,-,-,-,-,-,-,1,0
+7591,RJ,3304557,RIO DE JANEIRO,Jardim Maravilha,0,21/05/25 17:00,-,-,-,-,-,-,-,-,1,0

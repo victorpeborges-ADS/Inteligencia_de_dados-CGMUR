@@ -433,15 +433,19 @@ export default function ExecutiveDashboard({
     );
   }
 
-  // Combine IVC and IRI per neighborhood for charts
-  const chartData = indices?.vulnerabilidade.map((v) => {
-    const flood = indices.inundacao.find((f) => f.bairro_nome === v.bairro_nome);
-    return {
-      name: v.bairro_nome,
-      Vulnerabilidade: v.indice_vulnerabilidade,
-      Inundaçao: flood ? flood.indice_risco_inundacao : 0
-    };
-  }) || [];
+  // Combine IVC and IRI — top 12 por IVC (mostra dispersão; antes o gráfico parecia flat)
+  const chartData = (() => {
+    const rows =
+      indices?.vulnerabilidade.map((v) => {
+        const flood = indices.inundacao.find((f) => f.bairro_nome === v.bairro_nome);
+        return {
+          name: v.bairro_nome,
+          Vulnerabilidade: v.indice_vulnerabilidade,
+          Inundaçao: flood ? flood.indice_risco_inundacao : 0,
+        };
+      }) || [];
+    return [...rows].sort((a, b) => b.Vulnerabilidade - a.Vulnerabilidade).slice(0, 12);
+  })();
 
   type DashboardCard = {
     title: string;
@@ -1349,7 +1353,9 @@ export default function ExecutiveDashboard({
         <div className="bg-card/40 backdrop-blur-md border border-border p-4.5 rounded-xl flex flex-col">
           <div className="mb-3">
             <h4 className="font-extrabold text-zinc-200 text-xs uppercase tracking-wide">Vulnerabilidade por Bairro</h4>
-            <p className="text-[10px] text-zinc-400 mt-0.5">Comparação entre <TermTooltip term="IVC" /> e <TermTooltip term="IRI" /> (0 a 1.0)</p>
+            <p className="text-[10px] text-zinc-400 mt-0.5">
+              Top 12 bairros por <TermTooltip term="IVC" /> × <TermTooltip term="IRI" /> (0 a 1.0) — IVC relativo ao município
+            </p>
           </div>
           <div className="h-56 w-full text-[10px]">
             {chartData.length > 0 ? (

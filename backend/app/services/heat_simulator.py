@@ -389,6 +389,8 @@ def run_heat_island_simulation(
                 "impermeabilizacao_pct": round(land["impermeabilidade"] * 100, 1),
                 "ivc": ivc,
                 "populacao_exposta": pop_exposta,
+                "qualidade_dado": "Derivado",
+                "selo_qualidade": "Derivado",
             },
         })
 
@@ -417,6 +419,8 @@ def run_heat_island_simulation(
                 "name": "Município (agregado)",
                 "layer_type": "heat_band",
                 "heat_band": _heat_band(fallback_delta),
+                "qualidade_dado": "Derivado",
+                "selo_qualidade": "Derivado",
                 "temp_increase_celsius": fallback_delta,
                 "temp_local_celsius": _local_temp(fallback_delta),
                 "temp_surface_celsius": _local_temp(fallback_delta),

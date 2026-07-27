@@ -10,8 +10,15 @@ import pandas as pd
 from sqlalchemy.orm import Session
 
 from app.services.analytical_engine import AnalyticalEngine
-from ml.constants import FEATURE_COLUMNS, MODEL_VERSION, MUNICIPALITY_SLUGS, SLUG_BY_IBGE
-from ml.paths import model_meta_path, model_path, terrain_parquet
+from ml.constants import (
+    FEATURE_COLUMNS,
+    FEATURE_DEFAULTS,
+    MODEL_VERSION,
+    MUNICIPALITY_SLUGS,
+    SLUG_BY_IBGE,
+)
+from ml.model_policy import SYNTHETIC_MODEL_KIND, is_production_model, public_auc
+from ml.paths import model_path, terrain_parquet
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +44,8 @@ def _risk_level(probability: float) -> str:
 
 
 def _confidence(meta: dict[str, Any]) -> str:
+    if not is_production_model(meta):
+        return "nao_producao"
     auc = meta.get("auc_roc_cv")
     n_pos = meta.get("n_positive", 0)
     if auc is None or (isinstance(auc, float) and np.isnan(auc)):
@@ -46,6 +55,15 @@ def _confidence(meta: dict[str, Any]) -> str:
     if auc >= 0.65 or n_pos >= 1:
         return "média"
     return "baixa"
+
+
+def _resolve_precip_7d(precip_72h: float, precip_7d: float | None) -> float:
+    """Alinha feature precip_7d com o treino (rolling 7d). Sem proxy * 1.15."""
+    if precip_7d is not None:
+        return max(0.0, float(precip_7d))
+    # Sem série de 7 dias: usa 72h como piso (conservador e explícito), nunca 72h*1.15.
+    logger.warning("precip_7d ausente na inferência — usando precip_72h como piso (sem proxy).")
+    return max(0.0, float(precip_72h))
 
 
 class FloodRiskPredictor:
@@ -75,46 +93,133 @@ class FloodRiskPredictor:
         precip_48h: float,
         precip_72h: float,
         mes_do_ano: int | None = None,
+        precip_7d: float | None = None,
+        duracao_chuva_h: float | None = None,
+        precip_5d: float | None = None,
+        precip_10d: float | None = None,
+        precip_30d: float | None = None,
     ) -> dict[str, Any]:
         from datetime import datetime
+
+        import numpy as np
+
+        from ml.intensity import intensity_from_precip
 
         codigo_ibge = resolve_codigo_ibge(municipio_slug)
         payload = self._load(codigo_ibge)
         model = payload["model"]
         meta = payload["meta"]
         terrain = meta.get("terrain", {})
+        kind = meta.get("model_kind") or "full"
+        synthetic = kind == SYNTHETIC_MODEL_KIND or not is_production_model(meta)
 
-        month = mes_do_ano or datetime.now().month
-        precip_7d = precip_72h * 1.15
+        now = datetime.now()
+        month = mes_do_ano or now.month
+        precip_7d_val = _resolve_precip_7d(float(precip_72h), precip_7d)
+        # Antecedente: se ausente, degrada graciosamente a partir de 7d / 72h
+        p5 = float(precip_5d) if precip_5d is not None else min(precip_7d_val, float(precip_72h) * 1.6)
+        p10 = float(precip_10d) if precip_10d is not None else max(precip_7d_val, p5)
+        p30 = float(precip_30d) if precip_30d is not None else max(p10, precip_7d_val * 2.2)
+        doy = float(now.timetuple().tm_yday)
+        saz_sin = float(np.sin(2.0 * np.pi * doy / 365.25))
+        saz_cos = float(np.cos(2.0 * np.pi * doy / 365.25))
 
+        intensity = intensity_from_precip(
+            float(precip_24h),
+            duracao_h=duracao_chuva_h,
+            codigo_ibge=codigo_ibge,
+        )
+
+        cols = list(meta.get("feature_columns") or FEATURE_COLUMNS)
         row = {
-            "precip_24h": precip_24h,
-            "precip_48h": precip_48h,
-            "precip_72h": precip_72h,
-            "precip_7d": precip_7d,
+            "precip_24h": float(precip_24h),
+            "precip_48h": float(precip_48h),
+            "precip_72h": float(precip_72h),
+            "precip_7d": precip_7d_val,
+            "precip_5d": max(0.0, p5),
+            "precip_10d": max(0.0, p10),
+            "precip_30d": max(0.0, p30),
             "mes_do_ano": float(month),
+            "sazonalidade_sin": round(saz_sin, 4),
+            "sazonalidade_cos": round(saz_cos, 4),
+            **FEATURE_DEFAULTS,
+            **intensity,
             **terrain,
         }
-        vec = np.array([[row[c] for c in FEATURE_COLUMNS]])
-        probability = float(model.predict_proba(vec)[0][1])
+        # Enriquecer terrain a partir do cache municipal se features 21d faltarem
+        try:
+            meta_path = terrain_parquet(codigo_ibge).with_suffix(".municipal.json")
+            if meta_path.exists():
+                cached = json.loads(meta_path.read_text(encoding="utf-8"))
+                for k, v in cached.items():
+                    if k in FEATURE_DEFAULTS or k in cols:
+                        row.setdefault(k, float(v) if v is not None else FEATURE_DEFAULTS.get(k, 0.0))
+        except Exception as exc:
+            logger.debug("terrain municipal cache: %s", exc)
+
+        vec = np.array([[float(row.get(c, FEATURE_DEFAULTS.get(c, 0.0))) for c in cols]])
+
+        from ml.horizon import build_horizon_forecasts, predict_proba_with_uncertainty
+
+        unc = predict_proba_with_uncertainty(model, vec)
+        probability = float(unc["probability"])
+        horizons = build_horizon_forecasts(
+            model,
+            cols,
+            row,
+            precip_24h=float(precip_24h),
+            precip_48h=float(precip_48h),
+            precip_72h=float(precip_72h),
+            codigo_ibge=codigo_ibge,
+            duracao_chuva_h=duracao_chuva_h,
+        )
+        # D+1 alinha com a probabilidade principal
+        if horizons:
+            horizons[0]["risk_probability"] = round(probability, 3)
+            horizons[0]["ci_low"] = unc["ci_low"]
+            horizons[0]["ci_high"] = unc["ci_high"]
+            horizons[0]["uncertainty_method"] = unc["method"]
+
+        uncertainty = {
+            "ci_low": unc["ci_low"],
+            "ci_high": unc["ci_high"],
+            "std": unc["std"],
+            "method": unc["method"],
+            "confidence_level": unc["confidence_level"],
+            "nota": (
+                "Intervalo ≈90% via dispersão entre árvores do RF "
+                "(ou margem heurística se o modelo não expõe estimators_)."
+            ),
+        }
 
         bairros = self._critical_neighborhoods(db, codigo_ibge, probability, row)
         geojson = self._flood_patch_geojson(db, codigo_ibge, bairros, probability)
 
+        from app.services.flood_impact_service import build_flood_impact
+
+        try:
+            impact = build_flood_impact(
+                db,
+                codigo_ibge,
+                municipal_prob=probability,
+                critical_neighborhoods=bairros,
+            )
+        except Exception as exc:
+            logger.info("impacto 21g.2 %s: %s", codigo_ibge, exc)
+            impact = {"disponivel": False, "reason": str(exc), "protocol": "21g2_impacto"}
+
         threshold = float(meta.get("threshold_mm_24h", 65.0))
         mm_acima = round(float(precip_24h) - threshold, 1)
-        top_features: list[dict[str, Any]] = []
-        importances = getattr(model, "feature_importances_", None)
-        if importances is not None and len(importances) == len(FEATURE_COLUMNS):
-            ranked = sorted(
-                zip(FEATURE_COLUMNS, importances),
-                key=lambda item: float(item[1]),
-                reverse=True,
-            )[:3]
-            top_features = [
-                {"feature": name, "importance": round(float(score), 3)}
-                for name, score in ranked
-            ]
+
+        from ml.explainability import domain_contributions
+
+        explanation = domain_contributions(model, cols, row, top_n=5)
+        top_features = explanation.get("top_features") or []
+        # Compat: API antiga esperava só feature + importance
+        top_features = [
+            {"feature": f["feature"], "importance": float(f["importance"])}
+            for f in top_features
+        ]
 
         return {
             "codigo_ibge": codigo_ibge,
@@ -125,19 +230,36 @@ class FloodRiskPredictor:
             "threshold_mm_24h": threshold,
             "mm_acima_limiar": mm_acima,
             "top_features": top_features,
+            "explanation": explanation,
+            "impact": impact,
+            "horizons": horizons,
+            "uncertainty": uncertainty,
             "critical_neighborhoods": bairros,
             "flood_geojson": geojson,
             "model_version": meta.get("model_version", MODEL_VERSION),
-            "model_kind": meta.get("model_kind", "full"),
-            "data_quality": "estimado" if meta.get("model_kind") == "baseline_synthetic" else "derivado",
-            "model_auc_roc": meta.get("auc_roc_cv"),
+            "model_kind": kind,
+            "data_quality": "estimado" if synthetic else "derivado",
+            "score_kind": "score_sintetico" if synthetic else "probabilidade_modelo",
+            "production_ready": (not synthetic),
+            "model_auc_roc": public_auc(meta),
+            "features_used": {
+                "precip_24h": round(float(precip_24h), 2),
+                "precip_48h": round(float(precip_48h), 2),
+                "precip_72h": round(float(precip_72h), 2),
+                "precip_7d": round(precip_7d_val, 2),
+                "precip_5d": round(max(0.0, p5), 2),
+                "precip_10d": round(max(0.0, p10), 2),
+                "precip_30d": round(max(0.0, p30), 2),
+                "mes_do_ano": int(month),
+            },
             "disclaimer": (
-                "Modelo estatístico para apoio à decisão. Não substitui modelagem hidrodinâmica "
-                "ou alerta oficial CEMADEN."
+                "Não substitui modelagem hidrodinâmica nem alerta oficial CEMADEN. "
                 + (
-                    " Baseline sintético calibrado por terreno municipal — retreine com OpenMeteo+S2ID para produção."
-                    if meta.get("model_kind") == "baseline_synthetic"
-                    else ""
+                    "ATENÇÃO: artefato baseline_synthetic — score experimental, NÃO é probabilidade "
+                    "calibrada. O Monitor operacional usa curva heurística de chuva até existir "
+                    "modelo full treinado com rótulos observados (Fase 21)."
+                    if synthetic
+                    else "Modelo estatístico com lastro observacional (model_kind=full)."
                 )
             ),
         }
@@ -184,12 +306,18 @@ class FloodRiskPredictor:
         for _, b in terrain_df.iterrows():
             flood = floods.get(int(b["bairro_id"]), {})
             iri = float(flood.get("indice_risco_inundacao", 0.5))
-            bairro_prob = min(0.99, municipal_prob * 0.55 + iri * 0.45)
+            # 21d.5 — preferir suscetibilidade HAND/local ao blend IRI puro
+            if "suscetibilidade_local" in terrain_df.columns:
+                susc = float(b.get("suscetibilidade_local") or 0.4)
+            else:
+                susc = iri
+            bairro_prob = min(0.99, municipal_prob * 0.50 + susc * 0.35 + iri * 0.15)
             rows.append({
                 "bairro_id": int(b["bairro_id"]),
                 "bairro_nome": b["bairro_nome"],
                 "risk_probability": round(bairro_prob, 3),
                 "iri": round(iri, 3),
+                "suscetibilidade_local": round(susc, 3),
                 "impermeabilizacao_pct": float(b["impermeabilizacao_pct"]),
             })
 

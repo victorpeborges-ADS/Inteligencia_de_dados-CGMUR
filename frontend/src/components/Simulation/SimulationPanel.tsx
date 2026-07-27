@@ -2,13 +2,14 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { api, HeatLstComparison, MitigationPlan, RainfallComparison, SimulationInterpret, SimulationOutput, SlopeInterpretation } from '@/utils/api';
-import { Play, Pause, RotateCcw, AlertTriangle, HelpCircle, Thermometer, Droplet, FileText, Waves, Layers, Mountain, Activity, Sparkles, Copy, ClipboardCheck, Droplets, ExternalLink, Building2, Users, School, Stethoscope } from 'lucide-react';
+import { Play, Pause, RotateCcw, AlertTriangle, HelpCircle, Thermometer, Droplet, FileText, Waves, Layers, Mountain, Activity, Sparkles, Copy, ClipboardCheck, Droplets, ExternalLink, Building2, Users, School, Stethoscope, ChevronDown, ChevronRight, Info } from 'lucide-react';
 import { georedusMunicipioUrl } from '@/config/georedus';
 import PredictiveAnalysis from './PredictiveAnalysis';
 import RotatingLoader, { INTERPRETATION_MESSAGES, SIMULATION_MESSAGES } from '@/components/UI/RotatingLoader';
 import TermTooltip from '@/components/UI/TermTooltip';
 import SimulationNextSteps from './SimulationNextSteps';
 import { EmptyState } from '@/design-system';
+import Badge from '@/design-system/components/Badge';
 
 export type SimOverlayOptions = {
   showFlood: boolean;
@@ -37,6 +38,16 @@ interface SimulationProps {
   onSimulate: (payload: SimulationOutput | any) => void;
   onClear: () => void;
   onSimulatingChange?: (simulating: boolean) => void;
+  onFloodClockChange?: (clock: {
+    t_h: number;
+    fase: string;
+    narrativa: string;
+    playing: boolean;
+    max_depth_m: number | null;
+    flood_patches: number | null;
+    has_features: boolean;
+    duration_h: number;
+  } | null) => void;
   codigoIbge?: string;
   municipioNome?: string;
   municipioLoaded?: boolean;
@@ -52,6 +63,7 @@ export default function SimulationPanel({
   onSimulate,
   onClear,
   onSimulatingChange,
+  onFloodClockChange,
   codigoIbge,
   municipioNome,
   municipioLoaded,
@@ -64,6 +76,7 @@ export default function SimulationPanel({
 }: SimulationProps) {
   const [activeTab, setActiveTab] = useState<'waterproofing' | 'heat_island' | 'rainfall' | 'drainage' | 'predictive' | 'mitigation' | 'climate_extra'>('rainfall');
   const [contingencyNotice, setContingencyNotice] = useState<{ tone: 'ok' | 'error'; message: string } | null>(null);
+  const [limitsOpen, setLimitsOpen] = useState(true);
   const [waterproofingPct, setWaterproofingPct] = useState(25);
   const [heatPeakTempC, setHeatPeakTempC] = useState(36);
   // Mudança líquida de cobertura vegetal: negativo = desmatamento, positivo = arborização
@@ -121,13 +134,47 @@ export default function SimulationPanel({
   const [demStatus, setDemStatus] = useState<'idle' | 'warming' | 'ready' | 'error'>('idle');
   const [floodTIndex, setFloodTIndex] = useState(0);
   const [floodPlaying, setFloodPlaying] = useState(false);
+  const [floodLoop, setFloodLoop] = useState(true);
+  const [floodSpeedMs, setFloodSpeedMs] = useState(500);
   const floodPlayRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [calibBusy, setCalibBusy] = useState(false);
   const [calibMsg, setCalibMsg] = useState<string | null>(null);
 
-  const applyFloodTimelineFrame = (data: SimulationOutput, tIndex: number) => {
+  const publishFloodClock = (
+    data: SimulationOutput | null,
+    tIndex: number,
+    playing: boolean,
+  ) => {
+    if (!onFloodClockChange) return;
+    const timeline = data?.simulation_meta?.flood_timeline;
+    if (!timeline) {
+      onFloodClockChange(null);
+      return;
+    }
+    const step = timeline.steps[tIndex] || timeline.steps[timeline.peak_index];
+    const hasFeatures = Boolean(data?.simulation_meta?.flood_timeline_features?.length);
+    onFloodClockChange({
+      t_h: step?.t_h ?? 0,
+      fase: step?.fase || '—',
+      narrativa:
+        step?.narrativa
+        || (step?.fase === 'pico'
+          ? 'Pico da inundação estimada neste cenário.'
+          : step?.fase === 'subida'
+            ? 'A mancha sobe — áreas mais baixas começam a alagar.'
+            : 'A água recua — mancha reduz (aproximação, sem routing 2D).'),
+      playing,
+      max_depth_m: step?.max_depth_m ?? null,
+      flood_patches: step?.flood_patches ?? null,
+      has_features: hasFeatures,
+      duration_h: timeline.duration_h,
+    });
+  };
+
+  const applyFloodTimelineFrame = (data: SimulationOutput, tIndex: number, playing = floodPlaying) => {
     const timeline = data.simulation_meta?.flood_timeline;
     const byStep = data.simulation_meta?.flood_timeline_features;
+    publishFloodClock(data, tIndex, playing);
     if (!timeline || !byStep?.length) return;
     const idx = Math.max(0, Math.min(tIndex, byStep.length - 1));
     const floodFeats = byStep[idx] || [];
@@ -146,11 +193,14 @@ export default function SimulationPanel({
   useEffect(() => {
     if (!result?.simulation_meta?.flood_timeline) {
       setFloodPlaying(false);
+      onFloodClockChange?.(null);
       return;
     }
     const peak = result.simulation_meta.flood_timeline.peak_index ?? 0;
     setFloodTIndex(peak);
     setFloodPlaying(false);
+    publishFloodClock(result, peak, false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [result]);
 
   useEffect(() => {
@@ -162,17 +212,25 @@ export default function SimulationPanel({
     const n = result.simulation_meta.flood_timeline.n_steps;
     floodPlayRef.current = setInterval(() => {
       setFloodTIndex((prev) => {
-        const next = (prev + 1) % n;
-        applyFloodTimelineFrame(result, next);
+        let next = prev + 1;
+        if (next >= n) {
+          if (!floodLoop) {
+            setFloodPlaying(false);
+            publishFloodClock(result, prev, false);
+            return prev;
+          }
+          next = 0;
+        }
+        applyFloodTimelineFrame(result, next, true);
         return next;
       });
-    }, 700);
+    }, floodSpeedMs);
     return () => {
       if (floodPlayRef.current) clearInterval(floodPlayRef.current);
       floodPlayRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [floodPlaying, result]);
+  }, [floodPlaying, result, floodSpeedMs, floodLoop]);
 
   useEffect(() => {
     if (!codigoIbge) {
@@ -685,6 +743,44 @@ export default function SimulationPanel({
         ))}
       </div>
 
+      {/* 20h.2 — limites metodológicos sempre visíveis na aba Simulações */}
+      {activeTab !== 'predictive' && (
+        <div className="rounded-xl border border-amber-500/30 bg-amber-950/20 px-3 py-2.5">
+          <button
+            type="button"
+            onClick={() => setLimitsOpen((v) => !v)}
+            className="flex w-full items-center justify-between gap-2 text-left"
+          >
+            <span className="flex items-center gap-1.5 text-[10px] font-extrabold uppercase tracking-wider text-amber-200">
+              <Info size={12} />
+              Limites metodológicos · triagem ≠ laudo
+            </span>
+            {limitsOpen ? <ChevronDown size={14} className="text-amber-300" /> : <ChevronRight size={14} className="text-amber-300" />}
+          </button>
+          {limitsOpen && (
+            <div className="mt-2 grid gap-2 sm:grid-cols-2">
+              <div>
+                <p className="text-[9px] font-bold uppercase tracking-wide text-emerald-300/90">O que é</p>
+                <ul className="mt-1 list-disc space-y-0.5 pl-4 text-[10px] leading-relaxed text-zinc-300">
+                  <li>Triagem territorial para priorizar bairros e ensaiar contingência</li>
+                  <li>Estimativa com DEM, chuva/cenário e proxies de uso do solo</li>
+                  <li>Selo de qualidade visível (Oficial · Observado · Estimado · Derivado)</li>
+                </ul>
+              </div>
+              <div>
+                <p className="text-[9px] font-bold uppercase tracking-wide text-rose-300/90">O que não é</p>
+                <ul className="mt-1 list-disc space-y-0.5 pl-4 text-[10px] leading-relaxed text-zinc-300">
+                  <li>Laudo de engenharia, perícia ou projeto executivo</li>
+                  <li>HEC-RAS / SWMM / hidrodinâmica 2D completa</li>
+                  <li>Alerta oficial CEMADEN / Defesa Civil</li>
+                  <li>Metodologia oficial ANA/CPRM/IDF (salvo selo Oficial explícito)</li>
+                </ul>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Simulator Forms */}
       <div className="bg-card/40 backdrop-blur-md border border-border p-4 rounded-xl">
         {activeTab === 'predictive' && (
@@ -700,13 +796,18 @@ export default function SimulationPanel({
         {activeTab === 'rainfall' && (
           <div className="flex flex-col gap-4">
             <div className="rounded-lg border border-sky-500/25 bg-gradient-to-br from-sky-950/40 to-zinc-950/60 p-3">
-              <h4 className="font-extrabold text-sm text-zinc-100 flex items-center gap-1.5">
-                <Droplet size={16} className="text-accent-sky" /> Onde alaga se chover forte?
-              </h4>
-              <p className="mt-1.5 text-[11px] leading-relaxed text-zinc-400">
-                Escolha quanto chove e rode a simulação. O mapa mostra as áreas que tendem a alagar
-                e as encostas com risco de deslizamento.
-              </p>
+              <div className="flex flex-wrap items-start justify-between gap-2">
+                <div>
+                  <h4 className="font-extrabold text-sm text-zinc-100 flex items-center gap-1.5">
+                    <Droplet size={16} className="text-accent-sky" /> Onde alaga se chover forte?
+                  </h4>
+                  <p className="mt-1.5 text-[11px] leading-relaxed text-zinc-400">
+                    Escolha quanto chove e rode a simulação. O mapa mostra as áreas que tendem a alagar
+                    e as encostas com risco de deslizamento.
+                  </p>
+                </div>
+                <Badge tone="derived">Simulação · Derivado</Badge>
+              </div>
             </div>
 
             <div className="flex flex-col gap-2">
@@ -943,10 +1044,15 @@ export default function SimulationPanel({
         {activeTab === 'waterproofing' && (
           <div className="flex flex-col gap-4">
             <div>
-              <h4 className="font-extrabold text-sm text-zinc-200 flex items-center gap-1.5">
-                <AlertTriangle size={16} className="text-accent-sky" /> Aumento de Impermeabilização
-              </h4>
-              <p className="text-[11px] text-zinc-400 mt-1">Expansão de pavimentação asfáltica e escoamento superficial.</p>
+              <div className="flex flex-wrap items-start justify-between gap-2">
+                <div>
+                  <h4 className="font-extrabold text-sm text-zinc-200 flex items-center gap-1.5">
+                    <AlertTriangle size={16} className="text-accent-sky" /> Aumento de Impermeabilização
+                  </h4>
+                  <p className="text-[11px] text-zinc-400 mt-1">Expansão de pavimentação asfáltica e escoamento superficial.</p>
+                </div>
+                <Badge tone="derived">Simulação · Derivado</Badge>
+              </div>
             </div>
             <div className="flex flex-col gap-2">
               <div className="flex justify-between text-xs text-zinc-300">
@@ -998,24 +1104,20 @@ export default function SimulationPanel({
                 </span>
               </div>
               <div className="mt-3 flex flex-wrap gap-2">
-                <span className="rounded-md border border-sky-500/35 bg-sky-500/10 px-2 py-1 text-[9px] font-bold uppercase tracking-wide text-sky-200">
-                  Simulação Sinidu · Derivado
-                </span>
+                <Badge tone="derived">Cenário Sinidu · Derivado</Badge>
                 {codigoIbge ? (
                   <a
                     href={georedusMunicipioUrl(codigoIbge)}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="inline-flex items-center gap-1 rounded-md border border-emerald-500/35 bg-emerald-500/10 px-2 py-1 text-[9px] font-bold uppercase tracking-wide text-emerald-200 transition hover:bg-emerald-500/20"
+                    className="inline-flex items-center gap-1 rounded-md border border-sky-500/35 bg-sky-500/10 px-2 py-1 text-[9px] font-bold uppercase tracking-wide text-sky-200 transition hover:bg-sky-500/20"
                     title="Ative a camada LST observada no mapa ou abra o GeoReDUS para o município"
                   >
-                    LST observada · Observado
+                    LST GeoReDUS · Observado
                     <ExternalLink size={10} />
                   </a>
                 ) : (
-                  <span className="rounded-md border border-emerald-500/25 bg-emerald-950/20 px-2 py-1 text-[9px] font-bold uppercase tracking-wide text-emerald-300/70">
-                    LST observada · Referência externa
-                  </span>
+                  <Badge tone="info">LST observada · Observado</Badge>
                 )}
               </div>
             </div>
@@ -1266,11 +1368,14 @@ export default function SimulationPanel({
 
         {activeTab === 'drainage' && (
           <div className="flex flex-col gap-4">
-            <div>
-              <h4 className="font-extrabold text-sm text-zinc-200 flex items-center gap-1.5">
-                <Waves size={16} className="text-cyan-400" /> Déficit de Drenagem Urbana
-              </h4>
-              <p className="text-[11px] text-zinc-400 mt-1">Estima exposição territorial a falhas operacionais da drenagem.</p>
+            <div className="flex flex-wrap items-start justify-between gap-2">
+              <div>
+                <h4 className="font-extrabold text-sm text-zinc-200 flex items-center gap-1.5">
+                  <Waves size={16} className="text-cyan-400" /> Déficit de Drenagem Urbana
+                </h4>
+                <p className="text-[11px] text-zinc-400 mt-1">Estima exposição territorial a falhas operacionais da drenagem.</p>
+              </div>
+              <Badge tone="derived">Simulação · Derivado</Badge>
             </div>
             <div className="flex flex-col gap-2">
               <div className="flex justify-between text-xs text-zinc-300">
@@ -1659,24 +1764,47 @@ export default function SimulationPanel({
           )}
 
           {result.scenario_type === 'ExtremeRainfall' && result.simulation_meta?.flood_timeline && (
-            <div className="rounded-lg border border-sky-500/25 bg-sky-950/15 px-3 py-2.5">
+            <div className="sticky bottom-0 z-10 rounded-lg border border-sky-500/25 bg-sky-950/90 px-3 py-2.5 shadow-lg backdrop-blur-md">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div>
                   <p className="text-[11px] font-semibold text-sky-100">Evolução no tempo</p>
                   <p className="text-[10px] text-zinc-400">
                     Como a mancha sobe e baixa ao longo de {result.simulation_meta.flood_timeline.duration_h} h
-                    (aproximação — não é modelo hidrodinâmico completo).
+                    · {result.simulation_meta.flood_timeline.n_steps} frames (aproximação — não é hidrodinâmica 2D).
                   </p>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => setFloodPlaying((p) => !p)}
-                  className="inline-flex items-center gap-1 rounded border border-sky-500/40 bg-sky-500/10 px-2 py-1 text-[10px] font-bold text-sky-100 hover:bg-sky-500/20"
-                >
-                  {floodPlaying ? <Pause size={12} /> : <Play size={12} />}
-                  {floodPlaying ? 'Pausar' : 'Animar'}
-                </button>
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const peak = result.simulation_meta?.flood_timeline?.peak_index ?? 0;
+                      setFloodPlaying(false);
+                      setFloodTIndex(peak);
+                      applyFloodTimelineFrame(result, peak, false);
+                    }}
+                    className="inline-flex items-center gap-1 rounded border border-zinc-600 bg-zinc-900/80 px-2 py-1 text-[10px] font-bold text-zinc-200 hover:bg-zinc-800"
+                    title="Ir ao pico"
+                  >
+                    <RotateCcw size={12} />
+                    Pico
+                  </button>
+                  <button
+                    type="button"
+                    disabled={!result.simulation_meta?.flood_timeline_features?.length}
+                    onClick={() => setFloodPlaying((p) => !p)}
+                    className="inline-flex items-center gap-1 rounded border border-sky-500/40 bg-sky-500/10 px-2 py-1 text-[10px] font-bold text-sky-100 hover:bg-sky-500/20 disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    {floodPlaying ? <Pause size={12} /> : <Play size={12} />}
+                    {floodPlaying ? 'Pausar' : 'Animar'}
+                  </button>
+                </div>
               </div>
+              {!result.simulation_meta?.flood_timeline_features?.length && (
+                <p className="mt-2 flex items-start gap-1.5 rounded border border-amber-500/30 bg-amber-950/30 px-2 py-1.5 text-[10px] text-amber-100">
+                  <AlertTriangle size={12} className="mt-0.5 shrink-0" />
+                  Frames da mancha não vieram nesta resposta — rode a simulação de novo para animar o mapa.
+                </p>
+              )}
               {(() => {
                 const tl = result.simulation_meta!.flood_timeline!;
                 const step = tl.steps[floodTIndex] || tl.steps[tl.peak_index];
@@ -1692,7 +1820,7 @@ export default function SimulationPanel({
                         const idx = Number(e.target.value);
                         setFloodPlaying(false);
                         setFloodTIndex(idx);
-                        applyFloodTimelineFrame(result, idx);
+                        applyFloodTimelineFrame(result, idx, false);
                       }}
                       className="w-full accent-sky-400"
                     />
@@ -1703,6 +1831,34 @@ export default function SimulationPanel({
                       <span className="font-mono text-zinc-400">
                         até {step?.max_depth_m ?? '—'} m · {step?.flood_patches ?? 0} manchas
                       </span>
+                    </div>
+                    <p className="text-[10px] leading-snug text-zinc-300">
+                      {step?.narrativa
+                        || 'Olhe o mapa à direita — a mancha acompanha este instante.'}
+                    </p>
+                    <div className="flex flex-wrap items-center gap-3 pt-0.5">
+                      <label className="flex items-center gap-1.5 text-[9px] text-zinc-400">
+                        Ritmo
+                        <select
+                          value={floodSpeedMs}
+                          onChange={(e) => setFloodSpeedMs(Number(e.target.value))}
+                          className="rounded border border-zinc-700 bg-zinc-950 px-1.5 py-0.5 text-[10px] text-zinc-200"
+                        >
+                          <option value={800}>Lento</option>
+                          <option value={500}>Normal</option>
+                          <option value={280}>Rápido</option>
+                        </select>
+                      </label>
+                      <label className="flex items-center gap-1.5 text-[9px] text-zinc-400">
+                        <input
+                          type="checkbox"
+                          checked={floodLoop}
+                          onChange={(e) => setFloodLoop(e.target.checked)}
+                          className="accent-sky-400"
+                        />
+                        Loop
+                      </label>
+                      <span className="text-[8px] text-zinc-600">Selo Derivado · triagem ≠ laudo</span>
                     </div>
                   </div>
                 );
@@ -1882,7 +2038,7 @@ export default function SimulationPanel({
           {(lstCompareLoading || heatLstComparison) && activeTab === 'heat_island' && (
             <div className="rounded-lg border border-emerald-500/25 bg-emerald-950/15 p-3">
               <span className="text-[9px] font-extrabold uppercase tracking-wider text-emerald-200 block mb-2">
-                Observado × simulado — LST GeoReDUS vs Sinidu
+                Observado × Derivado — LST GeoReDUS vs cenário Sinidu
               </span>
               {lstCompareLoading && (
                 <p className="text-[10px] text-zinc-400 italic">Consultando LST observada nos bairros críticos…</p>
@@ -1890,14 +2046,14 @@ export default function SimulationPanel({
               {heatLstComparison && !lstCompareLoading && (
                 <>
                   <div className="grid grid-cols-2 gap-2 text-[10px]">
-                    <div className="rounded border border-zinc-800 bg-zinc-950/60 p-2">
-                      <span className="text-zinc-500 block">LST mediana (obs.)</span>
+                    <div className="rounded border border-sky-500/25 bg-zinc-950/60 p-2">
+                      <span className="text-zinc-500 block">LST GeoReDUS · Observado</span>
                       <strong className="text-sky-200">
                         {heatLstComparison.lst_mediana_c != null ? `${heatLstComparison.lst_mediana_c}°C` : '—'}
                       </strong>
                     </div>
-                    <div className="rounded border border-zinc-800 bg-zinc-950/60 p-2">
-                      <span className="text-zinc-500 block">Simulação mediana</span>
+                    <div className="rounded border border-indigo-500/25 bg-zinc-950/60 p-2">
+                      <span className="text-zinc-500 block">Sinidu · Derivado</span>
                       <strong className="text-rose-200">
                         {heatLstComparison.sim_temp_mediana_c != null ? `${heatLstComparison.sim_temp_mediana_c}°C` : '—'}
                       </strong>
@@ -1924,8 +2080,8 @@ export default function SimulationPanel({
                         <thead>
                           <tr className="text-left text-zinc-500 border-b border-zinc-800">
                             <th className="px-2 py-1 font-bold">Bairro</th>
-                            <th className="px-2 py-1 font-bold">LST</th>
-                            <th className="px-2 py-1 font-bold">Sim.</th>
+                            <th className="px-2 py-1 font-bold">LST · Obs.</th>
+                            <th className="px-2 py-1 font-bold">Sinidu · Deriv.</th>
                             <th className="px-2 py-1 font-bold">Δ</th>
                           </tr>
                         </thead>
@@ -1949,7 +2105,7 @@ export default function SimulationPanel({
                   )}
                   {heatLstComparison.limites_metodologicos.length > 0 && (
                     <ul className="mt-2 list-disc space-y-0.5 pl-4 text-[9px] italic text-zinc-500">
-                      {heatLstComparison.limites_metodologicos.slice(0, 3).map((item) => (
+                      {heatLstComparison.limites_metodologicos.map((item) => (
                         <li key={item}>{item}</li>
                       ))}
                     </ul>
@@ -2451,7 +2607,7 @@ export default function SimulationPanel({
                 onClick={async () => {
                   try {
                     const md = await api.buildMethodNote({
-                      tipo: 'chuva',
+                      tipo: simulationTipo(),
                       codigo_ibge: codigoIbge || undefined,
                       simulation_meta: result.simulation_meta as Record<string, unknown>,
                       format: 'markdown',

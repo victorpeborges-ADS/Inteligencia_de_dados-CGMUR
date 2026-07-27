@@ -40,3 +40,31 @@ def test_live_alert_snapshot_aggregates(monkeypatch):
     assert snap["alertas_risco_24h"] == 1
     assert snap["vivo"] is True
     assert snap["fonte"] == "cemaden"
+    assert snap["sem_alerta_ativo_24h"] is False
+    assert snap["interpretacao"] == "alerta_ativo"
+    assert "disclaimer" in snap
+
+
+def test_live_alert_snapshot_sem_alerta():
+    from app.models import AlertaCemaden, MonitoringAlert, Municipio
+
+    db = MagicMock()
+    muni = MagicMock(id=1, codigo_ibge="2611606")
+
+    def _query(model):
+        q = MagicMock()
+        if model is MonitoringAlert:
+            q.filter.return_value.order_by.return_value.limit.return_value.all.return_value = []
+        elif model is Municipio:
+            q.filter.return_value.first.return_value = muni
+        elif model is AlertaCemaden:
+            q.filter.return_value.count.return_value = 0
+        return q
+
+    db.query.side_effect = _query
+    snap = live_alert_snapshot(db, "2611606", hours=24)
+    assert snap["nivel_alerta"] == "VERDE"
+    assert snap["sem_alerta_ativo_24h"] is True
+    assert snap["interpretacao"] == "sem_alerta_monitorado"
+    assert "seguro" not in snap["disclaimer"].lower() or "não é" in snap["disclaimer"].lower()
+

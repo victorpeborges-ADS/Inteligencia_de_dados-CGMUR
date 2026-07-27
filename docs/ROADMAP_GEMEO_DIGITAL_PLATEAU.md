@@ -16,6 +16,11 @@ já é o núcleo do Sinidu, cruzando os dados e sistemas que já temos.
 **Progresso Fase 17 (jul/2026):** **69/70 (~99%)** — MVP fechado. **17e.1 LOD2** migra para a Fase 18
 (exige mesh/telhado real; MapLibre `fill-extrusion` é LOD1).
 
+**Fases posteriores:** **18** (homologação, escala, LOD2 real) · **19** (higiene, robustez de UX, dado
+real no piloto) · **20** (confiança, produto IA, honestidade metodológica, estética) ·
+**21** (**motor preditivo com lastro observacional** — chuva observada, ground truth, solo, drenagem,
+corpos hídricos e validação calibrada).
+
 ---
 
 ## Fase 18 — Homologação, escala e LOD2 real
@@ -77,7 +82,7 @@ já é o núcleo do Sinidu, cruzando os dados e sistemas que já temos.
 | # | Item | Prioridade | Esforço | Como |
 |---|------|-----------|---------|------|
 | 19c.1 | **S2ID curado (6 municípios)** | P1 | M | ✅ Eventos ancorados em Defesa Civil/imprensa para Aracaju, Salvador, Rio, São Paulo e Brasília (antes só Recife). Aplicado via `ensure_s2id_loaded` no sync/onboarding. |
-| 19c.2 | **MapBiomas oficial (6 municípios)** | P1 | M | ⏳ Pipeline já lê CSV oficial (`MAPBIOMAS_STATS_DIR`); pendente **obter e depositar** a estatística Coleção 10.1 por município (não fabricar hectares). |
+| 19c.2 | **MapBiomas oficial (6 municípios)** | P1 | M | ✅ CSV Coleção 10.1 dos 6 pilotos versionado em `scripts/mapbiomas_stats/` (DOI SJZOLT); coletor semeia `MAPBIOMAS_STATS_DIR` e grava `data_quality=oficial` |
 
 ### 19e — Entregas extras (jul/2026)
 
@@ -90,7 +95,7 @@ já é o núcleo do Sinidu, cruzando os dados e sistemas que já temos.
 
 Itens que estavam em 19d foram priorizados na **Fase 20** (abaixo).
 
-**Progresso Fase 19:** **11/12 (~92%)** — 19a+19b+19e ✅; 19c.1 ✅; 19c.2 aguarda CSV oficial MapBiomas.
+**Progresso Fase 19:** **12/12 (100%)** — 19a+19b+19c+19e ✅; 19d migrado para Fase 20.
 
 ---
 
@@ -102,10 +107,10 @@ Itens que estavam em 19d foram priorizados na **Fase 20** (abaixo).
 
 | # | Item | Prioridade | Esforço | Status |
 |---|------|-----------|---------|--------|
-| 20a.1 | **Testes HTTP** dos routers críticos (`simulations`, `monitoring`, `integrations`, export KMZ) | P0 | M | ⏳ |
-| 20a.2 | **Endurecer auth/secrets** (JWT/senhas default, CORS, superfície em Dev Tunnel) | P0 | M | ⏳ |
-| 20a.3 | **Policy gate em ações sensíveis** (agente/UI não ativa plano, SMS ou alerta público sem confirmação humana) | P0 | S | ⏳ |
-| 20a.4 | **Documento único `ESTADO_ATUAL_SINIDU.md`** (tecnologias, features, falhas, ✅/⏳) | P1 | S | ⏳ |
+| 20a.1 | **Testes HTTP** dos routers críticos (`simulations`, `monitoring`, `integrations`, export KMZ) | P0 | M | ✅ `tests/test_http_smoke_critical.py` (status, map-overview, KMZ) |
+| 20a.2 | **Endurecer auth/secrets** (JWT/senhas default, CORS, superfície em Dev Tunnel) | P0 | M | ✅ Boot valida secret/senhas/CORS; compose.prod exige env; checklist Tunnel em `deploy/README` |
+| 20a.3 | **Policy gate em ações sensíveis** (agente/UI não ativa plano, SMS ou alerta público sem confirmação humana) | P0 | S | ✅ `policy_gate` + `confirm=true` em activate/disseminate; UI confirma; agente só leitura |
+| 20a.4 | **Documento único `ESTADO_ATUAL_SINIDU.md`** (tecnologias, features, falhas, ✅/⏳) | P1 | S | ✅ `documentacao/ESTADO_ATUAL_SINIDU.md` |
 
 ### 20b — Agentes de domínio (P0/P1)
 
@@ -113,10 +118,10 @@ Itens que estavam em 19d foram priorizados na **Fase 20** (abaixo).
 
 | # | Item | Prioridade | Esforço | Status |
 |---|------|-----------|---------|--------|
-| 20b.1 | **Unificar `AssistantPanel` × `AgenteSinidu`** (um produto, dois modos ou um só) | P0 | M | ⏳ |
-| 20b.2 | **Contrato rígido de tools** (schema, testes, proibição de inventar nível de alerta / VERDE silencioso) | P0 | M | ⏳ |
-| 20b.3 | **Tools de domínio em falta** (export KMZ/PDF via agente; lacunas do catálogo; “explique esta mancha”) | P1 | M | ⏳ |
-| 20b.4 | **Telemetria de IA** (latência, fallback determinístico, tokens, taxa de tool-error) | P1 | S | ⏳ |
+| 20b.1 | **Unificar `AssistantPanel` × `AgenteSinidu`** (um produto, dois modos ou um só) | P0 | M | ✅ Produto “Agente Sinidu”: FAB Operacional ↔ aba Normativo; banner cruzado; `agenteModo` no store |
+| 20b.2 | **Contrato rígido de tools** (schema, testes, proibição de inventar nível de alerta / VERDE silencioso) | P0 | M | ✅ `execute_tool` → `unknown_tool`/`invalid_args`; alerta vivo com `interpretacao`/`disclaimer`; regra 12 no prompt |
+| 20b.3 | **Tools de domínio em falta** (export KMZ/PDF via agente; lacunas do catálogo; “explique esta mancha”) | P1 | M | ✅ Parcial: `explain_mancha_inundacao` (limites + selo Derivado). Export KMZ/PDF continua na UI (agente só leitura) |
+| 20b.4 | **Telemetria de IA** (latência, fallback determinístico, tokens, taxa de tool-error) | P1 | S | ✅ SSE `done` com `tool_calls`/`tool_errors`/`fallback_deterministic` + `ai_telemetry` no log |
 
 ### 20c — MCP (adapter, não runtime do produto) (P1)
 
@@ -124,9 +129,9 @@ Itens que estavam em 19d foram priorizados na **Fase 20** (abaixo).
 
 | # | Item | Prioridade | Esforço | Status |
 |---|------|-----------|---------|--------|
-| 20c.1 | **Servidor MCP fino** (5–10 tools read-only: overview, layers/meta, diagnostic, monitoring, simulation status, catalog gaps) | P1 | M | ⏳ |
-| 20c.2 | **Auth no MCP** (token/JWT tenant-aware; rate-limit; sem write por padrão) | P0 | M | ⏳ (junto com 20c.1) |
-| 20c.3 | **Documentar uso MCP** para equipe (Cursor config + limites) | P2 | S | ⏳ |
+| 20c.1 | **Servidor MCP fino** (5–10 tools read-only: overview, layers/meta, diagnostic, monitoring, simulation status, catalog gaps) | P1 | M | ✅ `app/mcp` — 7 tools + resource `sinidu://limits` |
+| 20c.2 | **Auth no MCP** (token/JWT tenant-aware; rate-limit; sem write por padrão) | P0 | M | ✅ `SINIDU_MCP_TOKEN`/`JWT` + rate-limit + blocklist writes |
+| 20c.3 | **Documentar uso MCP** para equipe (Cursor config + limites) | P2 | S | ✅ `docs/MCP_EQUIPE.md` |
 
 ### 20d — Ruflo / multiagente de coding (P3 — experimento opcional)
 
@@ -141,9 +146,9 @@ Itens que estavam em 19d foram priorizados na **Fase 20** (abaixo).
 
 | # | Item | Prioridade | Esforço | Status |
 |---|------|-----------|---------|--------|
-| 20e.1 | **MapBiomas Coleção 10.1** nos 6 municípios (CSV oficial em `MAPBIOMAS_STATS_DIR`) | P1 | M | ⏳ (herdado 19c.2) |
-| 20e.2 | **KMZ pacote completo** (mancha + bairros afetados + pontos de contingência, se houver) | P2 | M | ⏳ |
-| 20e.3 | **Unificar narrativa de previsão** (OpenMeteo + CEMADEN + fallback — um selo só na UI) | P1 | M | ⏳ |
+| 20e.1 | **MapBiomas Coleção 10.1** nos 6 municípios (CSV oficial em `MAPBIOMAS_STATS_DIR`) | P1 | M | ✅ Fechado com 19c.2 (`scripts/mapbiomas_stats` + seed automático) |
+| 20e.2 | **KMZ pacote completo** (mancha + bairros afetados + pontos de contingência, se houver) | P2 | M | ✅ Pastas KML `mancha`/`bairros_afetados`/`pontos_contingencia`; `collect_kmz_package_features` |
+| 20e.3 | **Unificar narrativa de previsão** (OpenMeteo + CEMADEN + fallback — um selo só na UI) | P1 | M | ✅ `forecast_source_seal` + `selo_previsao` no Monitor/semáforo; copy “prevista” só quando OpenMeteo |
 
 ### 20h — Honestidade e acurácia metodológica das simulações (P0)
 
@@ -151,13 +156,13 @@ Itens que estavam em 19d foram priorizados na **Fase 20** (abaixo).
 
 | # | Item | Prioridade | Esforço | Status |
 |---|------|-----------|---------|--------|
-| 20h.1 | **Copy e UI alinhados ao `method_note`** — nunca apresentar simulação como “metodologia oficial”; selo Derivado/Estimado visível no painel e no mapa | P0 | S | ⏳ |
-| 20h.2 | **Painel de limites metodológicos** na aba Simulações (o que é / o que não é: não-laudo, não-HEC-RAS, não-alerta CEMADEN) | P0 | S | ⏳ |
-| 20h.3 | **Separar na UI** “cenário Sinidu (Derivado)” vs “LST/observado GeoReDUS (Oficial)” no comparador de calor | P0 | S | ⏳ |
+| 20h.1 | **Copy e UI alinhados ao `method_note`** — nunca apresentar simulação como “metodologia oficial”; selo Derivado/Estimado visível no painel e no mapa | P0 | S | ✅ Badges nas abas; `qualidade_dado` na mancha; nota MD por `simulationTipo()`; RiskPanel mostra `qualidade` |
+| 20h.2 | **Painel de limites metodológicos** na aba Simulações (o que é / o que não é: não-laudo, não-HEC-RAS, não-alerta CEMADEN) | P0 | S | ✅ Bloco colapsável no `SimulationPanel` + `LIMITES_METODOLOGICOS_PAINEL` |
+| 20h.3 | **Separar na UI** “cenário Sinidu (Derivado)” vs “LST/observado GeoReDUS (Oficial)” no comparador de calor | P0 | S | ✅ Headers/tabela Observado × Derivado; limites completos; Badge Observado |
 | 20h.4 | **IDF oficial onde existir** (ANA/INMET/PDF municipal) substituindo tabelas internas `Estimado` | P1 | M | ⏳ |
 | 20h.5 | **Camada de validação** com manchas/estudos oficiais (Defesa Civil/CPRM) quando houver — além do hit-rate pontual S2ID | P1 | M | ⏳ |
-| 20h.6 | **Checklist de linguagem** (demo MCID / apresentação / agente): proibir “oficial”, “homologado”, “preciso como engenharia” sem qualificador | P0 | S | ⏳ |
-| 20h.7 | Documentar teto de acurácia em `DOCUMENTACAO_TECNICA` + `ESTADO_ATUAL` (triagem ≠ laudo) | P1 | S | ⏳ |
+| 20h.6 | **Checklist de linguagem** (demo MCID / apresentação / agente): proibir “oficial”, “homologado”, “preciso como engenharia” sem qualificador | P0 | S | ✅ `docs/CHECKLIST_LINGUAGEM_HONESTIDADE.md` + regras no `SYSTEM_TEMPLATE` do agente |
+| 20h.7 | Documentar teto de acurácia em `DOCUMENTACAO_TECNICA` + `ESTADO_ATUAL` (triagem ≠ laudo) | P1 | S | ✅ §18.1 + `ESTADO_ATUAL_SINIDU.md` |
 
 **Fora do horizonte imediato (não fingir que cabe no MVP):** hidrodinâmica 2D / SWMM / inventário completo de galerias — só com projeto dedicado e dado de rede.
 
@@ -167,8 +172,23 @@ Itens que estavam em 19d foram priorizados na **Fase 20** (abaixo).
 |---|------|-----------|---------|--------|
 | 20f.1 | Layout **mobile/responsivo** + acessibilidade (tablist/foco) | P2 | L | ⏳ |
 | 20f.2 | Quebrar `SimulationPanel` / `MapContainer` (hotspots) | P2 | L | ⏳ |
-| 20f.3 | Playbook **Mac ↔ Windows ↔ Dev Tunnel** (git pull, rebuild, checagem API pública) | P1 | S | ⏳ |
+| 20f.3 | Playbook **Mac ↔ Windows ↔ Dev Tunnel** (git pull, rebuild, checagem API pública) | P1 | S | ✅ `docs/PLAYBOOK_MULTI_MAQUINA.md` |
 | 20f.4 | **Estética sóbria e profissional** (tokens, tipografia, densidades, chrome do shell — sem mudar fluxos) | P1 | M | ⏳ |
+| 20f.5 | **Mapa fixo + scroll só no painel** (Simulações e demais abas split painel\|mapa) | P0 | S | ✅ `h-dvh` + `min-h-0` + lock scroll do documento; só painel `overflow-y-auto` |
+| 20f.6 | **Animação “Evolução no tempo” útil** (hoje ~inútil na demo) | P0 | M | ✅ 13 frames + narrativa; chrome no mapa; ritmo/loop/pico; aviso se sem features |
+
+**Aceite 20f.5:** ao rolar o painel esquerdo (ex.: aba Simulações em Recife), o mapa à direita **não** sobe/desce com a página; header e abas ficam no lugar; só o conteúdo do painel (`overflow-y-auto`) rola. Desktop primeiro; mobile pode empilhar (alinhar com 20f.1).
+
+**Nota técnica (20f.5):** `PlatformApp` já tem `overflow-y-auto` no painel e `overflow-hidden` no mapa, mas o `<main>` usa `min-h-screen` (não altura travada) — o documento inteiro cresce e o browser rola mapa+painel juntos. Corrigir cadeia de altura (`h-screen` / `min-h-0` no flex) sem mudar fluxos.
+
+**Aceite 20f.6** (melhorar o que veio de **17g.1b**, sem fingir HEC-RAS):
+1. **Ligado ao mapa de verdade** — play/slider atualiza a mancha no território de forma óbvia (opacidade/profundidade/fase); se `flood_timeline_features` faltar, avisar em vez de “Animar” morto.
+2. **Controles no mapa** (ou chrome fixo) — relógio `t = X h`, fase (subida/pico/recessão), play/pause/reset; não depender de scrollar o painel para entender o frame (casa com 20f.5).
+3. **Mais frames / ritmo demo** — >5 passos ou interpolação visual; velocidade configurável; loop opcional; destaque do pico.
+4. **Legenda honesta** — “aproximação por escala do DEM (hidrograma triangular) ≠ modelo hidrodinâmico 2D”; selo Derivado.
+5. **Narrativa mínima** — 1 frase por fase (“mancha sobe”, “pico”, “água recua”) alinhada ao frame.
+
+Não é SWMM/unsteady 2D (fora do MVP — ver 20g).
 
 #### Checkpoint de aparência (rollback exato)
 
@@ -203,7 +223,149 @@ Depois: rebuild do frontend (`docker compose ... up -d --build frontend` ou equi
 | Ruflo embutido no produto | Desencaixe de domínio; risco/ops altos |
 | Hidrodinâmica 2D / SWMM / galerias completas | Exige dado de rede + projeto dedicado; fora do MVP de triagem |
 
-**Progresso Fase 20:** **0/~26 itens ativos** — planejada (jul/2026). Ordem sugerida: **20h (honestidade metodológica)** + **20f.4 (com checkpoint)** em paralelo a **20a → 20b → 20e → 20c → 20f**; 20d só se houver dono e 2 semanas de experimento.
+**Progresso Fase 20:** **22/~28 itens ativos (~79%)** — **20a–20c ✅**; **20e ✅**; **20f.3/5/6 ✅**; **20h.1–3/6/7 ✅**. Restam 20f.1/2/4 (UX) e 20h.4/20h.5 (dado externo). Ordem sugerida: **20f.4** (estética) ou pausar em dado externo.
+
+---
+
+## Fase 21 — Motor preditivo com lastro observacional
+
+> **Objetivo:** transformar a predição de alagamento de *score heurístico* em **modelo verificável**, com chuva observada, rótulo real, variáveis físicas do território e incerteza calibrada. A ambição declarada é ser o melhor sistema municipal de simulação e análise preditiva do país — o caminho para isso é **dado e validação**, não sofisticação de algoritmo.
+
+### 21.0 — Diagnóstico que originou a fase (auditoria jul/2026)
+
+| Achado | Evidência | Gravidade |
+|--------|-----------|-----------|
+| **ML em produção é circular** — os 10 artefatos em `backend/ml/artifacts/` são `model_kind: "baseline_synthetic"`: 900 amostras geradas por fórmula logística em `ml/baseline.py`, e o Random Forest aprende essa fórmula | `auc_roc_cv` 0,98–0,99 nos metas; `note` do próprio JSON pede retreino | **Crítica** |
+| **Caminho “full” nunca materializado** — `ml/train.py` + `ml/features.py` sabem cruzar S2ID × precipitação, mas nenhum artefato tem `model_kind: "full"` | ausência de artefato full | **Crítica** |
+| **Sem pluviometria observada persistida** — nenhuma tabela PostGIS de chuva medida; única série densa é reanálise Open-Meteo (ERA5) diária no centróide, em Parquet fora do banco | `ml/precipitation.py` (`OPENMETEO_ARCHIVE`, 2000–2024) | **Alta** |
+| **Ground truth quase inexistente** — 22 eventos curados nos 6 pilotos (2 a 9 por cidade); fora dos pilotos os eventos S2ID são sintéticos | `s2id_collector._events_for_municipality` | **Crítica** |
+| **Série descartada a cada 7 dias** — `MonitoringAlert` e `WeatherForecastCache` são purgados; a base previsão × desfecho nunca acumula | `weather_monitor.cleanup_old_records(days=7)` | **Alta** |
+| **Features desalinhadas treino ↔ inferência** — `precip_7d` na inferência é `precip_72h * 1.15`; no monitor `p48 = (p24 + p72)/2` | `ml/predictor.py`, `services/weather_monitor.py` | **Alta** |
+| **Rótulo *same-day*** — evento no dia seguinte à chuva conta como falso negativo | `ml/features.py` (`label` por `date_only`) | Média |
+| **Sem calibração probabilística** — saída é `predict_proba` bruto; sem Brier, sem curva de confiabilidade, sem hold-out (o modelo final é treinado em 100% dos dados) | `ml/train.py` | **Alta** |
+| **Dois sistemas de risco paralelos e não integrados** — ML (`risk_probability`) vs semáforo (Score/IVC/IRI) | `risk_traffic_light_service.py` | Média |
+
+### 21a — Parar o dano e começar a acumular (P0)
+
+| # | Item | Prioridade | Esforço | Status |
+|---|------|-----------|---------|--------|
+| 21a.1 | **Marcar `baseline_synthetic` como não-produção**: bloquear uso do artefato sintético no Monitor e exibir “score heurístico de chuva”, nunca “probabilidade” | P0 | S | ✅ Monitor só usa ML se `model_kind=full`; UI/agent rotulam heurística |
+| 21a.2 | **Não expor `auc_roc_cv` de modelo sintético** em API/UI (métrica enganosa) | P0 | S | ✅ `public_auc()` / `model_policy.py`; status e predict ocultam AUC sintético |
+| 21a.3 | **Remover purge de 7 dias** para previsão/alertas — passar a arquivar (tabela quente 7d + histórica indefinida) | P0 | S | ✅ `cleanup_old_records` arquiva em `*_archive` (migração 024) |
+| 21a.4 | **Tabela de verificação** `previsao_verificacao`: o que foi previsto, quando, para onde, e o desfecho observado depois (base de acerto do sistema) | P0 | M | ✅ Tabela + gravação no sync; desfecho ainda NULL (preenchimento em 21g/21c) |
+| 21a.5 | **Alinhar features treino ↔ inferência** (fim do `precip_72h * 1.15` e do `p48` médio) | P0 | S | ✅ OpenMeteo `past_days=7`; janelas 24/48/72h + 7d reais; `precip_7d` no predict |
+
+### 21b — Dados observados de verdade (P0)
+
+> O Brasil tem séries públicas profundas que o sistema **não usa**. Validar disponibilidade/formato de cada API antes de comprometer sprint.
+
+| # | Fonte | O que entrega | Prioridade | Esforço | Status |
+|---|-------|---------------|-----------|---------|--------|
+| 21b.1 | **CEMADEN pluviômetros** | chuva a cada 10 min, ~4.700 estações, desde ~2014 — medição real com densidade intra-urbana | P0 | L | 🔶 Snapshot vivo via `getJson2.php` ingerido (178 regs nos 6 pilotos); sync no monitor/scheduler; série histórica mensal ainda exige captcha |
+| 21b.2 | **ANA / HidroWeb (SNIRH)** | séries pluvio **e fluviométricas** de décadas; cota de rio = rótulo contínuo | P0 | L | 🔶 Stub + probe (`ana_hidroweb_collector`); exige `ANA_HIDROWEB_TOKEN` (hidro@ana.gov.br); ingestão completa pendente |
+| 21b.3 | **INMET / BDMEP** | estações horárias, séries longas; base para IDF real (casa com 20h.4) | P1 | M | ⏳ |
+| 21b.4 | **MERGE / CPTEC-INPE** | precipitação por satélite calibrada por pluviômetro, grade ~10 km — cobre onde não há estação | P1 | M | ⏳ |
+| 21b.5 | **ANADEM / MERIT-Hydro** | DEM hidrologicamente condicionado — substitui SRTM cru no D8 (hoje só há *fill* interno) | P0 | M | ⏳ |
+| 21b.6 | **Tabela `serie_pluviometrica_observada`** (`estacao_id`, `timestamp`, `precip_mm`, `fonte`) no PostGIS — fim do Parquet solto | P0 | M | ✅ Migração 025 + upsert; Open-Meteo ERA5 persiste como `reanalise`; CEMADEN CSV como `oficial` |
+
+### 21c — Ground truth denso (P0, contínuo)
+
+| # | Item | Prioridade | Esforço | Status |
+|---|------|-----------|---------|--------|
+| 21c.1 | **Ingerir S2ID nacional completo** (FIDE / reconhecimentos) — centenas a milhares de eventos reais, em vez dos 22 curados | P0 | L | 🔶 Coletor CSV MIDR (`s2id_nacional_collector` + `POST /monitoring/sync/s2id-nacional`); filtra COBRADE hidrológico nos 6 pilotos → `oficial` |
+| 21c.2 | **Parar de usar evento S2ID sintético como rótulo** — separar `data_quality` `oficial` de `estimado` e nunca treinar no segundo | P0 | S | ✅ Coluna `data_quality` + filtro em `ml/features.py`; treino `full` exige ≥1 positivo oficial |
+| 21c.3 | **Rótulo contínuo por cota de rio** (ANA) onde houver estação — muito superior ao binário | P1 | M | ⏳ |
+| 21c.4 | **Canal de registro em campo** pela Defesa Civil municipal (ponto/polígono + data/hora + severidade) — converte usuário em fonte de dado | P1 | L | ⏳ |
+| 21c.5 | **Tabela `evento_alagamento_observado`** (geometria, início/fim, severidade, fonte, chuva acumulada associada) | P0 | M | ✅ Tabela + sync automático a partir de S2ID `oficial_curado` |
+
+### 21d — Variáveis físicas do modelo (P0/P1)
+
+> Escopo pedido explicitamente: além do **volume** de chuva, o modelo deve considerar **duração/intensidade**, **corpos hídricos**, **séries históricas**, **suscetibilidade por região da cidade**, **tipo de solo** e **capacidade de escoamento de água/esgoto**. A tabela abaixo separa o que **já existe** (e onde) do que **falta**.
+>
+> Ponto central: hoje o ML usa **8 features** (`precip_24h/48h/72h/7d`, `mes_do_ano`, `impermeabilizacao_pct`, `cobertura_vegetal_pct`, `declividade_media`) — **nenhuma** delas representa corpo hídrico, solo, drenagem, suscetibilidade local ou intensidade horária. Várias dessas variáveis já existem na **simulação física** e simplesmente não chegam ao modelo.
+
+| # | Variável | Estado hoje | Alvo | Prior. | Esforço | Status |
+|---|----------|-------------|------|--------|---------|--------|
+| 21d.1 | **Duração e intensidade da chuva** | simulação física usa `HYDROGRAPH_DURATION_H = 6.0` **fixo** e `duracao_h` (0,25–6 h) na drenagem; o **ML só vê acumulados** | features de **intensidade máxima (mm/h e mm/10 min)**, **duração do evento**, e **razão intensidade/IDF** para o tempo de retorno — porque 60 mm em 1 h ≠ 60 mm em 24 h | **P0** | M | 🔶 `duracao_chuva_h`, `intensidade_media_mm_h`, `intensidade_pico_proxy_mm_h`, `razao_intensidade_idf_tr2` (Open-Meteo hours + IDF TR2); mm/10 min horária ainda pendente |
+| 21d.2 | **Corpos hídricos** | máscara da classe MapBiomas `Corpo d'água` com buffer proporcional à chuva (`_reinforce_water_bodies`) | **hidrografia oficial** (ANA Base Ottocodificada / IBGE) + **HAND** (*Height Above Nearest Drainage*) e distância à drenagem como features — HAND é o preditor isolado mais forte de inundação na literatura | **P0** | L | 🔶 HAND via DEM/D8 (`hand_service`) → `hand_media_m` + `pct_hand_lt_5m` no vetor ML; hidrografia oficial ANA ainda pendente |
+| 21d.3 | **Tipo de solo** | **ausente por completo** — zero referência a pedologia, grupo hidrológico ou *Curve Number* no código | **grupo hidrológico A/B/C/D** (Embrapa/IBGE pedologia ou SoilGrids 250 m) → cruzar com uso do solo MapBiomas para derivar **SCS-CN** e escoamento por célula | **P0** | L | 🔶 SCS-CN proxy MapBiomas × grupo C default (`scs_cn_service`) → `curve_number`; SoilGrids/Embrapa pendente |
+| 21d.4 | **Capacidade de escoamento (água/esgoto/drenagem)** | proxy municipal em `drainage_capacity_service`: `indice_drenagem` SNIS ou cobertura, *clamp* 8–50 mm/h, eficiência fixa 0,85 | **espacializar por bairro**, usar módulo de drenagem do SNIS/SINISA quando existir, permitir **cadastro municipal de galerias** por upload, e expor saturação como feature | **P0** | M | 🔶 Features `capacidade_drenagem_mm_h` + `saturacao_drenagem_40mm`; espacialização por bairro (impermeab./água); inventário de galerias pendente |
+| 21d.5 | **Suscetibilidade por região da cidade** | IRI heurístico por bairro; probabilidade de bairro é *blend* `municipal_prob * 0,55 + iri * 0,45` | **cartas de suscetibilidade e setores de risco CPRM** + suscetibilidade derivada de HAND/TWI; **modelo treinado por bairro**, não *blend* de número municipal | **P0** | L | 🔶 `suscetibilidade_hand` + `twi_media` no vetor; `suscetibilidade_local` por bairro (HAND×imperm.×água); ranking usa susc+IRI; CPRM e modelo-por-bairro → 21f.2 |
+| 21d.6 | **Séries históricas** | reanálise Open-Meteo diária (Parquet), MapBiomas em 6 anos-âncora, PIB ~22 anos; sem chuva observada | séries observadas de 21b + **estado antecedente do solo** (chuva acumulada 5/10/30 d), **sazonalidade** e **tendência de impermeabilização** entre anos-âncora | **P0** | M | 🔶 `precip_5d/10d/30d` + `sazonalidade_sin/cos` + `tendencia_impermeabilizacao_pp_a` (MapBiomas); OpenMeteo `past_days=30` na inferência |
+| 21d.7 | **Janela temporal com defasagem** | rótulo *same-day*, sem *lag* | features de D-3 a D+1 e rótulo com janela de tolerância (evento no dia seguinte deixa de ser falso negativo) | **P0** | S | ✅ Rótulo positivo se evento em D−3…D+1 (`LABEL_LAG_*`) |
+| 21d.8 | **Arquitetura híbrida (física → ML)** | simulação física e ML são **sistemas desconexos** | saída da simulação (lâmina, área alagada, rede saturada) entra como **feature** do ML; ML calibra parâmetros da física contra evento observado | P1 | L | ⏳ |
+| 21d.9 | **Nível de rio / inundação fluvial** | ausente — só chuva | cota observada ANA como variável e como rótulo; separar **alagamento pluvial** de **inundação fluvial** (fenômenos distintos, hoje tratados como um) | P1 | M | ⏳ |
+
+### 21e — Protocolo de validação (P0 — não opcional)
+
+> É o que separa “sistema sério” de “demo com AUC”. Deve rodar **em paralelo** a 21d, nunca depois.
+
+| # | Item | Prioridade | Esforço | Status |
+|---|------|-----------|---------|--------|
+| 21e.1 | **Hold-out temporal real** (treinar até 2021, validar 2022–2024) e **nunca refitar no conjunto de teste** | P0 | M | ✅ `ml/validation.py` + treino só no split de treino |
+| 21e.2 | **Brier score + curva de confiabilidade** publicados junto de qualquer probabilidade (AUC deixa de ser métrica única) | P0 | M | ✅ Brier modelo/baselines + `reliability_curve` no meta |
+| 21e.3 | **Calibração explícita** (Platt ou isotônica): “70%” tem de significar que ocorreu em ~70% dos casos | P0 | M | ✅ Isotônica (`CalibratedClassifierCV`) quando há rótulos suficientes |
+| 21e.4 | **Baselines obrigatórios** — “chuva > X mm” e climatologia sazonal. **Se o modelo não bate o limiar simples, é descartado** | P0 | S | ✅ Compara Brier; `full_below_baseline` fora de produção |
+| 21e.5 | **Validação espacial** — hit-rate da mancha contra evento georreferenciado (integra 20h.5) | P1 | M | ✅ `evaluate_spatial_hit_rate` (zona suscetibilidade × eventos oficiais); meta + model card + `/flood-risk/status` |
+| 21e.6 | **Card de modelo** por município (dados, período, features, métricas, limitações) versionado no repo | P1 | M | ✅ `flood_model_{ibge}_card.md` gerado no treino |
+
+### 21f — Modelo e simulação (P1 — só depois de 21b/21c/21e)
+
+| # | Item | Prioridade | Esforço | Status |
+|---|------|-----------|---------|--------|
+| 21f.1 | **Gradient boosting** (LightGBM/XGBoost) substituindo Random Forest — melhor em tabular desbalanceado e roda bem em CPU | P1 | M | ✅ `HistGradientBoosting` sklearn (`model_factory`, ML v1.4); fallback RF; importâncias por permutação |
+| 21f.2 | **Modelo por bairro** com features locais (HAND, CN, drenagem, suscetibilidade) | P1 | L | ⏳ |
+| 21f.3 | **Horizonte explícito** (D+1, D+2, D+3) em vez de classificação pontual sem horizonte | P1 | M | ✅ `ml/horizon.py` + `horizons[]` na predicao; cards D+1/2/3 na UI |
+| 21f.4 | **Intervalo de incerteza** na saída, não número único | P1 | M | ✅ Dispersão entre árvores RF → `uncertainty` (IC≈90%); fallback margem heurística |
+| 21f.5 | **Integrar ML e semáforo** num único modelo de risco documentado (fim dos dois sistemas paralelos) | P1 | M | ✅ `unified_risk_model` + componente `ml_preditivo` no painel; status = max(estrutural, ML full); heurística capada em AMARELO; `modelo_risco` na API |
+
+### 21g — Produto e confiança visível (P1)
+
+| # | Item | Prioridade | Esforço | Status |
+|---|------|-----------|---------|--------|
+| 21g.1 | **“Acertamos Y% das últimas Z previsões”** na UI, alimentado por `previsao_verificacao` — é isso que ganha confiança de gestor, não AUC | P1 | M | ✅ `previsao_verificacao_service` (backfill desfecho + acerto); card no Monitor; dashboard `acerto_previsoes` |
+| 21g.2 | **Previsão de impacto, não de chuva**: bairros afetados, população exposta, medidas cabíveis na capacidade fiscal | P1 | L | ✅ `flood_impact_service` + `impact` na predicao; card na Análise Preditiva (pop. × CAPAG × medidas) |
+| 21g.3 | **Explicabilidade por variável** (contribuição de chuva, solo, drenagem, HAND) na resposta | P1 | M | ✅ `ml/explainability.py` (domínios RF); `explanation` na predicao; barras na Análise Preditiva |
+
+### Critérios de aceite da Fase 21 (travados antes de codar)
+
+1. Existe **≥ 1 modelo com `model_kind != baseline_synthetic`**, treinado em rótulo observado.
+2. **Brier score e curva de confiabilidade** publicados, com hold-out temporal.
+3. O modelo **bate o baseline “chuva > X mm”** — se não bater, é descartado, não maquiado.
+4. `previsao_verificacao` com **N previsões e desfechos** reais registrados.
+5. Nenhuma tela apresenta saída de modelo sintético como probabilidade.
+6. As variáveis de 21d.1–21d.6 estão **de fato no vetor de features**, não apenas na simulação física.
+
+### Posicionamento estratégico
+
+Competir com o **CEMADEN em *nowcasting*** de chuva é perder: eles têm radar, rede nacional e mandato. O nicho defensável e desocupado é **previsão de impacto em escala municipal e intra-urbana**, cruzando clima com vulnerabilidade social, capacidade fiscal e infraestrutura, com incerteza honesta e ação recomendada.
+
+### Teto de acurácia (explícito)
+
+Sem inventário de galerias e sem radar meteorológico, **não se chega a acurácia de projeto de engenharia**. Chega-se a **priorização confiável e verificada** — que é mais do que qualquer painel municipal brasileiro oferece hoje. Este teto deve constar da documentação técnica (casa com 20h.7).
+
+### Fora de escopo da Fase 21
+
+| Item | Motivo |
+|------|--------|
+| *Deep learning* em imagem de satélite | Sem GPU (Mac mini 2018, UHD 630); ganho marginal vs tabular |
+| Hidrodinâmica 2D / SWMM nacional | Exige dado de rede + projeto dedicado (ver 20g) |
+| Treinar os 5.570 municípios | Aprofundar nos 6 pilotos até ser cientificamente defensável e só então escalar |
+| Novos cenários de simulação | Congelados até os existentes estarem validados |
+
+**Progresso Fase 21:** **~31/~40 itens (~78%)** — **21a ✅**; **21d 🔶/✅**; **21e ✅**; **21g ✅**; **21f.1/21f.3/21f.4/21f.5 ✅**; **21b.1/21b.2/21c.1 🔶**. Próximo: **21f.2** modelo por bairro; CSVs S2ID + retreino; dados INMET/MERGE/ANADEM.
+
+### Quanto falta (visão rápida — jul/2026)
+
+| Fase | Progresso | O que trava o fechamento |
+|------|-----------|--------------------------|
+| 17 | ~99% | LOD2 UI pausada (qualidade) |
+| 18 | ~78% | LOD2/3D Tiles pausados |
+| 19 | **100%** | Fechada (19d migrado → 20) |
+| **20** | **~79%** | **~6 itens** — 20f.1/2/4 UX; 20h.4/5 dado externo; 20d opcional |
+| **21** | **~78%** | **~8–17 itens** — 21f.2 + dados externos + 🔶 parciais |
+
+**Para “terminar o roadmap ativo” (17–21):** ainda faltam **~28–35 itens** (⏳+🔶). Descontando pausados/opcionais/credencial externa (~14), núcleo de código ≈ **~18 itens** (20f UX + 20h dado externo + **21f.2** + parciais 21b/c).
 
 ---
 

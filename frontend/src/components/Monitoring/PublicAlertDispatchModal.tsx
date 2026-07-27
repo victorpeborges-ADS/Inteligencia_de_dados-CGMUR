@@ -72,6 +72,7 @@ export default function PublicAlertDispatchModal({ open, onClose, codigoIbge, on
         nivel,
         mensagem,
         canais: selected,
+        confirm: true,
       });
       setResult(res);
       onDone?.(res);

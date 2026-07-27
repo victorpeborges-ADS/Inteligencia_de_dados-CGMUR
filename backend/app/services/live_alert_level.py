@@ -60,6 +60,24 @@ def live_alert_snapshot(db: Session, codigo_ibge: str, *, hours: int = 24) -> di
     elif camada_cemaden and nivel == "VERDE":
         fonte = "camada_cemaden_sem_alerta_24h"
 
+    sem_alerta = len(alerts) == 0 and len(cemaden) == 0
+    interpretacao = (
+        "sem_alerta_monitorado"
+        if sem_alerta and nivel == "VERDE"
+        else ("alerta_ativo" if nivel != "VERDE" else "monitoramento_verde")
+    )
+    disclaimer = (
+        "VERDE = ausência de alerta monitorado nas últimas 24h — "
+        "não é laudo, nem 'município seguro', nem alerta oficial CEMADEN."
+        if interpretacao == "sem_alerta_monitorado"
+        else (
+            "Nível derivado de alertas monitorados (CEMADEN/risco interno). "
+            "Não substitui comunicação oficial da Defesa Civil."
+            if nivel != "VERDE"
+            else "Nível VERDE no monitoramento — confirme no Monitor / CEMADEN."
+        )
+    )
+
     return {
         "codigo_ibge": code,
         "nivel_alerta": nivel,
@@ -70,4 +88,7 @@ def live_alert_snapshot(db: Session, codigo_ibge: str, *, hours: int = 24) -> di
         "fonte": fonte,
         "vivo": nivel != "VERDE" or len(cemaden) > 0,
         "titulo_recente": alerts[0].titulo if alerts else None,
+        "sem_alerta_ativo_24h": sem_alerta,
+        "interpretacao": interpretacao,
+        "disclaimer": disclaimer,
     }

@@ -402,6 +402,21 @@ Consolidação do que **ainda falta**, cruzando roadmap, `PLANO_LACUNAS_INSTITUC
 > unificação dos agentes de domínio, MCP fino read-only para a equipe, MapBiomas oficial no
 > piloto, estética sóbria (com checkpoint de UI), playbook Dev Tunnel. Ruflo = spike opcional
 > **fora** do produto (P3), não embutido no compose.
+> Progresso ~79%: 20a–20c ✅; 20e ✅; 20f.3/5/6 ✅ (mapa fixo + animação temporal); 20h ✅ exceto 20h.4/20h.5. Restam 20f.1/2/4.
+
+> **Fase 21 (jul/2026) — Motor preditivo com lastro observacional.** Plano detalhado em
+> `docs/ROADMAP_GEMEO_DIGITAL_PLATEAU.md`. Origem: auditoria constatou que os modelos em
+> produção são **`baseline_synthetic`** (o Random Forest aprende uma fórmula do próprio código,
+> AUC ~0,99 sem valor preditivo), não há **pluviometria observada persistida**, o ground truth
+> são **22 eventos S2ID curados** e a série de previsão é **descartada a cada 7 dias**.
+> A fase cobre: parar o dano e acumular verificação (21a), ingerir chuva observada
+> CEMADEN/ANA/INMET/MERGE + DEM condicionado (21b), ground truth denso com S2ID nacional e
+> registro de campo (21c), **variáveis físicas do modelo** — duração/intensidade da chuva,
+> corpos hídricos/HAND, **tipo de solo (SCS-CN)**, capacidade de drenagem espacializada,
+> suscetibilidade por bairro, séries históricas (21d), protocolo de validação com hold-out
+> temporal, Brier e calibração (21e), modelo por bairro com horizonte e incerteza (21f) e
+> confiança visível na UI (21g). **Ordem é obrigatória** — pular etapa reproduz o problema atual.
+> Progresso ~78%: 21a ✅; 21d 🔶/✅; 21e ✅; 21g ✅; 21f.1/21f.3/21f.4/21f.5 ✅; 21b.1/21b.2/21c.1 🔶.
 
 ### A. Integrações institucionais (dependem de convênio/credencial) — P2/P3
 | # | Fonte | Situação atual | O que falta |

@@ -136,10 +136,75 @@ def extract_bairro_features(db: Session, codigo_ibge: str, force: bool = False) 
             "water_proximity": 0.1,
         }])
 
+    # Capacidade de drenagem espacializada por bairro (21d.4)
+    from app.services.drainage_capacity_service import (
+        bairro_drainage_capacity_mm_h,
+        municipal_drainage_features,
+    )
+    from app.services.scs_cn_service import bairro_cn_proxy, municipal_cn_features
+
+    drain_muni = municipal_drainage_features(db, codigo_ibge)
+    cap_muni = float(drain_muni["capacidade_drenagem_mm_h"])
+    df["capacidade_drenagem_mm_h"] = [
+        bairro_drainage_capacity_mm_h(
+            cap_muni,
+            impermeabilizacao_pct=float(r.impermeabilizacao_pct),
+            water_proximity=float(r.water_proximity),
+        )
+        for r in df.itertuples()
+    ]
+    df["curve_number"] = [
+        bairro_cn_proxy(
+            float(r.impermeabilizacao_pct),
+            float(r.cobertura_vegetal_pct),
+            float(r.water_proximity),
+        )
+        for r in df.itertuples()
+    ]
+
+    # HAND municipal (DEM) — custo alto; cache no municipal.json
+    hand = {
+        "hand_media_m": 12.0,
+        "pct_hand_lt_5m": 15.0,
+        "twi_media": 8.0,
+        "suscetibilidade_hand": 0.35,
+    }
+    try:
+        from app.services.hand_service import municipal_hand_features
+
+        hand = municipal_hand_features(db, codigo_ibge)
+    except Exception as exc:
+        logger.warning("HAND %s: %s — defaults", codigo_ibge, exc)
+
+    from ml.susceptibility import bairro_suscetibilidade
+
+    df["suscetibilidade_local"] = [
+        bairro_suscetibilidade(
+            float(r.impermeabilizacao_pct),
+            float(r.water_proximity),
+            float(r.declividade_media),
+            hand_media_m=float(hand["hand_media_m"]),
+            pct_hand_lt_5m=float(hand["pct_hand_lt_5m"]),
+        )
+        for r in df.itertuples()
+    ]
+
+    cn_muni = municipal_cn_features(db, codigo_ibge)
+    tendencia = _impermeabilizacao_trend_pp_a(db, muni.id, codigo_ibge)
+
     municipal_row = {
-        "impermeabilizacao_pct": round(df["impermeabilizacao_pct"].mean(), 2),
-        "cobertura_vegetal_pct": round(df["cobertura_vegetal_pct"].mean(), 2),
-        "declividade_media": round(df["declividade_media"].mean(), 2),
+        "impermeabilizacao_pct": round(float(df["impermeabilizacao_pct"].mean()), 2),
+        "cobertura_vegetal_pct": round(float(df["cobertura_vegetal_pct"].mean()), 2),
+        "declividade_media": round(float(df["declividade_media"].mean()), 2),
+        "water_proximity": round(float(df["water_proximity"].mean()), 3),
+        "hand_media_m": float(hand["hand_media_m"]),
+        "pct_hand_lt_5m": float(hand["pct_hand_lt_5m"]),
+        "twi_media": float(hand.get("twi_media", 8.0)),
+        "suscetibilidade_hand": float(hand.get("suscetibilidade_hand", 0.35)),
+        "curve_number": float(cn_muni["curve_number"]),
+        "capacidade_drenagem_mm_h": float(drain_muni["capacidade_drenagem_mm_h"]),
+        "saturacao_drenagem_40mm": float(drain_muni["saturacao_drenagem_40mm"]),
+        "tendencia_impermeabilizacao_pp_a": float(tendencia),
     }
 
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -149,3 +214,67 @@ def extract_bairro_features(db: Session, codigo_ibge: str, force: bool = False) 
     import json as json_lib
     meta_path.write_text(json_lib.dumps(municipal_row, ensure_ascii=False), encoding="utf-8")
     return df
+
+
+def _impermeabilizacao_trend_pp_a(db: Session, municipio_id: int, codigo_ibge: str) -> float:
+    """Tendência de impermeabilização em pp/ano (MapBiomas stats ou cobertura)."""
+    try:
+        from app.models import MapBiomasMunicipalStat
+
+        rows = (
+            db.query(MapBiomasMunicipalStat.ano, MapBiomasMunicipalStat.area_ha)
+            .filter(
+                MapBiomasMunicipalStat.codigo_ibge == codigo_ibge,
+                MapBiomasMunicipalStat.classe_uso.in_(["Área Urbana", "Area Urbana", "Infraestrutura Urbana"]),
+            )
+            .order_by(MapBiomasMunicipalStat.ano)
+            .all()
+        )
+        by_year: dict[int, float] = {}
+        for ano, area in rows:
+            by_year[int(ano)] = by_year.get(int(ano), 0.0) + float(area or 0)
+        if len(by_year) >= 2:
+            years = sorted(by_year)
+            y0, y1 = years[0], years[-1]
+            span = max(1, y1 - y0)
+            # Converte ha → pp relativo à área do primeiro ano (proxy de tendência)
+            a0 = max(by_year[y0], 1.0)
+            delta_pp = 100.0 * (by_year[y1] - by_year[y0]) / a0
+            return round(delta_pp / span, 3)
+    except Exception as exc:
+        logger.debug("MapBiomas trend stats %s: %s", codigo_ibge, exc)
+
+    try:
+        from app.models import CoberturaVegetalMapBiomas
+
+        years = [
+            int(y)
+            for (y,) in db.query(CoberturaVegetalMapBiomas.ano)
+            .filter(CoberturaVegetalMapBiomas.municipio_id == municipio_id)
+            .distinct()
+            .all()
+            if y is not None
+        ]
+        if len(years) < 2:
+            return 0.0
+        y0, y1 = min(years), max(years)
+        span = max(1, y1 - y0)
+
+        def _urban_frac(ano: int) -> float:
+            urban = db.query(func.sum(func.ST_Area(CoberturaVegetalMapBiomas.geom))).filter(
+                CoberturaVegetalMapBiomas.municipio_id == municipio_id,
+                CoberturaVegetalMapBiomas.ano == ano,
+                CoberturaVegetalMapBiomas.classe_uso == "Área Urbana",
+            ).scalar()
+            total = db.query(func.sum(func.ST_Area(CoberturaVegetalMapBiomas.geom))).filter(
+                CoberturaVegetalMapBiomas.municipio_id == municipio_id,
+                CoberturaVegetalMapBiomas.ano == ano,
+            ).scalar()
+            if not total:
+                return 0.0
+            return 100.0 * float(urban or 0) / float(total)
+
+        return round((_urban_frac(y1) - _urban_frac(y0)) / span, 3)
+    except Exception as exc:
+        logger.debug("MapBiomas trend geom %s: %s", codigo_ibge, exc)
+        return 0.0

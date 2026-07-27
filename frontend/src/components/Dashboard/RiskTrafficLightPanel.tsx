@@ -25,6 +25,7 @@ import {
 } from '@/utils/api';
 import { useAppStore } from '@/stores/useAppStore';
 import TermTooltip from '@/components/UI/TermTooltip';
+import Badge, { qualityToBadgeTone } from '@/design-system/components/Badge';
 
 /** Presets locais — evita import circular/pesado de LayerPanel. */
 const RISK_MAP_PRESETS = {
@@ -284,7 +285,8 @@ export default function RiskTrafficLightPanel({
     panel.componentes.iri,
     panel.componentes.vm,
     panel.componentes.alerta,
-  ];
+    panel.componentes.ml_preditivo,
+  ].filter(Boolean) as RiskPanelResponse['componentes']['score'][];
   const resumo = panel.exposicao_resumo;
 
   return (
@@ -386,7 +388,7 @@ export default function RiskTrafficLightPanel({
         </div>
       )}
 
-      <div className="mt-3 grid grid-cols-2 gap-2 md:grid-cols-3 xl:grid-cols-5">
+      <div className="mt-3 grid grid-cols-2 gap-2 md:grid-cols-3 xl:grid-cols-6">
         {comps.map((c) => {
           const cs = NIVEL_STYLE[c.nivel] ?? NIVEL_STYLE.VERDE;
           return (
@@ -409,9 +411,14 @@ export default function RiskTrafficLightPanel({
                 )}
               </p>
               <p className="mt-0.5 truncate text-sm font-black text-zinc-100">{formatValor(c)}</p>
-              <span className={`mt-1 inline-block rounded border px-1.5 py-0.5 text-[8px] font-bold uppercase ${cs.badge}`}>
-                {c.label}
-              </span>
+              <div className="mt-1 flex flex-wrap items-center gap-1">
+                <span className={`inline-block rounded border px-1.5 py-0.5 text-[8px] font-bold uppercase ${cs.badge}`}>
+                  {c.label}
+                </span>
+                {c.qualidade && (
+                  <Badge tone={qualityToBadgeTone(c.qualidade)}>{c.qualidade}</Badge>
+                )}
+              </div>
             </div>
           );
         })}

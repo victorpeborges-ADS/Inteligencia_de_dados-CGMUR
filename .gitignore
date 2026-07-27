@@ -66,3 +66,6 @@ backend/ml/artifacts/_ml_data/
 
 # Relatório gerado pelos scripts Avaliar-SINIDU.*
 scripts/avaliacao_ultimo_relatorio.txt
+
+# CEMADEN snapshots — JSON bruto (CSV fica versionável)
+scripts/cemaden_pluvio/downloads/*_raw.json

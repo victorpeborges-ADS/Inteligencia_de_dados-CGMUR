@@ -856,6 +856,25 @@ curl http://localhost:8000/api/v1/assistant/municipal/2611606/context
 
 ## 18. Limitações e considerações
 
+### 18.1 Teto de acurácia — triagem ≠ laudo (20h.7)
+
+O Sinidu+Clima **prioriza e ensina contingência**. Não substitui:
+
+1. Projeto hidráulico / laudo de engenharia / perícia judicial  
+2. Modelagem hidrodinâmica 2D (HEC-RAS, SWMM) nem inventário completo de galerias  
+3. Alerta oficial CEMADEN ou acionamento normativo da Defesa Civil  
+4. IDF oficial municipal/ANA/INMET — tabelas internas são `Estimado` até 20h.4  
+
+**O que o produto pode afirmar com honestidade:** manchas e scores com selo
+(Oficial | Observado | Estimado | Derivado); hit-rate pontual contra S2ID quando houver
+geometria; comparação LST observada (GeoReDUS) × cenário Sinidu (Derivado).
+
+**Teto sem dados de rede / radar / cota de rio:** ordem de grandeza e ranking de bairros —
+não profundidade calibrada metrificada para obra. Elevação do teto = Fase 21 (lastro
+observacional) + 20h.4/20h.5 (IDF e manchas oficiais).
+
+Ver também: `ESTADO_ATUAL_SINIDU.md` e `docs/CHECKLIST_LINGUAGEM_HONESTIDADE.md`.
+
 ### Hardware de referência
 
 Desenvolvido e testado em Mac mini 2018 (Intel i5, 32 GB RAM). Ollama limitado a 12 GB no Docker. Encoding e processamento DEM são CPU-bound.

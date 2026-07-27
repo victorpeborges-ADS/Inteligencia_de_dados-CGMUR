@@ -11,7 +11,19 @@ from app.services.simulation_confidence_service import (
 )
 
 
-def test_seal_lidar_alta():
+def test_stamp_simulation_geojson_quality():
+    from app.services.simulation_confidence_service import stamp_simulation_geojson_quality
+
+    fc = {
+        "type": "FeatureCollection",
+        "features": [
+            {"type": "Feature", "properties": {"layer_type": "flood_band"}, "geometry": None},
+            {"type": "Feature", "properties": {"layer_type": "other"}, "geometry": None},
+        ],
+    }
+    stamp_simulation_geojson_quality(fc, qualidade="Estimado")
+    assert fc["features"][0]["properties"]["qualidade_dado"] == "Estimado"
+    assert "qualidade_dado" not in fc["features"][1]["properties"]
     seal = build_confidence_seal(
         {
             "dem_available": True,

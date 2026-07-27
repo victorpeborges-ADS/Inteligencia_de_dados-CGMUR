@@ -199,7 +199,37 @@ export default function PlatformApp({ initialTab }: PlatformAppProps) {
   const [scoreConfiabilidade, setScoreConfiabilidade] = useState<string | null>(null);
   const [simulating, setSimulating] = useState(false);
   const [municipioLoadStep, setMunicipioLoadStep] = useState(0);
+  const [floodClock, setFloodClock] = useState<{
+    t_h: number;
+    fase: string;
+    narrativa: string;
+    playing: boolean;
+    max_depth_m: number | null;
+    flood_patches: number | null;
+    has_features: boolean;
+    duration_h: number;
+  } | null>(null);
   const requestReport = useAppStore((s) => s.requestReport);
+
+  // 20f.5 — trava scroll do documento para o mapa não subir com a página
+  useEffect(() => {
+    const html = document.documentElement;
+    const body = document.body;
+    const prevHtml = html.style.overflow;
+    const prevBody = body.style.overflow;
+    const prevHtmlH = html.style.height;
+    const prevBodyH = body.style.height;
+    html.style.overflow = 'hidden';
+    body.style.overflow = 'hidden';
+    html.style.height = '100%';
+    body.style.height = '100%';
+    return () => {
+      html.style.overflow = prevHtml;
+      body.style.overflow = prevBody;
+      html.style.height = prevHtmlH;
+      body.style.height = prevBodyH;
+    };
+  }, []);
 
   useEffect(() => {
     if (initialTab) {
@@ -303,6 +333,7 @@ export default function PlatformApp({ initialTab }: PlatformAppProps) {
     setSimGeoJSON(null);
     setSimContours(null);
     setSimFlowPaths(null);
+    setFloodClock(null);
     setActiveLayers([...DEFAULT_MAP_LAYERS]);
 
     const stepTimer = window.setInterval(() => {
@@ -373,6 +404,7 @@ export default function PlatformApp({ initialTab }: PlatformAppProps) {
     setSimGeoJSON(null);
     setSimContours(null);
     setSimFlowPaths(null);
+    setFloodClock(null);
     const center = await resolveMunicipalityCenter(selectedMunicipio);
     setMapFocus(center);
     setZoom(12);
@@ -580,7 +612,7 @@ export default function PlatformApp({ initialTab }: PlatformAppProps) {
   };
 
   return (
-    <main className="min-h-screen bg-background text-foreground flex flex-col font-sans select-none">
+    <main className="flex h-dvh max-h-dvh flex-col overflow-hidden bg-background font-sans text-foreground select-none">
       {/* Premium Header */}
       <header
         className={`shrink-0 border-b border-border bg-card/65 backdrop-blur-md px-6 flex items-center justify-between z-50 transition-all duration-300 ${
@@ -717,8 +749,8 @@ export default function PlatformApp({ initialTab }: PlatformAppProps) {
         </div>
       )}
 
-      {/* Workspace Area */}
-      <div className="flex-1 flex overflow-hidden">
+      {/* Workspace Area — altura travada: só o painel esquerdo rola (20f.5) */}
+      <div className="flex min-h-0 flex-1 overflow-hidden">
         
         {/* Left Sidepanel (Glassmorphism, 40% width) */}
         <section
@@ -798,6 +830,7 @@ export default function PlatformApp({ initialTab }: PlatformAppProps) {
                 key={selectedMunicipio}
                 onSimulate={handleSimulate}
                 onClear={handleClearSimulation}
+                onFloodClockChange={setFloodClock}
                 onSimulatingChange={setSimulating}
                 codigoIbge={selectedMunicipio}
                 municipioNome={selectedMunicipioInfo?.nome}
@@ -879,6 +912,38 @@ export default function PlatformApp({ initialTab }: PlatformAppProps) {
 
           {simulating && (
             <div className="pointer-events-none absolute inset-0 z-[500] animate-pulse bg-sky-500/5" aria-hidden />
+          )}
+
+          {floodClock && activeTab === 'simulation' && !focusMode && (
+            <div className="map-ui-chrome absolute bottom-4 left-4 z-[1100] max-w-sm rounded-xl border border-sky-500/35 bg-zinc-950/92 px-3 py-2.5 shadow-2xl backdrop-blur-md">
+              <p className="text-[10px] font-extrabold uppercase tracking-wider text-sky-200">
+                Evolução no tempo
+                {floodClock.playing ? (
+                  <span className="ml-1.5 rounded bg-sky-500/20 px-1.5 py-0.5 text-[8px] font-bold normal-case tracking-normal text-sky-100">
+                    animando
+                  </span>
+                ) : null}
+              </p>
+              <p className="mt-1 text-sm font-bold capitalize text-zinc-100">
+                {floodClock.fase} · t = {floodClock.t_h} h
+                <span className="ml-1 text-[10px] font-normal text-zinc-500">
+                  / {floodClock.duration_h} h
+                </span>
+              </p>
+              <p className="mt-0.5 text-[11px] leading-snug text-zinc-300">{floodClock.narrativa}</p>
+              <p className="mt-1.5 font-mono text-[10px] text-zinc-500">
+                {floodClock.max_depth_m != null ? `até ${floodClock.max_depth_m} m` : '—'}
+                {floodClock.flood_patches != null ? ` · ${floodClock.flood_patches} manchas` : ''}
+              </p>
+              {!floodClock.has_features && (
+                <p className="mt-1 text-[9px] text-amber-300">
+                  Frames da mancha indisponíveis — rode a simulação de novo.
+                </p>
+              )}
+              <p className="mt-1 text-[8px] leading-snug text-zinc-600">
+                Aproximação por hidrograma triangular (selo Derivado) — não é modelo hidrodinâmico 2D.
+              </p>
+            </div>
           )}
           
           <LayerPanel

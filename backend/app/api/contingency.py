@@ -4,7 +4,7 @@ import asyncio
 import logging
 from typing import Any, Literal, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
@@ -201,7 +201,15 @@ def update_plan_endpoint(plan_id: int, body: ContingencyPlanUpdate, request: Req
 
 
 @router.post("/{plan_id}/activate")
-def activate_plan(plan_id: int, request: Request, db: Session = Depends(get_db)):
+def activate_plan(
+    plan_id: int,
+    request: Request,
+    db: Session = Depends(get_db),
+    confirm: bool = Query(False, description="Confirmação humana obrigatória (20a.3)"),
+):
+    from app.security.policy_gate import require_human_confirm
+
+    require_human_confirm(confirm, action="contingency.activate")
     plan = db.query(ContingencyPlan).filter(ContingencyPlan.id == plan_id).first()
     if not plan:
         raise HTTPException(404, "Plano não encontrado")
@@ -220,7 +228,7 @@ def activate_plan(plan_id: int, request: Request, db: Session = Depends(get_db))
         resource_type="contingency_plan",
         resource_id=plan.id,
         codigo_ibge=muni.codigo_ibge if muni else None,
-        metadata={"cenario_tipo": plan.cenario_tipo, "nivel_alerta": plan.nivel_alerta},
+        metadata={"cenario_tipo": plan.cenario_tipo, "nivel_alerta": plan.nivel_alerta, "confirm": True},
         request=request,
     )
     return plan_to_dict(plan, muni)

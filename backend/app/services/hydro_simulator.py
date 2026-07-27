@@ -34,9 +34,29 @@ SRTM_VERTICAL_RMSE_M = 16.0
 HYDRO_MODEL_VERSION = "2.7"
 
 # 17g.1b — fatores do hidrograma triangular (subida → pico → recessão)
-HYDROGRAPH_FACTORS = (0.20, 0.55, 1.0, 0.65, 0.30)
+HYDROGRAPH_FACTORS = (
+    0.08,
+    0.18,
+    0.32,
+    0.48,
+    0.68,
+    0.88,
+    1.0,
+    0.90,
+    0.72,
+    0.55,
+    0.38,
+    0.24,
+    0.12,
+)
 HYDROGRAPH_DURATION_H = 6.0
 MAX_TIMELINE_POLYGONS_PER_BAND = 12
+
+_FASE_NARRATIVA = {
+    "subida": "A mancha sobe — áreas mais baixas começam a alagar.",
+    "pico": "Pico da inundação estimada neste cenário.",
+    "recessao": "A água recua — mancha reduz (aproximação, sem routing 2D).",
+}
 
 logger = logging.getLogger(__name__)
 
@@ -1065,6 +1085,15 @@ def build_flood_timeline(
             "max_depth_m": max_d,
             "flood_patches": len(feats),
             "fase": "subida" if i < peak_index else ("pico" if i == peak_index else "recessao"),
+            "narrativa": (
+                _FASE_NARRATIVA["subida"]
+                if i < peak_index
+                else (
+                    _FASE_NARRATIVA["pico"]
+                    if i == peak_index
+                    else _FASE_NARRATIVA["recessao"]
+                )
+            ),
         })
         features_by_step.append(feats)
 

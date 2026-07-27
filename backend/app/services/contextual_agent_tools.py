@@ -313,6 +313,54 @@ def get_maturidade_detalhe(db: Session, codigo_ibge: str) -> dict[str, Any]:
     }
 
 
+def explain_mancha_inundacao(
+    db: Session,
+    codigo_ibge: str,
+    precipitacao_mm: float = 120.0,
+) -> dict[str, Any]:
+    """Explica o que a mancha de simulação significa (limites + selo) — 20b.3."""
+    from app.services.method_note_service import LIMITES_METODOLOGICOS_PAINEL, build_method_note
+
+    code = str(codigo_ibge).zfill(7)[:7]
+    muni = db.query(Municipio).filter(Municipio.codigo_ibge == code).first()
+    nota = build_method_note(
+        {
+            "method": "dem_or_heuristic",
+            "dem_available": False,
+            "precipitation_mm": float(precipitacao_mm),
+            "selo_confianca": {
+                "selo_qualidade": "Derivado",
+                "nivel_confianca": "baixa",
+                "interpretacao": (
+                    "Explicação genérica sem DEM anexado nesta tool — "
+                    "rode a simulação na aba Simulações para selo completo."
+                ),
+            },
+        },
+        tipo="chuva",
+        municipio={
+            "codigo_ibge": code,
+            "nome": muni.nome if muni else None,
+            "uf": muni.uf if muni else None,
+        }
+        if muni
+        else {"codigo_ibge": code},
+    )
+    return {
+        "codigo_ibge": code,
+        "precipitacao_mm": float(precipitacao_mm),
+        "selo_qualidade": "Derivado",
+        "o_que_e": LIMITES_METODOLOGICOS_PAINEL["o_que_e"],
+        "o_que_nao_e": LIMITES_METODOLOGICOS_PAINEL["o_que_nao_e"],
+        "resumo_nota": (nota.get("secoes") or [{}])[0].get("corpo"),
+        "como_exportar": (
+            "Na aba Simulações: rode o cenário → Baixar nota metodológica (MD) "
+            "ou Exportar KMZ (Google Earth/QGIS). Agente não ativa contingenência nem dissemina alerta."
+        ),
+        "disclaimer": nota.get("disclaimer"),
+    }
+
+
 def get_alerta_vivo(db: Session, codigo_ibge: str) -> dict[str, Any]:
     """Nível CEMADEN/monitoramento das últimas 24h para contingência."""
     return live_alert_snapshot(db, codigo_ibge, hours=24)
@@ -323,28 +371,63 @@ def get_risco_alagamento_ml(
     codigo_ibge: str,
     precip_24h: float = 80.0,
 ) -> dict[str, Any]:
-    """Probabilidade de alagamento via modelo ML (baseline ou treinado)."""
+    """Score de alagamento — ML full se existir; senão curva heurística (Fase 21a)."""
     try:
-        from ml.bootstrap import ensure_model_for
+        from app.services.weather_monitor import resolve_risk_probability
+        from ml.model_policy import load_model_meta, production_model_ready
         from ml.predictor import predictor
 
-        ensure_model_for(codigo_ibge, db)
         p24 = float(precip_24h)
-        result = predictor.predict(
-            db,
-            codigo_ibge,
-            p24,
-            p24 * 1.4,
-            p24 * 1.7,
+        # Janelas proporcionais explícitas (não o antigo 1.4/1.7 cego no Monitor).
+        p48 = p24 * 1.5
+        p72 = p24 * 2.0
+        p7d = p24 * 3.0
+
+        if production_model_ready(codigo_ibge):
+            result = predictor.predict(
+                db,
+                codigo_ibge,
+                p24,
+                p48,
+                p72,
+                precip_7d=p7d,
+            )
+            return {
+                "codigo_ibge": codigo_ibge,
+                "precip_24h_mm": p24,
+                "risk_probability": result.get("risk_probability"),
+                "risk_level": result.get("risk_level"),
+                "threshold_mm_24h": result.get("threshold_mm_24h"),
+                "model_kind": result.get("model_kind"),
+                "score_kind": result.get("score_kind"),
+                "production_ready": True,
+                "model_auc_roc": result.get("model_auc_roc"),
+                "disclaimer": (result.get("disclaimer") or "")[:280],
+            }
+
+        risk, source = resolve_risk_probability(
+            db, codigo_ibge, p24, p72, precip_48h=p48, precip_7d=p7d
         )
+        meta = load_model_meta(codigo_ibge)
         return {
             "codigo_ibge": codigo_ibge,
             "precip_24h_mm": p24,
-            "risk_probability": result.get("risk_probability"),
-            "risk_level": result.get("risk_level"),
-            "threshold_mm_24h": result.get("threshold_mm_24h"),
-            "model_kind": result.get("model_kind") or result.get("model_version"),
-            "disclaimer": (result.get("disclaimer") or "")[:280],
+            "risk_probability": risk,
+            "risk_level": (
+                "MUITO_ALTO" if risk >= 0.75 else
+                "ALTO" if risk >= 0.55 else
+                "MEDIO" if risk >= 0.35 else
+                "BAIXO"
+            ),
+            "threshold_mm_24h": None,
+            "model_kind": meta.get("model_kind") or "heuristica",
+            "score_kind": "score_heuristico_chuva",
+            "production_ready": False,
+            "risk_source": source,
+            "disclaimer": (
+                "Score heurístico de precipitação — artefato baseline_synthetic não é usado "
+                "como probabilidade no Monitor (Fase 21a). Retreine com dados observados para ML full."
+            ),
         }
     except Exception as exc:
         return {
@@ -646,7 +729,8 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
             "name": "get_alerta_vivo",
             "description": (
                 "Nível de alerta vivo (CEMADEN/monitoramento 24h) para pré-preencher contingência. "
-                "Retorna VERDE/AMARELO/LARANJA/VERMELHO e contagens."
+                "Retorna nivel_alerta, interpretacao (sem_alerta_monitorado|alerta_ativo|…), "
+                "sem_alerta_ativo_24h e disclaimer. VERDE sem alerta ≠ município seguro."
             ),
             "parameters": {
                 "type": "object",
@@ -732,6 +816,28 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "explain_mancha_inundacao",
+            "description": (
+                "Explica o que a mancha/simulação de inundação significa e o que NÃO é "
+                "(limites metodológicos, selo Derivado). Use quando o gestor perguntar "
+                "'explique esta mancha' ou 'posso usar como laudo'."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "cod_ibge": {"type": "string"},
+                    "precipitacao_mm": {
+                        "type": "number",
+                        "description": "Cenário de chuva em mm",
+                    },
+                },
+                "required": ["cod_ibge"],
+            },
+        },
+    },
 ]
 
 _TOOL_DISPATCH = {
@@ -775,18 +881,65 @@ _TOOL_DISPATCH = {
         args["cod_ibge"],
         pergunta=str(args.get("pergunta") or ""),
     ),
+    "explain_mancha_inundacao": lambda db, args: explain_mancha_inundacao(
+        db,
+        args["cod_ibge"],
+        float(args.get("precipitacao_mm") or 120),
+    ),
+}
+
+_TOOL_REQUIRED: dict[str, list[str]] = {
+    (t.get("function") or {}).get("name", ""): list(
+        ((t.get("function") or {}).get("parameters") or {}).get("required") or []
+    )
+    for t in TOOL_DEFINITIONS
+    if (t.get("function") or {}).get("name")
 }
 
 
 def execute_tool(db: Session, name: str, arguments: str | dict[str, Any]) -> dict[str, Any]:
+    """Executa tool com contrato rígido (20b.2): unknown_tool / invalid_args."""
+    if name not in _TOOL_DISPATCH:
+        return {
+            "error": f"Ferramenta desconhecida: {name}",
+            "error_code": "unknown_tool",
+        }
+
     if isinstance(arguments, str):
         try:
             args = json.loads(arguments) if arguments else {}
         except json.JSONDecodeError:
-            args = {}
+            return {
+                "error": "Argumentos JSON inválidos",
+                "error_code": "invalid_args",
+            }
     else:
-        args = arguments
-    fn = _TOOL_DISPATCH.get(name)
-    if not fn:
-        return {"error": f"Ferramenta desconhecida: {name}"}
-    return fn(db, args)
+        args = dict(arguments or {})
+
+    if not isinstance(args, dict):
+        return {
+            "error": "Argumentos devem ser um objeto JSON",
+            "error_code": "invalid_args",
+        }
+
+    required = _TOOL_REQUIRED.get(name) or []
+    missing = [k for k in required if args.get(k) in (None, "")]
+    if missing:
+        return {
+            "error": f"Argumentos obrigatórios ausentes: {', '.join(missing)}",
+            "error_code": "invalid_args",
+            "missing": missing,
+        }
+
+    try:
+        return _TOOL_DISPATCH[name](db, args)
+    except (KeyError, TypeError, ValueError) as exc:
+        return {
+            "error": str(exc),
+            "error_code": "invalid_args",
+        }
+    except Exception as exc:  # noqa: BLE001 — superfície de tool não deve derrubar o agente
+        return {
+            "error": f"Falha na ferramenta {name}: {exc}",
+            "error_code": "tool_error",
+        }

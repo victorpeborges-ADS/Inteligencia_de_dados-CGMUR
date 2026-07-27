@@ -97,9 +97,28 @@ Headers de segurança (HSTS, X-Frame-Options) em `deploy/nginx/nginx-tls.conf`.
 
 ## MapBiomas em produção
 
-1. Baixe CSV em [brasil.mapbiomas.org/estatisticas](https://brasil.mapbiomas.org/estatisticas/)
-2. `python scripts/import_mapbiomas_csv.py municipios.csv --dest-dir ./data/mapbiomas`
-3. Monte volume e configure `MAPBIOMAS_STATS_CSV` no `.env`
+1. CSV dos 6 pilotos já vem em `scripts/mapbiomas_stats/municipios_cobertura_pilotos.csv` (Coleção 10.1, DOI SJZOLT).
+2. Opcional — XLSX completo em `mapbiomas/` + `python3 scripts/mapbiomas_stats/extrair_pilotos.py`.
+3. Monte `./mapbiomas:/data/mapbiomas` (já no compose) e/ou `MAPBIOMAS_STATS_CSV`.
+4. Force sync: `POST /api/v1/system/jobs/mapbiomas-batch?force=true`.
+
+## Dev Tunnel / URL pública (20a.2)
+
+Nunca exponha o backend com `AUTH_ENABLED=false`. Checklist:
+
+```bash
+AUTH_ENABLED=true
+AUTH_JWT_SECRET=<aleatório >=32 chars>
+AUTH_ADMIN_PASSWORD=<não-admin>
+AUTH_GESTOR_PASSWORD=<não-gestor>
+AUTH_LEITOR_PASSWORD=<não-leitor>
+CORS_ORIGINS=https://<sua-url-frontend-tunnel>
+PUBLIC_BASE_URL=https://<sua-url-api-tunnel>
+ENVIRONMENT=development   # production exige os mesmos cuidados + compose.prod
+```
+
+Ações sensíveis (`POST .../contingency/{id}/activate`, `POST .../monitoring/disseminate/{ibge}`)
+exigem `confirm=true` (policy gate 20a.3).
 
 ## OIDC com Keycloak/gov.br real
 

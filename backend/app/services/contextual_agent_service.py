@@ -64,10 +64,28 @@ REGRAS:
    indicadores de vulnerabilidade, finanças públicas municipais (LRF, CAPAG),
    dados IBGE, MapBiomas, CEMADEN, S2ID, políticas MCID
 9. Use as ferramentas disponíveis quando precisar de dados atualizados não presentes no contexto
-   (inclui get_exposicao_edificios para "quantos prédios/pessoas alagam/deslizam/esquentam")
+   (inclui get_exposicao_edificios para "quantos prédios/pessoas alagam/deslizam/esquentam"
+   e explain_mancha_inundacao para "explique esta mancha / posso usar como laudo")
 10. Quando dados locais estiverem ausentes ou parciais, use get_georedus_referencia e cite o GeoReDUS
     com o link municipioId retornado pela ferramenta. NUNCA invente valores do GeoReDUS — apenas
     oriente o gestor a consultar o catálogo nacional ReDUS como complemento ao Sinidu
+11. HONESTIDADE METODOLÓGICA (obrigatório):
+    - NÃO diga que a simulação Sinidu é "metodologia oficial", "homologada", "laudo",
+      "HEC-RAS", "preciso como engenharia" ou "alerta oficial" sem qualificador.
+    - Sempre que falar de simulação/mancha/predição, cite o selo (Oficial / Observado /
+      Estimado / Derivado) quando existir no contexto.
+    - Distinga: fontes oficiais de *entrada* (IBGE, CEMADEN, S2ID, MapBiomas) ≠
+      resultado de *simulação* (em geral Derivado/Estimado — triagem, não laudo).
+    - Predição ML só é "probabilidade" se model_kind=full; caso contrário diga "score heurístico".
+    - Nunca diga que o Sinidu substitui alerta CEMADEN ou Defesa Civil.
+12. NÍVEL DE ALERTA (obrigatório — contrato de tools):
+    - Nunca invente VERDE/AMARELO/LARANJA/VERMELHO. Só cite nível se veio de
+      get_alerta_vivo (ou get_alertas_cemaden) nesta conversa.
+    - Se interpretacao=sem_alerta_monitorado ou sem_alerta_ativo_24h=true: diga
+      "sem alerta monitorado nas últimas 24h", NÃO "município seguro" nem "status oficial VERDE".
+    - Sem tool de alerta: diga que precisa consultar o Monitor / get_alerta_vivo.
+13. Você é o modo Operacional do Agente Sinidu (dados do município + tools). Legislação/RAG
+    normativo fica no modo Normativo (aba Assistente). Não ative plano nem dissemine alerta.
 """
 
 
@@ -123,16 +141,29 @@ def _offline_contextual_reply(dados_municipio: dict[str, Any], message: str) -> 
     uf = dados_municipio.get("uf") or ""
     label = f"{nome}/{uf}" if uf else str(nome)
     score = dados_municipio.get("score_sinidu")
+    honesty = (
+        " Lembrete: simulações Sinidu são triagem territorial (selo Derivado/Estimado) — "
+        "não substituem laudo de engenharia nem alerta oficial CEMADEN/Defesa Civil."
+    )
     if score is not None and ("score" in lower or "sinidu" in lower):
         return (
             f"No município de {label}, o **Score Sinidu+Clima** consolidado é **{score}** "
             "(escala 0–100). O índice agrega vulnerabilidade climática (IVC), risco de inundação (IRI) "
             "e capacidade de adaptação municipal. Consulte o painel executivo e a camada de vulnerabilidade "
             "para detalhar bairros críticos."
+            + honesty
+        )
+    if any(k in lower for k in ("simula", "mancha", "alag", "inund", "calor", "chuva")):
+        return (
+            f"Para {label}, use a aba Simulações com o volume/cenário desejado e leia o "
+            "**selo de confiança** e a **nota metodológica**. Resultado = estimativa para "
+            "priorização e contingência — não é HEC-RAS, laudo nem alerta CEMADEN."
+            + honesty
         )
     return (
         "O assistente contextual está em modo demonstração (MISTRAL_API_KEY não configurada no servidor). "
         "Use o painel, simulações e diagnóstico automático para explorar os indicadores do município."
+        + honesty
     )
 
 
@@ -160,9 +191,10 @@ def _run_tool_loop(
     model: str,
     *,
     max_rounds: int | None = None,
-) -> str:
+) -> tuple[str, dict[str, Any]]:
     """Executa chamadas de ferramenta até resposta final em texto."""
     rounds = max_rounds if max_rounds is not None else CONTEXTUAL_AGENT_MAX_TOOL_ROUNDS
+    stats: dict[str, Any] = {"tool_calls": 0, "tool_errors": 0, "tools_used": []}
     for _ in range(rounds):
         result = provider.chat_completion(messages, model=model, tools=TOOL_DEFINITIONS)
         choice = (result.get("choices") or [{}])[0]
@@ -172,14 +204,26 @@ def _run_tool_loop(
         if not tool_calls:
             content = (message.get("content") or "").strip()
             if content:
-                return content
-            return "Não foi possível gerar uma resposta. Tente reformular a pergunta."
+                return content, stats
+            return (
+                "Não foi possível gerar uma resposta. Tente reformular a pergunta.",
+                stats,
+            )
 
         messages.append(message)
         for call in tool_calls:
             fn = call.get("function") or {}
             name = fn.get("name") or ""
             tool_result = execute_tool(db, name, fn.get("arguments") or "{}")
+            stats["tool_calls"] += 1
+            if name:
+                stats["tools_used"].append(name)
+            if tool_result.get("error") or tool_result.get("error_code") in {
+                "unknown_tool",
+                "invalid_args",
+                "tool_error",
+            }:
+                stats["tool_errors"] += 1
             messages.append(
                 {
                     "role": "tool",
@@ -189,7 +233,7 @@ def _run_tool_loop(
                 }
             )
 
-    return "Limite de consultas atingido. Resuma com os dados já obtidos."
+    return "Limite de consultas atingido. Resuma com os dados já obtidos.", stats
 
 
 def contextual_chat_stream(
@@ -245,6 +289,13 @@ def contextual_chat_stream(
         return
 
     model = _resolve_model(ai_model, provider)
+    telemetry: dict[str, Any] = {
+        "tool_calls": 0,
+        "tool_errors": 0,
+        "tools_used": [],
+        "fallback_deterministic": False,
+        "from_cache": False,
+    }
     if not provider.is_available():
         answer = (
             _offline_contextual_reply(dados_municipio, message)
@@ -252,7 +303,21 @@ def contextual_chat_stream(
             else "MISTRAL_API_KEY não configurada no servidor."
         )
         elapsed = int((time.time() - start) * 1000)
-        yield _sse({"type": "done", "response": answer, "response_time_ms": elapsed, "ai_provider": None})
+        telemetry["fallback_deterministic"] = True
+        logger.info(
+            "ai_telemetry contextual offline ibge=%s latency_ms=%s",
+            muni.codigo_ibge,
+            elapsed,
+        )
+        yield _sse(
+            {
+                "type": "done",
+                "response": answer,
+                "response_time_ms": elapsed,
+                "ai_provider": None,
+                **telemetry,
+            }
+        )
         return
 
     messages: list[dict[str, Any]] = [{"role": "system", "content": system_content}]
@@ -265,10 +330,12 @@ def contextual_chat_stream(
         if _is_simple_question(message):
             answer = _chat_without_tools(provider, messages, model)
         else:
-            answer = _run_tool_loop(db, provider, messages, model)
+            answer, tool_stats = _run_tool_loop(db, provider, messages, model)
+            telemetry.update(tool_stats)
     except Exception as exc:
         logger.exception("Falha no agente contextual")
         answer = f"Erro ao processar: {exc}"
+        telemetry["fallback_deterministic"] = True
 
     if not historico:
         set_cached_response(
@@ -288,6 +355,14 @@ def contextual_chat_stream(
         yield _sse({"type": "token", "content": chunk})
 
     elapsed = int((time.time() - start) * 1000)
+    logger.info(
+        "ai_telemetry contextual ibge=%s latency_ms=%s tools=%s errors=%s provider=%s",
+        muni.codigo_ibge,
+        elapsed,
+        telemetry.get("tool_calls"),
+        telemetry.get("tool_errors"),
+        provider.id,
+    )
     yield _sse(
         {
             "type": "done",
@@ -295,6 +370,7 @@ def contextual_chat_stream(
             "response_time_ms": elapsed,
             "ai_provider": provider.id,
             "ai_model": model,
+            **telemetry,
         }
     )
 

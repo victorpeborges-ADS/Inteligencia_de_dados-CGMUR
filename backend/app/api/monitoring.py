@@ -21,6 +21,7 @@ from app.services.scenario_analysis_service import (
     group_timeline_entries,
     interpret_alert,
 )
+from app.services.forecast_source_seal import seal_from_weather_payload
 
 router = APIRouter()
 
@@ -35,7 +36,7 @@ async def trigger_monitoring_sync(
     codigo_ibge: str | None = Query(default=None, description="Sincronizar só este município"),
     db: Session = Depends(get_db),
 ):
-    """Dispara sincronização OpenMeteo + CEMADEN (manual ou pós-boot)."""
+    """Dispara sincronização OpenMeteo + CEMADEN alertas + pluviômetros (manual ou pós-boot)."""
     from app.services.monitoring_sync import sync_monitoring_all
 
     codigos = body.codigos if body and body.codigos else ([codigo_ibge] if codigo_ibge else None)
@@ -43,6 +44,64 @@ async def trigger_monitoring_sync(
         return await sync_monitoring_all(db, codigos)
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Sync monitoramento falhou: {exc}") from exc
+
+
+@router.post("/sync/cemaden-pluvio")
+def trigger_cemaden_pluvio_sync(
+    codigo_ibge: str | None = Query(default=None, description="Só este IBGE; omitir = 6 pilotos"),
+    db: Session = Depends(get_db),
+):
+    """Baixa snapshot getJson2 do CEMADEN e grava em serie_pluviometrica_observada (21b.1)."""
+    from app.data_connectors.cemaden_pluvio_collector import (
+        collect_cemaden_pluvio_municipality,
+        collect_cemaden_pluvio_pilots,
+    )
+
+    try:
+        if codigo_ibge:
+            return collect_cemaden_pluvio_municipality(db, codigo_ibge, use_api=True)
+        return collect_cemaden_pluvio_pilots(db)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Sync pluvio CEMADEN falhou: {exc}") from exc
+
+
+@router.post("/sync/s2id-nacional")
+def trigger_s2id_nacional_sync(
+    years: str | None = Query(default=None, description="Anos CSV separados por vírgula, ex: 2020,2021,2022"),
+    force_download: bool = Query(default=False),
+    db: Session = Depends(get_db),
+):
+    """Ingere S2ID nacional (CSVs MIDR/SEDEC) nos 6 pilotos — Fase 21c.1."""
+    from app.data_connectors.s2id_nacional_collector import ingest_national_s2id_for_pilotos
+
+    year_list = None
+    if years:
+        year_list = [int(y.strip()) for y in years.split(",") if y.strip().isdigit()]
+    try:
+        return ingest_national_s2id_for_pilotos(
+            db, years=year_list, force_download=force_download
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Sync S2ID nacional falhou: {exc}") from exc
+
+
+@router.get("/ana/status")
+def ana_hidroweb_status():
+    """Status da credencial ANA HidroWeb (21b.2)."""
+    from app.data_connectors.ana_hidroweb_collector import credential_status
+
+    return credential_status()
+
+
+@router.post("/sync/ana-probe")
+def trigger_ana_probe(db: Session = Depends(get_db)):
+    """Probe autenticado ANA (dry-run) — exige ANA_HIDROWEB_TOKEN."""
+    from app.data_connectors.ana_hidroweb_collector import collect_pluvio_series_for_municipality
+
+    try:
+        return collect_pluvio_series_for_municipality(db, "2611606", dry_run=True)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Probe ANA falhou: {exc}") from exc
 
 
 def _muni_centroid(m: Municipio) -> tuple[float | None, float | None]:
@@ -123,12 +182,52 @@ def monitoring_dashboard(codigo_ibge: str, request: Request, db: Session = Depen
             if weather and isinstance(weather.raw_payload, dict)
             else None
         ),
+        "score_kind": (
+            (weather.raw_payload or {}).get("_score_kind")
+            if weather and isinstance(weather.raw_payload, dict)
+            else None
+        ),
+        "cemaden_obs_mm": (
+            (weather.raw_payload or {}).get("_precip_windows", {}).get("cemaden_obs_mm")
+            if weather and isinstance(weather.raw_payload, dict)
+            else None
+        ),
+        "cemaden_estacoes": (
+            (weather.raw_payload or {}).get("_precip_windows", {}).get("cemaden_estacoes")
+            if weather and isinstance(weather.raw_payload, dict)
+            else None
+        ),
+        "selo_previsao": (
+            seal_from_weather_payload(
+                weather.raw_payload if weather else None,
+                precip_24h_mm=float(weather.precip_24h_mm) if weather and weather.precip_24h_mm is not None else None,
+            )
+            if weather
+            else None
+        ),
         "weather_updated_at": weather.fetched_at.isoformat() if weather else None,
         "weather_disponivel": weather is not None,
         "timeline": timeline_raw,
         "timeline_grouped": group_timeline_entries(timeline_raw),
         "plano_ativo": active_plan,
+        "acerto_previsoes": _acerto_previsoes_safe(db, codigo_ibge),
     }
+
+
+def _acerto_previsoes_safe(db: Session, codigo_ibge: str) -> dict:
+    try:
+        from app.services.previsao_verificacao_service import acerto_resumo
+
+        return acerto_resumo(db, codigo_ibge)
+    except Exception as exc:
+        return {
+            "disponivel": False,
+            "n_verificadas": 0,
+            "n_pendentes": 0,
+            "acerto_pct": None,
+            "narrativa": f"Verificação indisponível: {exc}",
+            "protocol": "21g1_acerto_previsoes",
+        }
 
 
 @router.get("/scenario-analysis/{codigo_ibge}")
@@ -266,6 +365,7 @@ class DisseminateAlertBody(BaseModel):
     mensagem: str | None = None
     canais: list[str] | None = None
     checklist_itens: list[str] | None = None
+    confirm: bool = False  # 20a.3 — confirmação humana obrigatória
 
 
 @router.get("/disseminate/{codigo_ibge}/draft")
@@ -288,9 +388,11 @@ async def disseminate_alert(
     db: Session = Depends(get_db),
 ):
     """Registra disseminação DC/população com status por canal (17h.3d)."""
+    from app.security.policy_gate import require_human_confirm
     from app.services.alert_broadcaster import alert_manager
     from app.services.public_alert_service import dispatch_public_alert
 
+    require_human_confirm(body.confirm, action="alert.disseminate")
     assert_codigo_ibge_access(db, codigo_ibge, request=request)
     actor = resolve_actor(request)
     criado_por = getattr(actor, "username", None) or "gestor"
@@ -318,6 +420,7 @@ async def disseminate_alert(
             "nivel": result.get("nivel"),
             "canais": result.get("canais"),
             "status_por_canal": result.get("status_por_canal"),
+            "confirm": True,
         },
         request=request,
     )

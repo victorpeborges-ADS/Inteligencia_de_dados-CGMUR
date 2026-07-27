@@ -69,6 +69,8 @@ def test_flood_timeline_peak_matches_and_has_rise_recession():
     assert timeline["steps"][0]["fase"] == "subida"
     assert timeline["steps"][timeline["peak_index"]]["fase"] == "pico"
     assert timeline["steps"][-1]["fase"] == "recessao"
+    assert "narrativa" in timeline["steps"][0]
+    assert timeline["n_steps"] >= 10
     # pico deve ter profundidade >= início
     assert (
         timeline["steps"][timeline["peak_index"]]["max_depth_m"]

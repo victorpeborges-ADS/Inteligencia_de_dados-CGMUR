@@ -1,0 +1,44 @@
+CEMADEN — pluviômetros (Fase 21b.1)
+====================================
+
+O que CONSEGUIMOS baixar automaticamente
+----------------------------------------
+Endpoint público (sem captcha):
+  https://resources.cemaden.gov.br/graficos/interativo/getJson2.php?uf=XX
+
+É um SNAPSHOT ao vivo por estação (acc1h…acc96h + ultimovalor), não a série
+histórica 10/10 min completa.
+
+Baixar agora (já rodado uma vez → pasta downloads/):
+
+  python3 scripts/cemaden_pluvio/baixar_snapshots.py
+
+Ingerir no PostGIS (com backend/DB no ar):
+
+  docker compose exec backend python /scripts/...   # ou:
+  POST /api/v1/monitoring/sync/cemaden-pluvio
+  # ou script:
+  PYTHONPATH=backend python3 scripts/cemaden_pluvio/ingerir_pilotos.py
+
+Última ingestão (jul/2026): 178 registros nos 6 pilotos em
+serie_pluviometrica_observada (fonte=cemaden, data_quality=oficial).
+
+O sync de monitoramento (manual + scheduler 30 min) já chama o coletor.
+O Monitor usa chuva CEMADEN observada se for maior que a previsão OpenMeteo.
+
+
+O que NÃO dá para baixar sem intervenção humana
+-----------------------------------------------
+Série histórica mensal do Mapa Interativo:
+  https://mapainterativo.cemaden.gov.br/download/downpluv.php
+
+Exige captcha + e-mail. Não vamos burlar captcha.
+Se precisar da série longa, baixe manualmente e deposite o CSV em
+CEMADEN_PLUVIO_DIR (/data/cemaden_pluvio).
+
+
+Arquivos gerados em downloads/
+------------------------------
+  {IBGE}_snapshot.csv     — só o município piloto
+  cemaden_{UF}_all.csv    — todas as estações da UF
+  cemaden_{UF}_raw.json   — JSON bruto (pode ser grande)

@@ -33,6 +33,7 @@ export default function Badge({ children, tone = 'neutral', className = '' }: Ba
 export function qualityToBadgeTone(quality?: string | null): BadgeTone {
   const v = (quality || '').toUpperCase();
   if (v === 'OFICIAL') return 'official';
+  if (v === 'OBSERVADO' || v === 'OBSERVADO SATÉLITE' || v.startsWith('OBSERVADO')) return 'info';
   if (v === 'DERIVADO') return 'derived';
   if (v === 'ESTIMADO') return 'estimated';
   if (v === 'LACUNA') return 'gap';

@@ -102,6 +102,45 @@ def _stats_dir() -> Path:
     return Path(os.getenv("MAPBIOMAS_STATS_DIR", "/data/mapbiomas"))
 
 
+def _repo_root() -> Path:
+    # backend/app/data_connectors/mapbiomas_collector.py → repo root
+    return Path(__file__).resolve().parents[3]
+
+
+def _bundled_pilot_csv() -> Path | None:
+    """CSV oficial dos 6 pilotos versionado em scripts/mapbiomas_stats (Fase 19c.2)."""
+    candidates = (
+        _repo_root() / "scripts" / "mapbiomas_stats" / "municipios_cobertura_pilotos.csv",
+        _stats_dir() / "municipios_cobertura_pilotos.csv",
+        Path("/data/mapbiomas/municipios_cobertura_pilotos.csv"),
+    )
+    for path in candidates:
+        if path.is_file():
+            return path
+    return None
+
+
+def ensure_pilot_csv_seeded() -> Path | None:
+    """Garante municipios_cobertura.csv no volume a partir do extract dos pilotos."""
+    dest = _stats_dir() / "municipios_cobertura.csv"
+    if dest.is_file():
+        return dest
+    bundled = _bundled_pilot_csv()
+    if not bundled:
+        return None
+    try:
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        import shutil
+
+        shutil.copy2(bundled, dest)
+        global _CSV_INDEX
+        _CSV_INDEX = None
+        logger.info("CSV MapBiomas pilotos semeado: %s → %s", bundled, dest)
+        return dest
+    except OSError as exc:
+        logger.warning("Não foi possível semear CSV MapBiomas em %s: %s", dest, exc)
+        return bundled
+
 def _normalize_muni_name(name: str) -> str:
     text = unicodedata.normalize("NFKD", str(name))
     text = "".join(c for c in text if not unicodedata.combining(c))
@@ -204,8 +243,9 @@ def _csv_path() -> Path | None:
     if explicit and Path(explicit).exists():
         return Path(explicit)
     default = _stats_dir() / "municipios_cobertura.csv"
-    return default if default.exists() else None
-
+    if default.exists():
+        return default
+    return _bundled_pilot_csv()
 
 def _parse_area(value: Any) -> float | None:
     if value in (None, "", "-", "..."):
@@ -301,10 +341,9 @@ def _urban_ha_for_year(
     """Retorna (urban_ha, data_quality)."""
     code = str(codigo_ibge).zfill(7)[:7]
     idx = csv_index()
-    for classe in CLASSES:
-        key = (code, year, classe)
-        if key in idx:
-            return idx[key], "oficial" if classe == "Área Urbana" else "oficial"
+    key = (code, year, "Área Urbana")
+    if key in idx:
+        return idx[key], "oficial"
 
     if code == "2611606" and year in _PILOT_URBAN_HA:
         return _PILOT_URBAN_HA[year], "referencia_mapbiomas"
@@ -317,7 +356,6 @@ def _urban_ha_for_year(
     growth = 1.0 + min(0.025, 0.015 + populacao / 5_000_000)  # ~2%/a
     urban = min(urban_cap, base_1985 * (growth ** years_elapsed))
     return round(urban, 2), "derivado"
-
 
 def _vegetation_ha_for_year(
     codigo_ibge: str,
@@ -413,23 +451,32 @@ def build_landcover_series(
     """Gera série anual urbana/floresta/água em hectares."""
     years = years or REFERENCE_YEARS
     total_ha = max(float(area_km2 or 0) * 100.0, 1.0)
-    water_ha = round(min(total_ha * 0.04, max(50.0, total_ha * 0.02)), 2)
+    code = str(codigo_ibge).zfill(7)[:7]
+    idx = csv_index()
     rows: list[dict[str, Any]] = []
 
     for year in years:
+        water_key = (code, year, "Corpo d'água")
+        if water_key in idx:
+            water_ha = float(idx[water_key])
+            water_quality = "oficial"
+        else:
+            water_ha = round(min(total_ha * 0.04, max(50.0, total_ha * 0.02)), 2)
+            water_quality = "derivado"
+
         urban_ha, urban_quality = _urban_ha_for_year(codigo_ibge, year, area_km2, populacao)
         forest_ha, forest_quality = _vegetation_ha_for_year(
             codigo_ibge, year, area_km2, urban_ha, water_ha
         )
         if urban_ha + forest_ha + water_ha > total_ha * 1.01:
-            code = str(codigo_ibge).zfill(7)[:7]
-            if not (code == "2611606" and year in _PILOT_VEGETATION_HA):
-                forest_ha = round(max(0.0, total_ha - urban_ha - water_ha), 2)
-                forest_quality = "derivado"
+            if not (code == "2611606" and year in _PILOT_VEGETATION_HA and forest_quality != "oficial"):
+                if forest_quality != "oficial":
+                    forest_ha = round(max(0.0, total_ha - urban_ha - water_ha), 2)
+                    forest_quality = "derivado"
         for classe, area, quality in (
             ("Área Urbana", urban_ha, urban_quality),
             (VEGETATION_CLASS, forest_ha, forest_quality),
-            ("Corpo d'água", water_ha, "derivado"),
+            ("Corpo d'água", water_ha, water_quality),
         ):
             rows.append({
                 "ano": year,
@@ -785,8 +832,14 @@ def sync_mapbiomas_batch(db: Session, *, limit: int = 6, force: bool = False) ->
     """Sincroniza MapBiomas para municípios já carregados no banco."""
     from app.data_connectors.constants import TARGET_IBGE_CODES
 
+    ensure_pilot_csv_seeded()
     csv_built = ensure_mapbiomas_csv_from_xlsx(db, force=force)
-    source = "xlsx_oficial" if csv_built and _xlsx_path() else "csv_ou_derivado"
+    if _xlsx_path() and csv_built:
+        source = "xlsx_oficial"
+    elif _csv_path():
+        source = "csv_oficial"
+    else:
+        source = "derivado"
 
     codes = TARGET_IBGE_CODES[: max(1, min(limit, 100))]
     processed: list[dict[str, Any]] = []

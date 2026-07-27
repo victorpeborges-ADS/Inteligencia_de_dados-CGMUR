@@ -38,6 +38,8 @@ MIGRATIONS = (
     "021_territorios_especiais.sql",
     "022_municipio_geoportal.sql",
     "023_contingency_operacional.sql",
+    "024_previsao_verificacao_archive.sql",
+    "025_pluvio_eventos_observados.sql",
 )
 
 
@@ -75,22 +77,54 @@ class BootStatus:
 boot_status = BootStatus()
 
 _DEFAULT_JWT_SECRET = "sinidu-dev-secret-trocar-em-producao"
+_DEFAULT_PASSWORDS = frozenset({"admin", "gestor", "leitor"})
 
 
 def validate_auth_secrets_for_environment() -> None:
-    """Avisa (e em production falha) se AUTH_JWT_SECRET for fraco."""
+    """Avisa (e em production+auth falha) se secret/senhas forem fracos (20a.2)."""
     import os
 
     env = (os.getenv("ENVIRONMENT") or "development").strip().lower()
     secret = settings.AUTH_JWT_SECRET or ""
-    weak = secret == _DEFAULT_JWT_SECRET or len(secret) < 32
-    if not weak:
-        return
-    msg = "AUTH_JWT_SECRET default/curto — defina secret >=32 chars"
-    logger.warning(msg)
-    boot_status.errors.append(msg)
-    if env == "production" and settings.AUTH_ENABLED:
-        raise RuntimeError(msg)
+    weak_secret = secret == _DEFAULT_JWT_SECRET or len(secret) < 32
+    default_pw = any(
+        (getattr(settings, name, "") or "") in _DEFAULT_PASSWORDS
+        for name in ("AUTH_ADMIN_PASSWORD", "AUTH_GESTOR_PASSWORD", "AUTH_LEITOR_PASSWORD")
+    )
+    cors = settings.CORS_ORIGINS or []
+    cors_star = "*" in cors
+
+    if weak_secret:
+        msg = "AUTH_JWT_SECRET default/curto — defina secret >=32 chars"
+        logger.warning(msg)
+        if msg not in boot_status.errors:
+            boot_status.errors.append(msg)
+        if env == "production" and settings.AUTH_ENABLED:
+            raise RuntimeError(msg)
+        if settings.AUTH_ENABLED and env != "production":
+            logger.warning("AUTH_ENABLED=true com JWT fraco — inseguro em Dev Tunnel / LAN")
+
+    if default_pw:
+        msg = "Senha default (admin/gestor/leitor) — troque AUTH_*_PASSWORD"
+        logger.warning(msg)
+        if msg not in boot_status.errors:
+            boot_status.errors.append(msg)
+        if env == "production" and settings.AUTH_ENABLED:
+            raise RuntimeError(msg)
+
+    if cors_star:
+        msg = "CORS_ORIGINS contém '*' — restrinja em homolog/produção"
+        logger.warning(msg)
+        if msg not in boot_status.errors:
+            boot_status.errors.append(msg)
+        if env == "production":
+            raise RuntimeError(msg)
+
+    if env == "production" and not settings.AUTH_ENABLED:
+        msg = "ENVIRONMENT=production com AUTH_ENABLED=false — superfície pública aberta"
+        logger.warning(msg)
+        if msg not in boot_status.errors:
+            boot_status.errors.append(msg)
 
 
 def _run_sql_file(path: Path, label: str) -> bool:

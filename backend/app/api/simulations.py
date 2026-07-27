@@ -54,6 +54,7 @@ from app.services.simulation_analyzer import analyze_simulation
 from app.services.simulation_interpret_cache import interpret_simulation_cached
 from app.services.simulation_interpreter import interpret_slope_zones
 from app.services.simulation_export import (
+    collect_kmz_package_features,
     export_download_meta,
     generate_simulation_pdf,
     save_simulation_geojson,
@@ -631,14 +632,16 @@ def export_simulation_pdf(payload: SimulationExportRequest, request: Request, db
 
 @router.post("/export/kmz", response_model=SimulationExportResponse)
 def export_simulation_kmz(payload: SimulationExportRequest, request: Request, db: Session = Depends(get_db)):
-    """Exporta mancha/curvas/escoamento da simulação como KMZ (Google Earth / QGIS / ArcGIS)."""
+    """Exporta pacote KMZ: mancha + bairros afetados + pontos de contingência (20e.2)."""
     muni = get_accessible_municipio(db, payload.codigo_ibge, request=request)
     if not payload.simulation.get("geometry"):
         raise HTTPException(status_code=400, detail="Simulação sem geometria para exportar.")
+    extra = collect_kmz_package_features(db, muni, payload.simulation)
     path = save_simulation_kmz(
         payload.simulation,
         muni,
         comparison=payload.comparison_delta,
+        extra_features=extra,
     )
     actor = resolve_actor(request)
     log_audit(
@@ -648,7 +651,11 @@ def export_simulation_kmz(payload: SimulationExportRequest, request: Request, db
         resource_type="simulation",
         resource_id=muni.codigo_ibge,
         codigo_ibge=muni.codigo_ibge,
-        metadata={"filename": path.name, "scenario": payload.simulation.get("scenario_type")},
+        metadata={
+            "filename": path.name,
+            "scenario": payload.simulation.get("scenario_type"),
+            "package_features": len(extra),
+        },
         request=request,
     )
     meta = export_download_meta(path)

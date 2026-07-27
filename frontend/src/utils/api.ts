@@ -592,6 +592,7 @@ export interface SimulationOutput {
         max_depth_m: number;
         flood_patches: number;
         fase: string;
+        narrativa?: string;
       }>;
     };
     flood_timeline_features?: Array<Array<{
@@ -1514,11 +1515,74 @@ export interface FloodRiskPrediction {
   threshold_mm_24h: number;
   mm_acima_limiar?: number;
   top_features?: Array<{ feature: string; importance: number }>;
+  explanation?: {
+    disponivel: boolean;
+    method: string;
+    domains: Array<{
+      id: string;
+      label: string;
+      importance_share: number;
+      contribution: number;
+      contribution_pct: number;
+      importance_pct: number;
+    }>;
+    top_features?: Array<{ feature: string; importance: number; domain?: string }>;
+    narrativa?: string;
+    nota?: string;
+  } | null;
+  impact?: {
+    disponivel: boolean;
+    nivel_operacional?: string;
+    n_bairros_prioritarios?: number;
+    bairros_prioritarios?: Array<{
+      bairro_id: number;
+      bairro_nome: string;
+      risk_probability: number;
+      populacao_bairro?: number | null;
+      populacao_exposta_estimada?: number | null;
+    }>;
+    populacao_municipio?: number | null;
+    populacao_exposta_estimada?: number | null;
+    pct_populacao_exposta?: number | null;
+    porte?: string | null;
+    capag_nota?: string | null;
+    medidas_cabiveis?: Array<{
+      id?: string;
+      titulo?: string;
+      custo?: string;
+      horizonte?: string;
+      prioridade?: string;
+      orgao?: string;
+      motivo?: string;
+    }>;
+    narrativa?: string;
+    nota?: string;
+  } | null;
+  horizons?: Array<{
+    horizon: string;
+    horizon_d: number;
+    risk_probability: number;
+    ci_low?: number;
+    ci_high?: number;
+    precip_24h_mm?: number;
+    uncertainty_method?: string;
+  }> | null;
+  uncertainty?: {
+    ci_low: number;
+    ci_high: number;
+    std?: number;
+    method?: string;
+    confidence_level?: number;
+    nota?: string;
+  } | null;
   critical_neighborhoods: CriticalNeighborhood[];
   flood_geojson: { features?: unknown[] } | null;
   model_version: string;
   model_kind?: string;
   data_quality: string;
+  score_kind?: string | null;
+  production_ready?: boolean | null;
+  features_used?: Record<string, number> | null;
   model_auc_roc?: number | null;
   disclaimer: string;
 }
@@ -1565,6 +1629,37 @@ export interface ContingencyPlan {
   simulacao_ref?: Record<string, unknown>;
 }
 
+export interface MonitoringAcertoPrevisoes {
+  disponivel: boolean;
+  codigo_ibge?: string;
+  n_verificadas: number;
+  n_pendentes: number;
+  lookback?: number;
+  acerto_pct: number | null;
+  acertos?: number;
+  amostra_suficiente?: boolean;
+  limiar_risco?: number;
+  narrativa?: string;
+  nota?: string;
+  protocol?: string;
+}
+
+export interface ForecastSourceSeal {
+  selo_qualidade: string;
+  fonte_chuva: string;
+  risk_source: string;
+  score_kind: string;
+  label_ui: string;
+  narrativa: string;
+  disclaimer: string;
+  precip_forecast_mm?: number | null;
+  precip_for_risk_mm?: number | null;
+  cemaden_obs_mm?: number | null;
+  cemaden_estacoes?: number | null;
+  usou_chuva_observada?: boolean;
+  protocol?: string;
+}
+
 export interface MonitoringDashboard {
   codigo_ibge: string;
   nome_municipio?: string | null;
@@ -1576,11 +1671,16 @@ export interface MonitoringDashboard {
   precip_72h_mm: number | null;
   risk_probability: number | null;
   risk_source?: string | null;
+  score_kind?: string | null;
+  cemaden_obs_mm?: number | null;
+  cemaden_estacoes?: number | null;
+  selo_previsao?: ForecastSourceSeal | null;
   weather_updated_at: string | null;
   weather_disponivel?: boolean;
   timeline: MonitoringAlertItem[];
   timeline_grouped?: MonitoringTimelineGroupItem[];
   plano_ativo: ContingencyPlan | null;
+  acerto_previsoes?: MonitoringAcertoPrevisoes | null;
 }
 
 /** Overlay de sensores/alertas vivos no gêmeo 3D (17e.3). */
@@ -1992,6 +2092,13 @@ export interface RiskPanelResponse {
     iri: RiskPanelComponent;
     vm: RiskPanelComponent;
     alerta: RiskPanelComponent;
+    ml_preditivo?: RiskPanelComponent;
+  };
+  modelo_risco?: {
+    versao?: string;
+    nome?: string;
+    regra_status?: string;
+    nota?: string;
   };
   bairros: RiskPanelBairro[];
   bairros_total: number;
@@ -3375,6 +3482,7 @@ export const api = {
     precip24h: number,
     precip48h: number,
     precip72h: number,
+    precip7d?: number,
   ): Promise<FloodRiskPrediction> => {
     const res = await apiFetch(`${getApiBaseUrl()}/api/v1/predictions/flood-risk`, {
       method: 'POST',
@@ -3384,6 +3492,7 @@ export const api = {
         precip_24h: precip24h,
         precip_48h: precip48h,
         precip_72h: precip72h,
+        ...(precip7d != null ? { precip_7d: precip7d } : {}),
       }),
     });
     if (!res.ok) {
@@ -3494,9 +3603,11 @@ export const api = {
     return res.json();
   },
 
-  activateContingencyPlan: async (planId: number): Promise<ContingencyPlan> => {
-    const res = await apiFetch(`${getApiBaseUrl()}/api/v1/contingency/${planId}/activate`, { method: 'POST' });
-    if (!res.ok) throw new Error('Falha ao ativar plano');
+  activateContingencyPlan: async (planId: number, opts?: { confirm?: boolean }): Promise<ContingencyPlan> => {
+    const confirm = opts?.confirm !== false;
+    const qs = confirm ? '?confirm=true' : '';
+    const res = await apiFetch(`${getApiBaseUrl()}/api/v1/contingency/${planId}/activate${qs}`, { method: 'POST' });
+    if (!res.ok) throw await httpError(res, 'Falha ao ativar plano');
     return res.json();
   },
 
@@ -3577,6 +3688,7 @@ export const api = {
       mensagem?: string;
       canais?: string[];
       checklist_itens?: string[];
+      confirm?: boolean;
     },
   ): Promise<PublicAlertDispatchResult> => {
     const res = await apiFetch(
@@ -3584,10 +3696,10 @@ export const api = {
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
+        body: JSON.stringify({ ...body, confirm: body.confirm !== false }),
       },
     );
-    if (!res.ok) throw await httpError(res, 'Falha ao disseminar alerta');
+    if (!res.ok) throw await httpError(res, 'Falha ao disseminar aviso');
     return res.json();
   },
 

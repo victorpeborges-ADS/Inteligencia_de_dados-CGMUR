@@ -61,6 +61,7 @@ class Settings:
     REPORTS_DIR: str = os.getenv("REPORTS_DIR", "/data/reports")
     MODELS_DIR: str = os.getenv("MODELS_DIR", "/data/models")
     ML_DATA_DIR: str = os.getenv("ML_DATA_DIR", "/data/ml")
+    CEMADEN_PLUVIO_DIR: str = os.getenv("CEMADEN_PLUVIO_DIR", "/data/cemaden_pluvio")
     DEM_DIR: str = os.getenv("DEM_DIR", "/data/dem")
     LOCAL_DEM_DIR: str = os.getenv("LOCAL_DEM_DIR", "/data/dem/local")
     CITYMODEL_DIR: str = os.getenv("CITYMODEL_DIR", "/data/citymodels")

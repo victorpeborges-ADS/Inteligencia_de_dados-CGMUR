@@ -20,19 +20,19 @@ export const TAB_CONTEXT_HINTS: Partial<Record<ActiveTab, TabContextHintConfig>>
   },
   catalog: {
     title: 'Catálogo de dados',
-    body: 'Consulte maturidade por fonte (IBGE, S2ID, CEMADEN…) e identifique lacunas antes de relatórios oficiais.',
+    body: 'Consulte maturidade por fonte (IBGE, S2ID, CEMADEN…) e identifique lacunas antes de exportar relatórios para decisão municipal.',
     ctaTab: 'dashboard',
     ctaLabel: 'Ver painel',
   },
   simulation: {
     title: 'Onde alaga se chover forte?',
-    body: 'Escolha um volume de chuva (ou TR) e rode. O selo de confiança e a nota metodológica explicam o que o modelo pode (e não pode) afirmar.',
+    body: 'Escolha um volume de chuva (ou TR) e rode. Resultado = estimativa territorial (selo Derivado/Estimado) — não é metodologia oficial ANA/CEMADEN/CPRM nem laudo. Leia o painel de limites e a nota metodológica.',
     ctaTab: 'contingency',
     ctaLabel: 'Plano de contingência',
   },
   monitoring: {
     title: 'Monitor operacional',
-    body: 'Alertas CEMADEN em tempo real. Em Laranja/Vermelho, abra a contingência e siga o protocolo de campo.',
+    body: 'Alertas CEMADEN em tempo real. Em Laranja/Vermelho, abra a contingência. O score Sinidu é triagem — não substitui o alerta oficial.',
     ctaTab: 'contingency',
     ctaLabel: 'Abrir contingência',
   },
@@ -43,8 +43,8 @@ export const TAB_CONTEXT_HINTS: Partial<Record<ActiveTab, TabContextHintConfig>>
     ctaLabel: 'Simular cenário',
   },
   assistant: {
-    title: 'Assistente municipal',
-    body: 'Pergunte com o IBGE selecionado — respostas citam fontes oficiais (IBGE, S2ID, CAPAG). Ideal para dúvidas pontuais.',
+    title: 'Agente Sinidu · Modo Normativo',
+    body: 'Legislação e RAG (Lei 12.608, COBRADE, manuais). Dados operacionais do município ficam no FAB Agente Sinidu · Operacional (canto inferior direito).',
   },
   cases: {
     title: 'Casos de referência',
@@ -52,7 +52,7 @@ export const TAB_CONTEXT_HINTS: Partial<Record<ActiveTab, TabContextHintConfig>>
   },
   audit: {
     title: 'Auditoria',
-    body: 'Rastreie geração de PDFs, diagnósticos e comparações — útil para homologação MCID e prestação de contas.',
+    body: 'Rastreie geração de PDFs, diagnósticos e comparações — útil para prestação de contas e revisão interna (não confunde com homologação de metodologia de engenharia).',
   },
   system: {
     title: 'Sistema',

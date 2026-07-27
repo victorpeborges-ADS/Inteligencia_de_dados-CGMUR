@@ -263,9 +263,13 @@ export default function ContingencyWizard({
   const activatePlan = async () => {
     const saved = await saveDraft();
     if (!saved?.id) return;
+    const ok = window.confirm(
+      'Ativar este plano de contingência? Isso arquiva o plano ativo anterior e registra auditoria. Não substitui acionamento oficial da Defesa Civil.',
+    );
+    if (!ok) return;
     setLoading(true);
     try {
-      const active = await api.activateContingencyPlan(saved.id);
+      const active = await api.activateContingencyPlan(saved.id, { confirm: true });
       onPlanActivated?.(active);
     } catch (e: any) {
       setError(e.message);

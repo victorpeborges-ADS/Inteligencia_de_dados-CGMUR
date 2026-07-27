@@ -2,8 +2,9 @@
 
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { api, AIProviderOption, ChatMessage, MunicipalAssistantContext, MunicipalDataSource, RagSource } from '@/utils/api';
-import { Send, Bot, User, FileText, X, Clock, Cpu, Cloud, Key, Link2, CheckCircle2, AlertCircle, ExternalLink } from 'lucide-react';
+import { Send, Bot, User, FileText, X, Clock, Cpu, Cloud, Key, Link2, CheckCircle2, AlertCircle, ExternalLink, Sparkles } from 'lucide-react';
 import GeoReDusReferenceCard from '@/components/DataCatalog/GeoReDusReferenceCard';
+import { useAppStore } from '@/stores/useAppStore';
 
 interface AssistantProps {
   onToggleLayer: (layerName: string) => void;
@@ -17,8 +18,8 @@ type ConnectionStatus = 'idle' | 'testing' | 'connected' | 'error';
 const DEFAULT_GREETING = (ctx?: MunicipalAssistantContext | null): ChatMessage => ({
   role: 'assistant',
   content: ctx
-    ? `Olá! Sou o **Assistente Municipal Sinidu+Clima** para **${ctx.municipio.nome}/${ctx.municipio.uf}**. Tenho acesso a perfil IBGE, CAPAG, score territorial, diagnóstico executivo e documentos normativos. Como posso apoiar a gestão hoje?`
-    : 'Olá! Sou o **Assistente Municipal Sinidu+Clima**, especializado em gestão de risco urbano e climático. Selecione um município para respostas contextualizadas.',
+    ? `Olá! Sou o **Agente Sinidu · Modo Normativo** para **${ctx.municipio.nome}/${ctx.municipio.uf}**. Tenho acesso a perfil IBGE, CAPAG, score territorial, diagnóstico executivo e documentos normativos. Para alertas e simulações em tempo real, use o modo **Operacional** (botão flutuante). Como posso apoiar a gestão hoje?`
+    : 'Olá! Sou o **Agente Sinidu · Modo Normativo**, especializado em gestão de risco urbano e climático. Selecione um município para respostas contextualizadas.',
 });
 
 function storageKey(codigoIbge?: string) {
@@ -61,6 +62,8 @@ function shortSourceLabel(label: string) {
 }
 
 export default function AssistantPanel({ onToggleLayer, onApplyLayers, onFocusMap, codigoIbge }: AssistantProps) {
+  const setAgenteModo = useAppStore((s) => s.setAgenteModo);
+  const setAgenteAberto = useAppStore((s) => s.setAgenteAberto);
   const [messages, setMessages] = useState<ChatMessage[]>([DEFAULT_GREETING()]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
@@ -358,11 +361,32 @@ export default function AssistantPanel({ onToggleLayer, onApplyLayers, onFocusMa
 
   return (
     <div className="relative flex flex-col h-[75vh] bg-zinc-950/40 border border-border rounded-xl overflow-hidden">
+      <div className="px-3 py-2 border-b border-teal-900/40 bg-teal-950/15 flex items-center justify-between gap-2 flex-wrap">
+        <div className="min-w-0">
+          <p className="text-[10px] font-extrabold uppercase tracking-wide text-teal-300">
+            Agente Sinidu · Modo Normativo
+          </p>
+          <p className="text-[9px] text-zinc-400 leading-snug">
+            Legislação e RAG. Dados vivos do município: modo Operacional (FAB).
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={() => {
+            setAgenteModo('operacional');
+            setAgenteAberto(true);
+          }}
+          className="inline-flex items-center gap-1.5 rounded-md border border-teal-700/50 bg-teal-900/30 px-2.5 py-1 text-[10px] font-semibold text-teal-100 hover:bg-teal-900/50"
+        >
+          <Sparkles size={12} />
+          Abrir Operacional
+        </button>
+      </div>
       {municipalContext && (
         <div className="px-3 py-2 border-b border-indigo-900/40 bg-indigo-950/20 flex flex-col gap-1">
           <div className="flex items-center justify-between gap-2 flex-wrap">
             <span className="text-[10px] font-extrabold uppercase tracking-wide text-indigo-200">
-              Assistente Municipal — {municipalContext.municipio.nome}/{municipalContext.municipio.uf}
+              {municipalContext.municipio.nome}/{municipalContext.municipio.uf}
             </span>
             <div className="flex flex-wrap gap-1">
               {municipalContext.score_sinidu != null && (

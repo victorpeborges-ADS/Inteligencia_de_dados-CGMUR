@@ -33,6 +33,22 @@ REFERENCIAS = [
     },
 ]
 
+# Painel único de limites (20h.2) — espelhado na UI de Simulações
+LIMITES_METODOLOGICOS_PAINEL = {
+    "titulo": "Limites metodológicos das simulações",
+    "o_que_e": [
+        "Triagem territorial para priorizar bairros e ensaiar contingência",
+        "Estimativa com DEM, chuva/cenário e proxies de uso do solo",
+        "Selo de qualidade (Oficial | Observado | Estimado | Derivado) por camada/resultado",
+    ],
+    "o_que_nao_e": [
+        "Laudo de engenharia, perícia judicial ou projeto executivo",
+        "Modelagem hidrodinâmica 2D (HEC-RAS / SWMM) nem inventário completo de galerias",
+        "Alerta oficial CEMADEN / Defesa Civil / SMS público",
+        "Metodologia oficial ANA, CPRM ou IDF municipal homologada (salvo selo Oficial explícito)",
+    ],
+}
+
 
 def _tipo_label(tipo: str) -> str:
     t = (tipo or "chuva").lower()
@@ -230,7 +246,9 @@ def build_method_note(
         "referencias": REFERENCIAS,
         "disclaimer": (
             "Documento gerado automaticamente pelo Sinidu+Clima para transparência "
-            "metodológica. Revisar fontes e contexto local antes de uso oficial."
+            "metodológica. Revisar fontes e contexto local antes de uso em decisão "
+            "operacional ou comunicação pública. Não habilita uso como laudo oficial "
+            "nem como alerta CEMADEN/Defesa Civil."
         ),
     }
     nota["markdown"] = render_method_note_markdown(nota)

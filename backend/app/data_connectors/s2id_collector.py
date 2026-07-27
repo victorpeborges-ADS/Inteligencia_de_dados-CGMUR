@@ -314,6 +314,8 @@ def _events_for_municipality(db: Session, muni: Municipio, risk: str = "inundaca
             "lng": centroid.x,
             "lat": centroid.y,
             "referencia": "Registro sintético (centroide municipal)",
+            "data_quality": "estimado",
+            "fonte": "sintetico",
         }]
 
     templates = (
@@ -334,6 +336,8 @@ def _events_for_municipality(db: Session, muni: Municipio, risk: str = "inundaca
             "lng": pt.x,
             "lat": pt.y,
             "referencia": f"Estimativa territorial — {bairro.nome}",
+            "data_quality": "estimado",
+            "fonte": "sintetico",
         })
     return events
 
@@ -374,6 +378,8 @@ def collect_s2id_municipality(
 
     events = _events_for_municipality(db, muni, risk=risk)
     for item in events:
+        quality = item.get("data_quality") or data_quality
+        fonte = item.get("fonte") or ("s2id_curado" if is_pilot else "sintetico")
         db.add(
             HistoricoDesastreS2ID(
                 municipio_id=muni.id,
@@ -381,10 +387,21 @@ def collect_s2id_municipality(
                 data_ocorrencia=item["data"],
                 populacao_afetada=int(item["afetados"]),
                 danos_materiais=float(item["danos"]),
+                data_quality=quality,
+                fonte=fonte,
+                referencia=(item.get("referencia") or "")[:255] or None,
                 geom=from_shape(Point(item["lng"], item["lat"]), srid=4326),
             )
         )
     db.commit()
+
+    # Propaga eventos oficiais para ground truth ML (21c.5)
+    try:
+        from app.services.evento_alagamento_service import sync_official_s2id_to_observed_events
+
+        sync_official_s2id_to_observed_events(db, code)
+    except Exception as exc:
+        logger.warning("Sync evento_alagamento_observado %s: %s", code, exc)
 
     logger.info("S2ID sync %s: %d evento(s) (%s)", code, len(events), data_quality)
     return {
@@ -394,7 +411,12 @@ def collect_s2id_municipality(
         "data_quality": data_quality,
         "pilot": is_pilot,
         "eventos": [
-            {"tipo": e["tipo"], "data": str(e["data"]), "referencia": e.get("referencia")}
+            {
+                "tipo": e["tipo"],
+                "data": str(e["data"]),
+                "referencia": e.get("referencia"),
+                "data_quality": e.get("data_quality") or data_quality,
+            }
             for e in events
         ],
     }

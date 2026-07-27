@@ -40,6 +40,14 @@ def _run_cemaden_sync() -> None:
     try:
         result = sync_cemaden_alerts(db)
         logger.info("CEMADEN sync: %s", result)
+        # Snapshot de pluviômetros (getJson2) — paralelo aos alertas (21b.1)
+        try:
+            from app.data_connectors.cemaden_pluvio_collector import collect_cemaden_pluvio_pilots
+
+            pluvio = collect_cemaden_pluvio_pilots(db)
+            logger.info("CEMADEN pluvio: %s", pluvio.get("total_records"))
+        except Exception as pluv_exc:
+            logger.warning("CEMADEN pluvio no ciclo de alertas: %s", pluv_exc)
         asyncio.run(emit_recent_alerts(db))
     except Exception as exc:
         ok = False

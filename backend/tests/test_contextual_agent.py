@@ -11,7 +11,7 @@ from app.services.contextual_agent_tools import (
 
 
 def test_tool_definitions_count():
-    assert len(TOOL_DEFINITIONS) == 15
+    assert len(TOOL_DEFINITIONS) == 16
     names = {t["function"]["name"] for t in TOOL_DEFINITIONS}
     assert "get_bairros_criticos" in names
     assert "get_score_municipio" in names
@@ -23,12 +23,54 @@ def test_tool_definitions_count():
     assert "get_risco_alagamento_ml" in names
     assert "get_exposicao_edificios" in names
     assert "recommend_cruzamento_camadas" in names
+    assert "explain_mancha_inundacao" in names
 
 
 def test_execute_tool_unknown():
     db = MagicMock()
     result = execute_tool(db, "tool_inexistente", {})
+    assert result["error_code"] == "unknown_tool"
     assert "error" in result
+
+
+def test_execute_tool_invalid_json():
+    result = execute_tool(MagicMock(), "get_score_municipio", "{not-json")
+    assert result["error_code"] == "invalid_args"
+
+
+def test_execute_tool_missing_required():
+    result = execute_tool(MagicMock(), "get_alerta_vivo", {})
+    assert result["error_code"] == "invalid_args"
+    assert "cod_ibge" in result.get("missing", [])
+
+
+@patch(
+    "app.services.method_note_service.build_method_note",
+    return_value={
+        "secoes": [{"corpo": "Nota de exemplo"}],
+        "disclaimer": "Não é laudo",
+    },
+)
+def test_explain_mancha_inundacao(_mock_note):
+    from app.services.contextual_agent_tools import explain_mancha_inundacao
+
+    db = MagicMock()
+    muni = MagicMock(nome="Recife", uf="PE")
+    db.query.return_value.filter.return_value.first.return_value = muni
+
+    out = explain_mancha_inundacao(db, "2611606", precipitacao_mm=100)
+    assert out["selo_qualidade"] == "Derivado"
+    assert out["precipitacao_mm"] == 100.0
+    assert out["o_que_e"]
+    assert out["o_que_nao_e"]
+
+    via = execute_tool(
+        db,
+        "explain_mancha_inundacao",
+        {"cod_ibge": "2611606", "precipitacao_mm": 80},
+    )
+    assert via.get("error_code") is None
+    assert via["selo_qualidade"] == "Derivado"
 
 
 @patch("app.services.contextual_agent_tools.audit_municipio")
@@ -135,22 +177,39 @@ def test_get_alerta_vivo(mock_snap):
     mock_snap.assert_called_once()
 
 
+@patch("app.services.weather_monitor.resolve_risk_probability", return_value=(0.55, "precip_curve"))
+@patch("ml.model_policy.load_model_meta", return_value={"model_kind": "baseline_synthetic"})
+@patch("ml.model_policy.production_model_ready", return_value=False)
+def test_get_risco_alagamento_ml_heuristic_when_synthetic(mock_ready, mock_meta, mock_resolve):
+    from app.services.contextual_agent_tools import get_risco_alagamento_ml
+
+    out = get_risco_alagamento_ml(MagicMock(), "2611606", precip_24h=90)
+    assert out["precip_24h_mm"] == 90.0
+    assert out["production_ready"] is False
+    assert out["score_kind"] == "score_heuristico_chuva"
+    assert out["risk_probability"] == 0.55
+    mock_resolve.assert_called_once()
+
+
 @patch("ml.predictor.predictor.predict")
-@patch("ml.bootstrap.ensure_model_for", return_value=True)
-def test_get_risco_alagamento_ml(mock_ensure, mock_predict):
+@patch("ml.model_policy.production_model_ready", return_value=True)
+def test_get_risco_alagamento_ml_full(mock_ready, mock_predict):
     from app.services.contextual_agent_tools import get_risco_alagamento_ml
 
     mock_predict.return_value = {
         "risk_probability": 0.72,
         "risk_level": "ALTO",
         "threshold_mm_24h": 65.0,
-        "model_kind": "baseline_synthetic",
+        "model_kind": "full",
+        "score_kind": "probabilidade_modelo",
+        "model_auc_roc": 0.81,
         "disclaimer": "demo",
     }
     out = get_risco_alagamento_ml(MagicMock(), "2611606", precip_24h=90)
     assert out["risk_level"] == "ALTO"
-    assert out["precip_24h_mm"] == 90.0
-    mock_ensure.assert_called_once()
+    assert out["production_ready"] is True
+    assert out["model_kind"] == "full"
+    mock_predict.assert_called_once()
 
 
 @patch("app.services.contextual_agent_tools.compare_heat_simulation_with_lst")

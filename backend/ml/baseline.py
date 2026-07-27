@@ -11,19 +11,28 @@ import numpy as np
 import pandas as pd
 from sklearn.ensemble import RandomForestClassifier
 
-from ml.constants import FEATURE_COLUMNS, ML_TARGET_IBGE_CODES, MODEL_VERSION, RF_PARAMS
+from ml.constants import (
+    FEATURE_COLUMNS,
+    FEATURE_DEFAULTS,
+    ML_TARGET_IBGE_CODES,
+    MODEL_VERSION,
+    RF_PARAMS,
+)
 from ml.paths import ensure_dirs, model_meta_path, model_path
 
 logger = logging.getLogger(__name__)
 
-# Terreno típico por município (proxy MapBiomas + DEM)
+# Terreno típico por município (proxy MapBiomas + DEM) + defaults 21d
+_BASE_TERRAIN = {
+    "2611606": {"impermeabilizacao_pct": 62.0, "cobertura_vegetal_pct": 8.0, "declividade_media": 2.8, "water_proximity": 0.18},
+    "2800308": {"impermeabilizacao_pct": 57.0, "cobertura_vegetal_pct": 11.0, "declividade_media": 2.2, "water_proximity": 0.14},
+    "2927408": {"impermeabilizacao_pct": 55.0, "cobertura_vegetal_pct": 12.0, "declividade_media": 4.5, "water_proximity": 0.16},
+    "3550308": {"impermeabilizacao_pct": 72.0, "cobertura_vegetal_pct": 6.0, "declividade_media": 3.5, "water_proximity": 0.08},
+    "3304557": {"impermeabilizacao_pct": 68.0, "cobertura_vegetal_pct": 7.0, "declividade_media": 5.5, "water_proximity": 0.20},
+    "5300108": {"impermeabilizacao_pct": 45.0, "cobertura_vegetal_pct": 22.0, "declividade_media": 2.0, "water_proximity": 0.05},
+}
 TERRAIN_PRESETS: dict[str, dict[str, float]] = {
-    "2611606": {"impermeabilizacao_pct": 62.0, "cobertura_vegetal_pct": 8.0, "declividade_media": 2.8},   # Recife
-    "2800308": {"impermeabilizacao_pct": 57.0, "cobertura_vegetal_pct": 11.0, "declividade_media": 2.2},  # Aracaju
-    "2927408": {"impermeabilizacao_pct": 55.0, "cobertura_vegetal_pct": 12.0, "declividade_media": 4.5},  # Salvador
-    "3550308": {"impermeabilizacao_pct": 72.0, "cobertura_vegetal_pct": 6.0, "declividade_media": 3.5},   # São Paulo
-    "3304557": {"impermeabilizacao_pct": 68.0, "cobertura_vegetal_pct": 7.0, "declividade_media": 5.5},   # Rio de Janeiro
-    "5300108": {"impermeabilizacao_pct": 45.0, "cobertura_vegetal_pct": 22.0, "declividade_media": 2.0},  # Brasília
+    code: {**FEATURE_DEFAULTS, **vals} for code, vals in _BASE_TERRAIN.items()
 }
 
 
@@ -56,6 +65,7 @@ def _find_threshold_mm(model: RandomForestClassifier, terrain_row: dict[str, flo
             "precip_72h": float(mm) * 1.7,
             "precip_7d": float(mm) * 2.5,
             "mes_do_ano": 3.0,
+            **FEATURE_DEFAULTS,
             **terrain_row,
         }
         vec = np.array([[row[c] for c in FEATURE_COLUMNS]])
@@ -75,11 +85,19 @@ def _synthetic_labeled_frame(terrain: dict[str, float], codigo_ibge: str, n: int
     precip_48h = precip_24h * rng.uniform(1.15, 1.85, n)
     precip_72h = precip_24h * rng.uniform(1.35, 2.25, n)
     precip_7d = precip_24h * rng.uniform(1.8, 3.8, n)
+    precip_5d = precip_24h * rng.uniform(1.2, 2.2, n)
+    precip_10d = precip_24h * rng.uniform(2.0, 4.0, n)
+    precip_30d = precip_24h * rng.uniform(3.5, 8.0, n)
     mes = rng.integers(1, 13, n).astype(float)
+    doy = rng.integers(1, 366, n).astype(float)
+    saz_sin = np.sin(2.0 * np.pi * doy / 365.25)
+    saz_cos = np.cos(2.0 * np.pi * doy / 365.25)
 
     imperm = terrain["impermeabilizacao_pct"]
     veg = terrain["cobertura_vegetal_pct"]
     slope = terrain["declividade_media"]
+    susc = float(terrain.get("suscetibilidade_hand", FEATURE_DEFAULTS["suscetibilidade_hand"]))
+    antecedente = precip_30d / 100.0
 
     # Score logístico simplificado (calibrado para threshold ~60–80 mm em cidades costeiras)
     logit = (
@@ -87,27 +105,46 @@ def _synthetic_labeled_frame(terrain: dict[str, float], codigo_ibge: str, n: int
         + 0.028 * precip_24h
         + 0.012 * precip_48h
         + 0.006 * precip_72h
+        + 0.004 * precip_30d
         + 0.018 * imperm
         - 0.022 * veg
         + 0.035 * slope
-        + 0.08 * np.sin((mes - 3) * np.pi / 6)  # sazonalidade chuvosa
+        + 0.6 * susc
+        + 0.08 * saz_sin  # sazonalidade chuvosa
+        + 0.05 * antecedente
         + rng.normal(0, 0.35, n)
     )
     prob = 1.0 / (1.0 + np.exp(-logit))
     label = (prob >= 0.5).astype(int)
 
-    return pd.DataFrame({
+    # Intensidade sintética coerente com ~6 h de chuva
+    dur = np.where(precip_24h > 0, 6.0, 0.0)
+    intens_media = np.where(precip_24h > 0, precip_24h / 6.0, 0.0)
+    intens_pico = intens_media * 2.0
+    frame = {
         "precip_24h": precip_24h,
         "precip_48h": precip_48h,
         "precip_72h": precip_72h,
         "precip_7d": precip_7d,
+        "precip_5d": precip_5d,
+        "precip_10d": precip_10d,
+        "precip_30d": precip_30d,
         "mes_do_ano": mes,
+        "sazonalidade_sin": saz_sin,
+        "sazonalidade_cos": saz_cos,
         "impermeabilizacao_pct": imperm,
         "cobertura_vegetal_pct": veg,
         "declividade_media": slope,
+        "duracao_chuva_h": dur,
+        "intensidade_media_mm_h": intens_media,
+        "intensidade_pico_proxy_mm_h": intens_pico,
+        "razao_intensidade_idf_tr2": intens_pico / 48.0,
         "label": label,
         "codigo_ibge": codigo_ibge,
-    })
+    }
+    for key, default in FEATURE_DEFAULTS.items():
+        frame.setdefault(key, float(terrain.get(key, default)))
+    return pd.DataFrame(frame)
 
 
 def terrain_from_municipality(db, codigo_ibge: str) -> dict[str, float]:

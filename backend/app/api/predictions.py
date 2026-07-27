@@ -6,7 +6,8 @@ from app.schemas import FloodRiskPredictionRequest, FloodRiskPredictionResponse
 from app.security.municipio_access import assert_codigo_ibge_access
 from ml.bootstrap import ensure_flood_models, ensure_model_for
 from ml.constants import ML_TARGET_IBGE_CODES
-from ml.paths import model_meta_path, model_path
+from ml.model_policy import load_model_meta, public_auc
+from ml.paths import model_path
 from ml.predictor import predictor
 
 router = APIRouter()
@@ -14,29 +15,36 @@ router = APIRouter()
 
 @router.get("/flood-risk/status")
 def flood_model_status():
-    """Status dos modelos ML por município-alvo."""
+    """Status dos modelos ML por município-alvo (AUC só para model_kind=full)."""
     models = []
     for codigo in ML_TARGET_IBGE_CODES:
         p = model_path(codigo)
-        meta = {}
-        meta_path = model_meta_path(codigo)
-        if meta_path.exists():
-            import json
-            meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        meta = load_model_meta(codigo) if p.exists() else {}
+        kind = meta.get("model_kind") if meta else None
+        if p.exists() and not kind:
+            kind = "full"
+        spatial = (meta.get("spatial_validation") or (meta.get("validation") or {}).get("spatial") or {})
         models.append({
             "codigo_ibge": codigo,
             "ready": p.exists(),
-            "model_kind": meta.get("model_kind", "full" if p.exists() else None),
-            "auc_roc_cv": meta.get("auc_roc_cv"),
-            "threshold_mm_24h": meta.get("threshold_mm_24h"),
+            "production_ready": kind == "full",
+            "model_kind": kind,
+            "auc_roc_cv": public_auc(meta) if meta else None,
+            "threshold_mm_24h": meta.get("threshold_mm_24h") if meta else None,
+            "brier_model": (meta.get("validation") or {}).get("brier_model") if meta else None,
+            "spatial_hit_rate": spatial.get("hit_rate"),
+            "spatial_acordo": spatial.get("acordo"),
+            "algorithm": meta.get("algorithm") if meta else None,
         })
     return {
         "ready_count": sum(1 for m in models if m["ready"]),
+        "production_ready_count": sum(1 for m in models if m["production_ready"]),
         "total": len(models),
         "on_demand_baseline": True,
         "note": (
-            f"Qualquer município no banco recebe baseline on-demand; "
-            f"{len(ML_TARGET_IBGE_CODES)} alvos têm artefato dedicado (treino full via etl_flood_ml)."
+            "Monitor operacional só usa ML com model_kind=full. "
+            "Artefatos baseline_synthetic alimentam apenas análise experimental na aba Simulações "
+            "e são rotulados como score sintético (Fase 21a)."
         ),
         "models": models,
     }
@@ -65,6 +73,7 @@ def predict_flood_risk(body: FloodRiskPredictionRequest, request: Request, db: S
             precip_48h=body.precip_48h,
             precip_72h=body.precip_72h,
             mes_do_ano=body.mes_do_ano,
+            precip_7d=body.precip_7d,
         )
     except FileNotFoundError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc

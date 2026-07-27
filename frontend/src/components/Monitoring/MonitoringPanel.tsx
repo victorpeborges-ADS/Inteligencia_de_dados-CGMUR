@@ -261,7 +261,7 @@ export default function MonitoringPanel({ codigoIbge, municipioNome, onActivateC
       {criticalPopup && (
         <div className="fixed inset-0 z-[2000] flex items-center justify-center bg-black/70 p-4">
           <div className="max-w-md rounded-2xl border border-red-500/50 bg-zinc-950 p-6 shadow-2xl">
-            <h3 className="text-lg font-bold text-red-300">Alerta crítico — probabilidade &gt; 75%</h3>
+            <h3 className="text-lg font-bold text-red-300">Alerta crítico — score de risco &gt; 75%</h3>
             <p className="mt-3 text-sm text-zinc-300">{criticalPopup.mensagem}</p>
             <div className="mt-5 flex gap-2">
               <button
@@ -357,7 +357,7 @@ export default function MonitoringPanel({ codigoIbge, municipioNome, onActivateC
                 className="inline-flex items-center justify-center gap-1 rounded-lg border border-rose-500/40 bg-rose-950/40 px-2.5 py-1.5 text-[9px] font-bold uppercase tracking-wider text-rose-100 hover:bg-rose-900/50"
               >
                 <Megaphone size={11} />
-                Disseminar alerta
+                Disseminar aviso municipal
               </button>
               {onActivateContingency && (
                 <button
@@ -384,18 +384,74 @@ export default function MonitoringPanel({ codigoIbge, municipioNome, onActivateC
       />
 
       {data?.risk_probability != null && (
-        <p className="text-xs text-zinc-400">
-          Probabilidade de evento crítico:{' '}
-          <strong className="text-amber-300">{(data.risk_probability * 100).toFixed(0)}%</strong>
-          {data.risk_source === 'ml' && (
-            <span className="ml-1 rounded bg-violet-500/15 px-1.5 py-0.5 text-[9px] font-bold uppercase text-violet-200">
-              ML
+        <div className="rounded-xl border border-zinc-800 bg-zinc-950/40 px-3 py-2.5">
+          <p className="text-xs text-zinc-400">
+            {data.selo_previsao?.score_kind === 'probabilidade_modelo' || data.risk_source === 'ml_full'
+              ? 'Probabilidade de evento crítico: '
+              : 'Score de chuva: '}
+            <strong className="text-amber-300">{(data.risk_probability * 100).toFixed(0)}%</strong>
+            <span className="ml-1.5 rounded bg-teal-500/15 px-1.5 py-0.5 text-[9px] font-bold uppercase text-teal-200">
+              {data.selo_previsao?.label_ui
+                || (data.risk_source === 'ml_full' ? 'ML full · Derivado' : 'Heurística · Estimado')}
             </span>
+            {data.selo_previsao?.selo_qualidade && (
+              <span className="ml-1 rounded bg-zinc-800 px-1.5 py-0.5 text-[9px] font-bold uppercase text-zinc-300">
+                {data.selo_previsao.selo_qualidade}
+              </span>
+            )}
+            {data.precip_72h_mm != null && (
+              <span className="text-zinc-600"> · Precip. 72h: {data.precip_72h_mm} mm</span>
+            )}
+            {data.cemaden_obs_mm != null && (
+              <span className="text-zinc-600">
+                {' '}· CEMADEN obs.: {data.cemaden_obs_mm} mm
+                {data.cemaden_estacoes != null ? ` (${data.cemaden_estacoes} est.)` : ''}
+              </span>
+            )}
+          </p>
+          {data.selo_previsao?.narrativa && (
+            <p className="mt-1.5 text-[10px] leading-snug text-zinc-500">{data.selo_previsao.narrativa}</p>
           )}
-          {data.precip_72h_mm != null && (
-            <span className="text-zinc-600"> · Precip. 72h: {data.precip_72h_mm} mm</span>
+          {data.selo_previsao?.disclaimer && (
+            <p className="mt-1 text-[9px] leading-snug text-zinc-600">{data.selo_previsao.disclaimer}</p>
           )}
-        </p>
+        </div>
+      )}
+
+      {data?.acerto_previsoes && (
+        <div className="rounded-xl border border-emerald-500/25 bg-emerald-950/20 p-3">
+          <p className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-emerald-300/90">
+            <CheckCircle2 size={12} />
+            Acerto das previsões
+          </p>
+          {data.acerto_previsoes.disponivel && data.acerto_previsoes.acerto_pct != null ? (
+            <>
+              <p className="mt-1.5 text-sm font-extrabold text-zinc-100">
+                Acertamos{' '}
+                <span className="text-emerald-300">{Math.round(data.acerto_previsoes.acerto_pct)}%</span>
+                {' '}das últimas{' '}
+                <span className="text-zinc-200">{data.acerto_previsoes.n_verificadas}</span>
+                {' '}previsões
+              </p>
+              <p className="mt-1 text-[11px] leading-snug text-zinc-500">
+                {data.acerto_previsoes.amostra_suficiente
+                  ? 'Comparação previsão × evento oficial no horizonte de 24h.'
+                  : 'Amostra ainda pequena — interprete com cautela.'}
+                {data.acerto_previsoes.n_pendentes > 0
+                  ? ` · ${data.acerto_previsoes.n_pendentes} aguardando desfecho`
+                  : ''}
+              </p>
+            </>
+          ) : (
+            <p className="mt-1.5 text-[11px] leading-snug text-zinc-400">
+              {data.acerto_previsoes.narrativa ||
+                'Ainda acumulando verificação. Sincronize o Monitor para registrar previsões.'}
+              {data.acerto_previsoes.n_pendentes > 0
+                ? ` (${data.acerto_previsoes.n_pendentes} pendentes de desfecho)`
+                : ''}
+            </p>
+          )}
+        </div>
       )}
 
       {/* Card Análise de Cenário */}

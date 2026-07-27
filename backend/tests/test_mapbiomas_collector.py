@@ -46,7 +46,10 @@ def test_recife_landcover_not_horizontal_bands():
         assert not _geometry_is_horizontal_band(geom, poly)
 
 
-def test_build_landcover_series_recife_reference():
+def test_build_landcover_series_recife_reference(monkeypatch):
+    import app.data_connectors.mapbiomas_collector as mc
+
+    monkeypatch.setattr(mc, "csv_index", lambda: {})
     series = build_landcover_series("2611606", area_km2=218.0, populacao=1_600_000)
     urban_2024 = next(r for r in series if r["ano"] == 2024 and r["classe_uso"] == "Área Urbana")
     veg_2024 = next(r for r in series if r["ano"] == 2024 and r["classe_uso"] == "Vegetação / Floresta")
@@ -57,12 +60,39 @@ def test_build_landcover_series_recife_reference():
     assert veg_2024["area_ha"] / (218.0 * 100) * 100 == pytest.approx(8.0, rel=0.05)
 
 
-def test_build_landcover_series_other_city_derivado():
+def test_build_landcover_series_other_city_derivado(monkeypatch):
+    import app.data_connectors.mapbiomas_collector as mc
+
+    monkeypatch.setattr(mc, "csv_index", lambda: {})
     series = build_landcover_series("3550308", area_km2=1521.0, populacao=11_000_000)
     urban = [r for r in series if r["classe_uso"] == "Área Urbana"]
     assert len(urban) == 6
     assert all(r["data_quality"] == "derivado" for r in urban)
     assert urban[-1]["area_ha"] > urban[0]["area_ha"]
+
+
+def test_build_landcover_series_from_official_csv(monkeypatch, tmp_path):
+    import app.data_connectors.mapbiomas_collector as mc
+
+    csv_path = tmp_path / "municipios_cobertura.csv"
+    csv_path.write_text(
+        "codigo_ibge,ano,classe_uso,area_ha\n"
+        "3550308,2024,Área Urbana,90518.606\n"
+        "3550308,2024,Vegetação / Floresta,41061.595\n"
+        "3550308,2024,Corpo d'água,6822.377\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("MAPBIOMAS_STATS_DIR", str(tmp_path))
+    monkeypatch.setattr(mc, "_bundled_pilot_csv", lambda: None)
+    mc._CSV_INDEX = None
+    series = build_landcover_series("3550308", area_km2=1521.0, populacao=11_000_000)
+    urban = next(r for r in series if r["ano"] == 2024 and r["classe_uso"] == "Área Urbana")
+    water = next(r for r in series if r["ano"] == 2024 and r["classe_uso"] == "Corpo d'água")
+    assert urban["data_quality"] == "oficial"
+    assert urban["area_ha"] == pytest.approx(90518.606)
+    assert water["data_quality"] == "oficial"
+    assert water["area_ha"] == pytest.approx(6822.377)
+    mc._CSV_INDEX = None
 
 
 def test_normalize_class_labels():

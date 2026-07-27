@@ -74,6 +74,10 @@ class HistoricoDesastreS2ID(Base):
     data_ocorrencia = Column(Date, nullable=False)
     populacao_afetada = Column(Integer, default=0)
     danos_materiais = Column(Numeric(15, 2), default=0.0)
+    # oficial_curado | estimado — ML só treina em oficial* (Fase 21c.2)
+    data_quality = Column(String(30), nullable=False, default="estimado", index=True)
+    fonte = Column(String(80), nullable=True)
+    referencia = Column(String(255), nullable=True)
     geom = Column(Geometry(geometry_type="POINT", srid=4326, spatial_index=True))
 
     municipio = relationship("Municipio", back_populates="desastres")
@@ -579,6 +583,121 @@ class WeatherForecastCache(Base):
     risk_probability = Column(Numeric(5, 4), default=0)
     raw_payload = Column(JSON, nullable=True)
     fetched_at = Column(DateTime, default=utc_now, nullable=False, index=True)
+
+
+class WeatherForecastArchive(Base):
+    """Histórico indefinido de previsões (antes apagado após 7 dias — Fase 21a.3)."""
+
+    __tablename__ = "weather_forecast_archive"
+
+    id = Column(Integer, primary_key=True, index=True)
+    original_id = Column(Integer, nullable=True)
+    codigo_ibge = Column(String(7), nullable=False, index=True)
+    lat = Column(Numeric(10, 6), nullable=True)
+    lng = Column(Numeric(10, 6), nullable=True)
+    precip_24h_mm = Column(Numeric(8, 2), default=0)
+    precip_72h_mm = Column(Numeric(8, 2), default=0)
+    risk_probability = Column(Numeric(5, 4), default=0)
+    raw_payload = Column(JSON, nullable=True)
+    fetched_at = Column(DateTime, nullable=False, index=True)
+    archived_at = Column(DateTime, default=utc_now, nullable=False, index=True)
+
+
+class MonitoringAlertArchive(Base):
+    """Histórico indefinido de alertas (Fase 21a.3)."""
+
+    __tablename__ = "monitoring_alerts_archive"
+
+    id = Column(Integer, primary_key=True, index=True)
+    original_id = Column(Integer, nullable=True)
+    municipio_id = Column(Integer, nullable=True)
+    codigo_ibge = Column(String(7), nullable=False, index=True)
+    tipo = Column(String(30), nullable=False)
+    nivel = Column(String(20), nullable=False, default="VERDE")
+    titulo = Column(String(255), nullable=False)
+    mensagem = Column(Text, nullable=True)
+    payload = Column(JSON, default=dict)
+    created_at = Column(DateTime, nullable=False, index=True)
+    expires_at = Column(DateTime, nullable=True)
+    archived_at = Column(DateTime, default=utc_now, nullable=False, index=True)
+
+
+class PrevisaoVerificacao(Base):
+    """Registro previsão → desfecho para medir acerto do sistema (Fase 21a.4)."""
+
+    __tablename__ = "previsao_verificacao"
+
+    id = Column(Integer, primary_key=True, index=True)
+    codigo_ibge = Column(String(7), nullable=False, index=True)
+    municipio_id = Column(Integer, ForeignKey("municipios.id", ondelete="SET NULL"), nullable=True)
+    previsto_em = Column(DateTime, default=utc_now, nullable=False, index=True)
+    horizonte_h = Column(Integer, default=24, nullable=False)
+    precip_24h_mm = Column(Numeric(8, 2), nullable=True)
+    precip_48h_mm = Column(Numeric(8, 2), nullable=True)
+    precip_72h_mm = Column(Numeric(8, 2), nullable=True)
+    precip_7d_mm = Column(Numeric(8, 2), nullable=True)
+    risk_score = Column(Numeric(5, 4), nullable=False)
+    risk_source = Column(String(40), nullable=False)  # precip_curve | ml_full
+    score_kind = Column(String(40), nullable=True)  # score_heuristico_chuva | probabilidade_modelo
+    model_kind = Column(String(40), nullable=True)
+    desfecho_ocorrido = Column(Boolean, nullable=True)  # None = ainda não verificado
+    desfecho_verificado_em = Column(DateTime, nullable=True)
+    desfecho_fonte = Column(String(80), nullable=True)
+    payload = Column(JSON, default=dict)
+
+
+class SeriePluviometricaObservada(Base):
+    """Chuva persistida no PostGIS (Fase 21b.6) — reanálise, CEMADEN CSV, ANA, etc."""
+
+    __tablename__ = "serie_pluviometrica_observada"
+    __table_args__ = (
+        Index(
+            "ux_serie_pluvio_fonte_estacao_ts_muni",
+            "fonte",
+            "estacao_id",
+            "observed_at",
+            "codigo_ibge",
+            unique=True,
+        ),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    codigo_ibge = Column(String(7), nullable=False, index=True)
+    municipio_id = Column(Integer, ForeignKey("municipios.id", ondelete="SET NULL"), nullable=True)
+    estacao_id = Column(String(64), nullable=False, index=True)
+    estacao_nome = Column(String(120), nullable=True)
+    lat = Column(Numeric(10, 6), nullable=True)
+    lng = Column(Numeric(10, 6), nullable=True)
+    observed_at = Column(DateTime, nullable=False, index=True)
+    precip_mm = Column(Numeric(8, 2), nullable=False, default=0)
+    granularidade = Column(String(20), nullable=False, default="diaria")  # 10min | horaria | diaria
+    # oficial (estação) | reanalise | estimado
+    data_quality = Column(String(30), nullable=False, default="reanalise", index=True)
+    fonte = Column(String(40), nullable=False, index=True)  # cemaden | ana | inmet | open_meteo_era5
+    ingestido_em = Column(DateTime, default=utc_now, nullable=False)
+    raw_payload = Column(JSON, nullable=True)
+
+
+class EventoAlagamentoObservado(Base):
+    """Ground truth de alagamento/inundação (Fase 21c.5) — independente do S2ID sintético."""
+
+    __tablename__ = "evento_alagamento_observado"
+
+    id = Column(Integer, primary_key=True, index=True)
+    codigo_ibge = Column(String(7), nullable=False, index=True)
+    municipio_id = Column(Integer, ForeignKey("municipios.id", ondelete="SET NULL"), nullable=True)
+    tipo = Column(String(50), nullable=False)  # Inundação | Alagamento Urbano | Enxurrada
+    inicio_em = Column(DateTime, nullable=False, index=True)
+    fim_em = Column(DateTime, nullable=True)
+    severidade = Column(String(20), nullable=True)  # baixa | media | alta | critica
+    populacao_afetada = Column(Integer, nullable=True)
+    precip_acumulada_mm = Column(Numeric(8, 2), nullable=True)
+    fonte = Column(String(80), nullable=False)  # s2id_curado | defesa_civil | campo | ana_cota
+    data_quality = Column(String(30), nullable=False, default="oficial", index=True)
+    referencia = Column(String(255), nullable=True)
+    geom = Column(Geometry(geometry_type="GEOMETRY", srid=4326, spatial_index=True))
+    criado_em = Column(DateTime, default=utc_now, nullable=False)
+    payload = Column(JSON, default=dict)
 
 
 class MunicipioGeoportalPublicacao(Base):

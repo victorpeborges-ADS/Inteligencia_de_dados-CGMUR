@@ -630,6 +630,12 @@ class FloodRiskPredictionRequest(BaseModel):
     precip_24h: float = Field(..., ge=0, le=500)
     precip_48h: float = Field(..., ge=0, le=800)
     precip_72h: float = Field(..., ge=0, le=1000)
+    precip_7d: Optional[float] = Field(
+        default=None,
+        ge=0,
+        le=2000,
+        description="Acumulado 7 dias (antecedente). Se omitido, usa precip_72h como piso — sem proxy.",
+    )
     mes_do_ano: Optional[int] = Field(default=None, ge=1, le=12)
 
 
@@ -646,6 +652,80 @@ class FloodFeatureImportance(BaseModel):
     importance: float
 
 
+class FloodDomainContribution(BaseModel):
+    id: str
+    label: str
+    importance_share: float
+    contribution: float
+    contribution_pct: float
+    importance_pct: float
+
+
+class FloodExplanation(BaseModel):
+    disponivel: bool
+    method: str
+    domains: list[FloodDomainContribution] = []
+    top_features: list[dict] = []
+    narrativa: str | None = None
+    nota: str | None = None
+
+
+class FloodImpactMeasure(BaseModel):
+    id: Optional[str] = None
+    titulo: Optional[str] = None
+    custo: Optional[str] = None
+    horizonte: Optional[str] = None
+    prioridade: Optional[str] = None
+    orgao: Optional[str] = None
+    motivo: Optional[str] = None
+
+
+class FloodImpactBairro(BaseModel):
+    bairro_id: int
+    bairro_nome: str
+    risk_probability: float
+    populacao_bairro: Optional[int] = None
+    populacao_exposta_estimada: Optional[int] = None
+    suscetibilidade_local: Optional[float] = None
+
+
+class FloodImpact(BaseModel):
+    disponivel: bool
+    protocol: Optional[str] = None
+    nivel_operacional: Optional[str] = None
+    n_bairros_prioritarios: Optional[int] = None
+    bairros_prioritarios: List[FloodImpactBairro] = []
+    populacao_municipio: Optional[int] = None
+    populacao_exposta_estimada: Optional[int] = None
+    pct_populacao_exposta: Optional[float] = None
+    porte: Optional[str] = None
+    capag_nota: Optional[str] = None
+    medidas_cabiveis: List[FloodImpactMeasure] = []
+    narrativa: Optional[str] = None
+    nota: Optional[str] = None
+    reason: Optional[str] = None
+
+
+
+class FloodHorizonForecast(BaseModel):
+    horizon: str
+    horizon_d: int
+    risk_probability: float
+    ci_low: Optional[float] = None
+    ci_high: Optional[float] = None
+    precip_24h_mm: Optional[float] = None
+    uncertainty_method: Optional[str] = None
+
+
+class FloodUncertainty(BaseModel):
+    ci_low: float
+    ci_high: float
+    std: Optional[float] = None
+    method: Optional[str] = None
+    confidence_level: Optional[float] = None
+    nota: Optional[str] = None
+
+
 class FloodRiskPredictionResponse(BaseModel):
     codigo_ibge: str
     municipio_slug: str
@@ -655,10 +735,17 @@ class FloodRiskPredictionResponse(BaseModel):
     threshold_mm_24h: float
     mm_acima_limiar: Optional[float] = None
     top_features: Optional[List[FloodFeatureImportance]] = None
+    explanation: Optional[FloodExplanation] = None
+    impact: Optional[FloodImpact] = None
+    horizons: Optional[List[FloodHorizonForecast]] = None
+    uncertainty: Optional[FloodUncertainty] = None
     critical_neighborhoods: List[CriticalNeighborhood]
     flood_geojson: dict
     model_version: str
     model_kind: Optional[str] = None
     data_quality: str
+    score_kind: Optional[str] = None
+    production_ready: Optional[bool] = None
+    features_used: Optional[dict] = None
     model_auc_roc: Optional[float] = None
     disclaimer: str

@@ -83,6 +83,9 @@ type AppStore = {
   setCompareModalOpen: (open: boolean) => void;
   agenteAberto: boolean;
   setAgenteAberto: (aberto: boolean) => void;
+  /** Produto único Agente Sinidu — operacional (FAB/tools) × normativo (aba Assistente/RAG). */
+  agenteModo: 'operacional' | 'normativo';
+  setAgenteModo: (modo: 'operacional' | 'normativo') => void;
   agenteMensagens: AgentMessage[];
   addAgenteMensagem: (msg: Omit<AgentMessage, 'id' | 'ts'> & Partial<Pick<AgentMessage, 'id' | 'ts'>>) => void;
   clearAgenteMensagens: () => void;
@@ -234,6 +237,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
       agenteAberto: aberto,
       agenteNaoLidas: aberto ? 0 : state.agenteNaoLidas,
     })),
+  agenteModo: 'operacional',
+  setAgenteModo: (modo) => set({ agenteModo: modo }),
   agenteMensagens: [],
   addAgenteMensagem: (msg) =>
     set((state) => ({

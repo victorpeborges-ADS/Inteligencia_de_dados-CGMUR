@@ -10,6 +10,16 @@ from app.services.risk_traffic_light_service import (
     _resolve_low_maturity,
     build_risk_panel,
 )
+from app.services.unified_risk_model import ml_prob_to_nivel
+
+
+def test_ml_prob_to_nivel():
+    assert ml_prob_to_nivel(0.8) == "VERMELHO"
+    assert ml_prob_to_nivel(0.6) == "LARANJA"
+    assert ml_prob_to_nivel(0.4) == "AMARELO"
+    assert ml_prob_to_nivel(0.1) == "VERDE"
+    assert ml_prob_to_nivel(None) == "VERDE"
+
 
 
 def test_nivel_from_score_thresholds():
@@ -197,7 +207,11 @@ def test_build_risk_panel_consolidates_status(
     assert panel["perfil"]["porte"] == "metropole"
     assert len(panel["medidas_recomendadas"]) == 1
     assert panel["ciclo"] == "agir"
-    assert panel["versao"] == "17g.2h"
+    assert panel["versao"] == "21f.5"
+    assert "ml_preditivo" in panel["componentes"]
+    assert panel["modelo_risco"]["versao"] == "21f.5"
+    assert "ml_preditivo" in panel["modelo_risco"]["regra_status"]
+
 
 
 @patch("app.services.risk_traffic_light_service.recommend_measures")

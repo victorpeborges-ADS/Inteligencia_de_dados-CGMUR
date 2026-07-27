@@ -126,3 +126,39 @@ def resolve_drainage_capacity(
             )
         ),
     }
+
+
+def municipal_drainage_features(db: Session, codigo_ibge: str) -> dict[str, float]:
+    """Features ML municipais de drenagem (capacidade mm/h e saturação sob 40 mm/1h)."""
+    code = str(codigo_ibge).zfill(7)[:7]
+    muni = db.query(Municipio).filter(Municipio.codigo_ibge == code).first()
+    if not muni:
+        return {"capacidade_drenagem_mm_h": 18.0, "saturacao_drenagem_40mm": 0.5}
+
+    resolved = resolve_drainage_capacity(db, muni, precip_mm=40.0, duracao_h=1.0)
+    cap = float(resolved["capacidade_mm_h"])
+    # Fração saturada sob chuva de referência 40 mm/h (0 = folga, 1 = satura)
+    rem = float(resolved["removido_mm"])
+    sat = 0.0 if rem >= 40.0 else round(1.0 - (rem / 40.0), 3)
+    return {
+        "capacidade_drenagem_mm_h": round(cap, 2),
+        "saturacao_drenagem_40mm": sat,
+    }
+
+
+def bairro_drainage_capacity_mm_h(
+    municipal_mm_h: float,
+    *,
+    impermeabilizacao_pct: float,
+    water_proximity: float = 0.0,
+) -> float:
+    """Espacializa capacidade municipal por bairro (21d.4).
+
+    Mais impermeável / mais próximo d'água → capacidade efetiva menor
+    (assoreamento, vazão de pico, entupimento).
+    """
+    base = float(municipal_mm_h)
+    urban = max(0.0, min(100.0, float(impermeabilizacao_pct))) / 100.0
+    water = max(0.0, min(1.0, float(water_proximity)))
+    factor = 1.15 - 0.35 * urban - 0.15 * water
+    return _clamp_cap(base * factor)

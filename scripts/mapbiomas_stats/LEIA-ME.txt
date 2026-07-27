@@ -1,0 +1,31 @@
+MapBiomas Coleção 10.1 — estatísticas oficiais dos 6 municípios piloto
+=======================================================================
+
+Fonte oficial
+-------------
+- DOI: https://doi.org/10.58053/MapBiomas/SJZOLT
+- Arquivo: MAPBIOMAS_BRAZIL-COVERAGE_STATISTICS-COL.10.1-MUNICIPALITIES_STATES_BIOMES.xlsx
+- MD5 esperado: be491918cdfb468dfbe3d2a578740407
+- Página: https://brasil.mapbiomas.org/estatisticas/
+- Licença: CC BY 4.0 (citar MapBiomas)
+
+Conteúdo versionado
+------------------
+municipios_cobertura_pilotos.csv — hectares por classe (Área Urbana,
+Vegetação/Floresta, Corpo d'água) nos anos 1985, 1995, 2005, 2015, 2020, 2024
+para:
+
+  2611606 Recife/PE
+  2800308 Aracaju/SE
+  2927408 Salvador/BA
+  3550308 São Paulo/SP
+  3304557 Rio de Janeiro/RJ
+  5300108 Brasília/DF
+
+Como regenerar
+--------------
+1. Baixe o XLSX (≈75 MB) para mapbiomas/ (pasta gitignored)
+2. python3 scripts/mapbiomas_stats/extrair_pilotos.py
+
+O coletor backend usa este CSV automaticamente (MAPBIOMAS_STATS_DIR ou
+fallback bundled). Qualidade gravada: data_quality=oficial.

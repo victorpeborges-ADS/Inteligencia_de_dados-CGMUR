@@ -76,6 +76,7 @@ services:
       - MISTRAL_EMBED_MODEL=${MISTRAL_EMBED_MODEL:-mistral-embed}
       - RAG_EMBEDDING_DIM=1024
       - AUTH_ENABLED=false
+      # Dev: secret default OK (boot avisa). Dev Tunnel / LAN pública → AUTH_ENABLED=true + secret >=32.
       - AUTH_JWT_SECRET=sinidu-dev-secret-trocar-em-producao
       - CORS_ORIGINS=http://localhost:3000
       - BACKUP_DIR=/data/backups
@@ -114,6 +115,7 @@ services:
       - ./data/3dtiles:/data/3dtiles
       - ./data/citymodels:/data/citymodels
       - ./mapbiomas:/data/mapbiomas
+      - ./scripts/s2id_nacional/downloads:/data/s2id_nacional/downloads
       - ibge_mesh_cache:/data/ibge
       - backups_data:/data/backups
     healthcheck:

@@ -261,6 +261,24 @@ def validate_against_s2id(
     }
 
 
+def stamp_simulation_geojson_quality(
+    geometry: dict[str, Any] | None,
+    *,
+    qualidade: str = "Derivado",
+) -> dict[str, Any] | None:
+    """Marca features de simulação com selo de qualidade (20h.1 — visível no mapa)."""
+    if not geometry or geometry.get("type") != "FeatureCollection":
+        return geometry
+    feats = geometry.get("features") or []
+    for feat in feats:
+        props = feat.setdefault("properties", {})
+        layer = str(props.get("layer_type") or "")
+        if layer in {"flood_band", "heat_band", "contour", "flow_vector", "landslide_zone"}:
+            props.setdefault("qualidade_dado", qualidade)
+            props.setdefault("selo_qualidade", qualidade)
+    return geometry
+
+
 def enrich_simulation_confidence(
     db: Session,
     muni: Municipio,
@@ -287,6 +305,11 @@ def enrich_simulation_confidence(
     seal = {**seal, "nivel_confianca": nivel}
     meta["selo_confianca"] = seal
     meta["validacao_s2id"] = validation
+    # Mancha no mapa: sempre Derivado (triagem), não "Oficial"
+    stamp_simulation_geojson_quality(
+        flood_geometry,
+        qualidade=str(seal.get("selo_qualidade") or "Derivado"),
+    )
     try:
         from app.services.method_note_service import attach_method_note
 

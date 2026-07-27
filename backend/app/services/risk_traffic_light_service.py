@@ -7,11 +7,14 @@ com flag explícita de modo baixa maturidade (bootstrap nacional).
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from sqlalchemy.orm import Session
 
 from sqlalchemy import func
+
+logger = logging.getLogger(__name__)
 
 from app.models import (
     Bairro,
@@ -333,16 +336,39 @@ def build_risk_panel(db: Session, codigo_ibge: str, *, top_bairros: int = 8) -> 
         ),
     )
 
-    status = max_alert_level(
-        [
-            comp_score["nivel"],
-            comp_ivc["nivel"],
-            comp_iri["nivel"],
-            comp_vm["nivel"],
-            comp_alerta["nivel"],
-        ]
-    )
+    # 21f.5 — componente preditivo unificado (ML full ou heurística do Monitor)
+    try:
+        from app.services.unified_risk_model import build_ml_risk_component, modelo_risco_meta
 
+        comp_ml = build_ml_risk_component(db, code)
+        modelo_meta = modelo_risco_meta(comp_ml)
+    except Exception as exc:
+        logger.info("componente ML painel %s: %s", code, exc)
+        comp_ml = _component(
+            id="ml_preditivo",
+            nome="Predição ML / chuva",
+            valor=None,
+            escala="0–1",
+            nivel="VERDE",
+            qualidade="Lacuna",
+            detalhe="Componente preditivo indisponível.",
+        )
+        modelo_meta = {"versao": "21f.5", "erro": str(exc)}
+
+    nivel_inputs = [
+        comp_score["nivel"],
+        comp_ivc["nivel"],
+        comp_iri["nivel"],
+        comp_vm["nivel"],
+        comp_alerta["nivel"],
+    ]
+    if comp_ml.get("elevates_status") or comp_ml.get("risk_source") == "ml_full":
+        nivel_inputs.append(comp_ml["nivel"])
+    elif comp_ml.get("nivel") in ("AMARELO",):
+        # Heurística só contribui até AMARELO
+        nivel_inputs.append(comp_ml["nivel"])
+
+    status = max_alert_level(nivel_inputs)
     bairro_by_id = {
         b.id: b
         for b in db.query(Bairro).filter(Bairro.municipio_id == muni.id).all()
@@ -442,7 +468,9 @@ def build_risk_panel(db: Session, codigo_ibge: str, *, top_bairros: int = 8) -> 
             "iri": comp_iri,
             "vm": comp_vm,
             "alerta": comp_alerta,
+            "ml_preditivo": comp_ml,
         },
+        "modelo_risco": modelo_meta,
         "bairros": bairros,
         "bairros_total": len(ranking),
         "exposicao_resumo": exposicao_resumo,
@@ -461,5 +489,5 @@ def build_risk_panel(db: Session, codigo_ibge: str, *, top_bairros: int = 8) -> 
         },
         "validacao_adapta_brasil": _validacao_adapta(db, muni, snapshot.get("media_adaptacao")),
         "ciclo": "agir",
-        "versao": "17g.2h",
+        "versao": "21f.5",
     }
