@@ -248,6 +248,15 @@ def get_idf_curves(codigo_ibge: str, request: Request, db: Session = Depends(get
     return idf_curve_catalog(muni.codigo_ibge, uf=getattr(muni, "uf", None))
 
 
+@router.get("/rainfall-anchors/{codigo_ibge}")
+def get_rainfall_anchors(codigo_ibge: str, request: Request, db: Session = Depends(get_db)):
+    """Âncoras históricas (APAC/CEMADEN/S2ID/imprensa) + limites do slider de chuva."""
+    from app.services.rainfall_event_anchors import rainfall_anchors_for
+
+    muni = get_accessible_municipio(db, codigo_ibge, request=request)
+    return rainfall_anchors_for(muni.codigo_ibge)
+
+
 class HydroCalibrationUpdate(BaseModel):
     runoff_scale: Optional[float] = None
     rise_scale: Optional[float] = None
@@ -422,6 +431,7 @@ def simulate_extreme_rainfall(payload: ChuvaExtremaSimRequest, request: Request,
         drain_removed_mm=float(dren.get("removido_mm") or 0),
         rede_saturada=bool(dren.get("saturada")),
         drenagem_meta=dren,
+        duracao_h=dur_h,
     )
     result = attach_uncertainty_bands(db, muni.id, muni.codigo_ibge, result)
     return _attach_idf_meta(result, idf_meta)
@@ -456,6 +466,7 @@ def simulate_extreme_rainfall_async(payload: ChuvaExtremaSimRequest, request: Re
         drain_removed_mm=float(dren.get("removido_mm") or 0),
         rede_saturada=bool(dren.get("saturada")),
         drenagem_meta=dren,
+        duracao_h=dur_h,
     )
     return {
         "job_id": job_id,
@@ -482,8 +493,9 @@ def prewarm_extreme_rainfall(payload: ChuvaExtremaSimRequest, request: Request, 
 @router.post("/extreme-rainfall/compare", response_model=RainfallComparisonResponse)
 def compare_extreme_rainfall(payload: ChuvaExtremaCompareRequest, request: Request, db: Session = Depends(get_db)):
     muni = get_accessible_municipio(db, payload.codigo_ibge, request=request)
+    dur_h = float(payload.duracao_min or 60) / 60.0
     return compare_rainfall_cached(
-        db, muni.id, muni.codigo_ibge, payload.baseline_mm, payload.scenario_mm
+        db, muni.id, muni.codigo_ibge, payload.baseline_mm, payload.scenario_mm, duracao_h=dur_h,
     )
 
 
@@ -492,8 +504,9 @@ def compare_extreme_rainfall_async(
     payload: ChuvaExtremaCompareRequest, request: Request, db: Session = Depends(get_db)
 ):
     muni = get_accessible_municipio(db, payload.codigo_ibge, request=request)
+    dur_h = float(payload.duracao_min or 60) / 60.0
     job_id = run_rainfall_compare_job(
-        muni.codigo_ibge, muni.id, payload.scenario_mm, payload.baseline_mm
+        muni.codigo_ibge, muni.id, payload.scenario_mm, payload.baseline_mm, duracao_h=dur_h,
     )
     return {"job_id": job_id, "async_mode": True, "status": "queued"}
 

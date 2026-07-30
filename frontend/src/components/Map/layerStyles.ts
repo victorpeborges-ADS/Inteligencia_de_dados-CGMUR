@@ -1,5 +1,12 @@
 import type { SocioSubcamadaId } from '@/config/socioeconomicoSubcamadas';
-import { getEducacaoEtapa, markerRadiusFromMatriculas, type EducacaoEtapaId } from '@/config/educacaoInep';
+import {
+  getDependenciaColor,
+  getEducacaoEtapa,
+  getEquipamentoTipoColor,
+  markerRadiusFromMatriculas,
+  markerRadiusFromTipo,
+  type EducacaoEtapaId,
+} from '@/config/educacaoInep';
 import { getTerritorioTipo, type TerritorioTipoId } from '@/config/territoriosEspeciais';
 
 export type LayerStyle = {
@@ -9,6 +16,7 @@ export type LayerStyle = {
   weight: number;
   radius?: number;
   opacity?: number;
+  dashArray?: string;
 };
 
 function deficitColor(pct: number, thresholds: [number, number], palette: [string, string, string]): string {
@@ -37,15 +45,16 @@ export function getLayerStyle(
   if (layerName === 'cobertura') {
     const cls = props.classe_uso;
     if (cls === 'Vegetação / Floresta') {
-      return { fillColor: '#10b981', fillOpacity: 0.45, color: '#047857', weight: 1 };
+      return { fillColor: '#15803d', fillOpacity: 0.5, color: '#14532d', weight: 0.8 };
     }
     if (cls === "Corpo d'água") {
-      return { fillColor: '#0ea5e9', fillOpacity: 0.55, color: '#0369a1', weight: 1 };
+      // Azul-escuro sóbrio — distinto da mancha de inundação (#0ea5e9 / cyan claro)
+      return { fillColor: '#1e3a8a', fillOpacity: 0.55, color: '#1e40af', weight: 0.8 };
     }
     if (cls === 'Área Urbana') {
-      return { fillColor: '#71717a', fillOpacity: 0.5, color: '#52525b', weight: 1 };
+      return { fillColor: '#a1a1aa', fillOpacity: 0.28, color: '#71717a', weight: 0.5 };
     }
-    return { fillColor: '#71717a', fillOpacity: 0.35, color: '#3f3f46', weight: 1 };
+    return { fillColor: '#71717a', fillOpacity: 0.25, color: '#3f3f46', weight: 0.5 };
   }
 
   if (layerName === 'alertas') {
@@ -74,6 +83,12 @@ export function getLayerStyle(
   if (layerName === 'inundacao') {
     const value = Number(props.indice_risco_inundacao || 0);
     return { fillColor: scoreColor(value, ['#075985', '#0284c7', '#7dd3fc']), fillOpacity: 0.42, color: '#bae6fd', weight: 1.3 };
+  }
+
+  if (layerName === 'manchas_oficiais') {
+    // Estilo distinto (validação 20h.5): contorno tracejado roxo escuro, preenchimento baixo —
+    // não deve se confundir visualmente com a mancha derivada 'inundacao' (azul).
+    return { fillColor: '#6d28d9', fillOpacity: 0.12, color: '#4c1d95', weight: 2, dashArray: '6,4' };
   }
 
   if (layerName === 'socioeconomico') {
@@ -180,28 +195,29 @@ export function getLayerStyle(
   }
 
   if (layerName === 'infraestrutura') {
-    const tipo = props.tipo;
-    if (tipo === 'hospital') {
-      return { fillColor: '#ef4444', fillOpacity: 0.85, color: '#fecaca', weight: 2, radius: 8 };
-    }
-    if (tipo === 'escola') {
-      return { fillColor: '#3b82f6', fillOpacity: 0.85, color: '#bfdbfe', weight: 2, radius: 6 };
-    }
+    const tipo = String(props.tipo || '').toLowerCase();
     if (tipo === 'via') {
-      return { fillColor: 'transparent', fillOpacity: 0, color: '#c4b5fd', weight: 3 };
+      return { fillColor: 'transparent', fillOpacity: 0, color: '#94a3b8', weight: 2.5 };
     }
-    return { fillColor: '#a78bfa', fillOpacity: 0.55, color: '#ddd6fe', weight: 1.5, radius: 5 };
+    const tipoColor = getEquipamentoTipoColor(tipo);
+    const depColor = getDependenciaColor(props.dependencia);
+    const radius = markerRadiusFromTipo(tipo);
+    return { fillColor: tipoColor, fillOpacity: 0.92, color: depColor, weight: 2, radius };
   }
 
   if (layerName === 'educacao') {
     const etapa = options?.educacaoEtapa || 'todas';
-    const color = getEducacaoEtapa(etapa).color;
+    // Preferência: cor por dependência (esfera); etapa só quando filtro ativo
+    const color =
+      etapa === 'todas' && props.dependencia
+        ? getDependenciaColor(props.dependencia)
+        : getEducacaoEtapa(etapa).color;
     const matriculas = Number(props.matriculas_ativas ?? props.matriculas_total ?? 0);
     return {
       fillColor: color,
-      fillOpacity: 0.88,
+      fillOpacity: 0.9,
       color: '#f8fafc',
-      weight: 2,
+      weight: 1.5,
       radius: markerRadiusFromMatriculas(matriculas),
     };
   }

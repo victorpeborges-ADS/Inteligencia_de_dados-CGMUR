@@ -51,7 +51,7 @@ _PILOT_VEGETATION_HA = {
     2024: 1750.0,
 }
 VEGETATION_CLASS = "Vegetação / Floresta"
-COVERAGE_PARTITION_VERSION = 2
+COVERAGE_PARTITION_VERSION = 3  # v3: Recife usa OSM georreferenciado (água/parques/mata)
 
 # Recife — afinidade espacial por bairro (0–1) para partição de uso do solo
 RECIFE_WATER_AFFINITY: dict[str, float] = {
@@ -524,35 +524,43 @@ def _take_cells_by_quota(
 
 
 def _river_water_mask(poly) -> Any:
+    """Fallback fino (~45 m) — não usar buffer largo (vira mancha de inundação)."""
     rivers = unary_union(
-        [line.buffer(0.0032, cap_style=2, join_style=2) for line in RECIFE_RIVER_LINES]
+        [line.buffer(0.0004, cap_style=2, join_style=2) for line in RECIFE_RIVER_LINES]
     )
     return poly.intersection(rivers)
 
 
 def _recife_landcover_partition(poly, class_ha: dict[str, float]) -> dict[str, Any]:
-    """Partição por bairros + rios — evita faixas horizontais artificiais."""
+    """Recife: preferir OSM georreferenciado; fallback Voronoi só se OSM falhar."""
+    try:
+        from app.data_connectors.osm_landcover_collector import build_recife_osm_landcover
+
+        osm_parts = build_recife_osm_landcover(poly)
+        if osm_parts and len(osm_parts) >= 2:
+            return osm_parts
+    except Exception as exc:
+        logger.warning("Cobertura OSM Recife indisponível, usando fallback: %s", exc)
+
+    return _recife_landcover_partition_voronoi_fallback(poly, class_ha)
+
+
+def _recife_landcover_partition_voronoi_fallback(poly, class_ha: dict[str, float]) -> dict[str, Any]:
+    """Fallback legado — rios finos + afinidade de vegetação (sem pintar bairros inteiros como água)."""
     from app.data_connectors.territorial_mesh_collector import RECIFE_BAIRRO_SEEDS, _partition_voronoi
 
-    water_r, veg_r, _urban_r = _class_area_ratios(class_ha)
+    _water_r, veg_r, _urban_r = _class_area_ratios(class_ha)
     cells = _partition_voronoi(poly, RECIFE_BAIRRO_SEEDS)
 
-    water_cells, remaining = _take_cells_by_quota(
-        cells, RECIFE_WATER_AFFINITY, poly.area * water_r, default=0.08
-    )
-    veg_cells, remaining = _take_cells_by_quota(
-        remaining, RECIFE_VEG_AFFINITY, poly.area * veg_r, default=0.06
-    )
-
-    water_parts = [g for g in water_cells if g is not None and not g.is_empty]
+    # Água: apenas eixos fluviais finos (nunca quota por bairro)
     river_mask = _river_water_mask(poly)
-    if not river_mask.is_empty:
-        water_parts.append(river_mask)
-
-    water = poly.intersection(unary_union(water_parts)) if water_parts else None
+    water = poly.intersection(river_mask) if river_mask is not None and not river_mask.is_empty else None
     if water is not None and water.is_empty:
         water = None
 
+    veg_cells, remaining = _take_cells_by_quota(
+        cells, RECIFE_VEG_AFFINITY, poly.area * veg_r, default=0.06
+    )
     veg_raw = unary_union(veg_cells) if veg_cells else None
     if veg_raw is not None and not veg_raw.is_empty:
         veg_clip = veg_raw.difference(water) if water is not None else veg_raw
@@ -707,7 +715,22 @@ def needs_coverage_polygon_refresh(db: Session, muni: Municipio) -> bool:
     if poly.is_empty:
         return False
     if len(rows) != 3:
-        return False
+        return True
+
+    # Recife: mancha de água Voronoi antiga costuma ocupar >6% do município
+    if muni.codigo_ibge == "2611606":
+        from app.data_connectors.osm_landcover_collector import GEOJSON_PATH
+
+        if GEOJSON_PATH.exists():
+            water_row = next(
+                (r for r in rows if "água" in (r.classe_uso or "").lower() or "agua" in (r.classe_uso or "").lower()),
+                None,
+            )
+            if water_row is not None:
+                wgeom = shape(json.loads(db.scalar(water_row.geom.ST_AsGeoJSON())))
+                if not wgeom.is_empty and (wgeom.area / max(poly.area, 1e-12)) > 0.055:
+                    return True
+
     return all(
         _geometry_is_horizontal_band(shape(json.loads(db.scalar(row.geom.ST_AsGeoJSON()))), poly)
         for row in rows

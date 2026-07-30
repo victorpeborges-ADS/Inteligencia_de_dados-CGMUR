@@ -549,6 +549,10 @@ export interface SimulationOutput {
     declividade_media_graus?: number;
     pct_declividade_critica?: number;
     precipitation_mm?: number;
+    duracao_h?: number;
+    intensidade_mm_h?: number;
+    intensity_factor?: number;
+    hydrograph_duration_h?: number;
     max_depth_m?: number;
     uncertainty_bands?: {
       precip_delta_pct?: number;
@@ -577,6 +581,57 @@ export interface SimulationOutput {
       version?: number;
       hit_rate?: number | null;
       nota?: string;
+    };
+    impacto_operacional?: {
+      qualidade?: string;
+      metodo?: string;
+      regime_chuva?: {
+        codigo?: string;
+        label?: string;
+        duracao_h?: number;
+        intensidade_mm_h?: number;
+        nota?: string;
+      };
+      escoamento?: {
+        tempo_sem_intervencao_h?: number;
+        tempo_com_intervencoes_h?: number;
+        reducao_pct?: number;
+        taxa_natural_mm_h?: number;
+        taxa_com_intervencoes_mm_h?: number;
+        excesso_residual_mm?: number;
+        nota?: string;
+      };
+      mobilidade?: {
+        nivel?: string;
+        populacao_com_ir_e_vir_impedido?: number;
+        fracao_afetada?: number;
+        vias_comprometidas_km_proxy?: number;
+        nota?: string;
+      };
+      deslizamento?: {
+        nivel?: string;
+        zonas_estimadas?: number;
+        nota?: string;
+      };
+      resumo_populacao?: {
+        exposta_alagamento?: number;
+        area_alagada_km2?: number;
+        profundidade_max_m?: number;
+      };
+    };
+    ancora_historica?: {
+      id?: string;
+      label?: string;
+      data?: string;
+      precipitacao_mm?: number;
+      duracao_h?: number;
+      bairros?: string[];
+      fonte?: string;
+      url?: string;
+      nota?: string;
+      delta_mm?: number;
+      delta_duracao_h?: number | null;
+      similaridade?: number;
     };
     flood_timeline?: {
       n_steps: number;
@@ -1504,6 +1559,10 @@ export interface CriticalNeighborhood {
   risk_probability: number;
   iri: number;
   impermeabilizacao_pct: number;
+  suscetibilidade_local?: number;
+  score_source?: 'modelo_bairro' | 'blend_susc_iri' | 'blend_iri' | string;
+  curve_number?: number;
+  capacidade_drenagem_mm_h?: number;
 }
 
 export interface FloodRiskPrediction {
@@ -1576,6 +1635,7 @@ export interface FloodRiskPrediction {
     nota?: string;
   } | null;
   critical_neighborhoods: CriticalNeighborhood[];
+  neighborhood_ranking_mode?: string | null;
   flood_geojson: { features?: unknown[] } | null;
   model_version: string;
   model_kind?: string;
@@ -2016,8 +2076,12 @@ export interface RiskPanelPerfil {
   };
   plano_diretor: {
     status: string;
+    considerado?: boolean;
     fontes_cadastradas: number;
+    titulo?: string | null;
+    url?: string | null;
     titulos?: string[];
+    mensagem?: string;
   };
   defesa_civil: {
     sinal: string;
@@ -2336,6 +2400,42 @@ export const api = {
       rescale_max_c: cfg.rescale_max_c ?? cfg.rescale_max,
     };
   },
+
+  sampleExternalRasterPoint: async (
+    layerId: string,
+    lon: number,
+    lat: number,
+    codigoIbge?: string,
+  ): Promise<{
+    layer_id: string;
+    label: string;
+    lon: number;
+    lat: number;
+    temperatura_c: number | null;
+    value: number | null;
+    unit: string;
+    qualidade: string;
+    fonte: string;
+    periodo: string;
+    attribution: string;
+    georedus_url: string;
+    disponivel: boolean;
+    nota: string;
+  }> => {
+    const params = new URLSearchParams({
+      lon: String(lon),
+      lat: String(lat),
+    });
+    if (codigoIbge) params.set('codigo_ibge', codigoIbge);
+    const res = await apiFetch(
+      `${getApiBaseUrl()}/api/v1/map/external-rasters/${encodeURIComponent(layerId)}/point?${params}`,
+    );
+    if (!res.ok) throw await httpError(res, 'Falha ao amostrar raster no ponto');
+    return res.json();
+  },
+
+  sampleLstPoint: async (lon: number, lat: number, codigoIbge?: string) =>
+    api.sampleExternalRasterPoint('lst_observada', lon, lat, codigoIbge),
 
   getLayersMeta: async (codigoIbge?: string): Promise<{
     codigo_ibge: string;
@@ -2766,6 +2866,34 @@ export const api = {
     return res.json();
   },
 
+  getRainfallAnchors: async (codigoIbge: string): Promise<{
+    codigo_ibge: string;
+    qualidade: string;
+    nota: string;
+    slider: { min_mm: number; max_mm: number; step_mm: number; default_mm: number };
+    anchors: Array<{
+      id: string;
+      label: string;
+      data: string;
+      precipitacao_mm: number;
+      duracao_h: number;
+      antecedente_mm: number;
+      tipo_dominante: string;
+      bairros: string[];
+      populacao_afetada_obs?: number;
+      mortos_obs?: number;
+      fonte: string;
+      url?: string;
+      nota?: string;
+    }>;
+  }> => {
+    const res = await apiFetch(
+      `${getApiBaseUrl()}/api/v1/simulations/rainfall-anchors/${encodeURIComponent(codigoIbge)}`,
+    );
+    if (!res.ok) throw await httpError(res, 'Falha ao carregar âncoras históricas de chuva');
+    return res.json();
+  },
+
   simulateExtremeRainfall: async (
     mm: number,
     codigoIbge?: string,
@@ -2790,6 +2918,7 @@ export const api = {
     scenarioMm: number,
     baselineMm: number = 80,
     codigoIbge?: string,
+    duracaoMin?: number,
   ): Promise<RainfallComparison> => {
     const res = await apiFetch(`${getApiBaseUrl()}/api/v1/simulations/extreme-rainfall/compare`, {
       method: 'POST',
@@ -2797,6 +2926,7 @@ export const api = {
       body: JSON.stringify({
         baseline_mm: baselineMm,
         scenario_mm: scenarioMm,
+        duracao_min: duracaoMin,
         codigo_ibge: codigoIbge,
       }),
     });
@@ -2919,6 +3049,7 @@ export const api = {
     baselineMm: number = 80,
     codigoIbge?: string,
     onProgress?: (progress: SimulationJobProgress) => void,
+    duracaoMin?: number,
   ): Promise<RainfallComparison> => {
     const res = await apiFetch(`${getApiBaseUrl()}/api/v1/simulations/extreme-rainfall/compare/async`, {
       method: 'POST',
@@ -2926,6 +3057,7 @@ export const api = {
       body: JSON.stringify({
         baseline_mm: baselineMm,
         scenario_mm: scenarioMm,
+        duracao_min: duracaoMin,
         codigo_ibge: codigoIbge,
       }),
     });
@@ -3664,6 +3796,57 @@ export const api = {
       const detail = await res.json().catch(() => ({}));
       throw new Error(detail.detail || 'Falha ao sincronizar monitoramento');
     }
+    return res.json();
+  },
+
+  createObservedFloodEvent: async (params: {
+    codigoIbge: string;
+    tipo?: string;
+    fenomeno?: string;
+    severidade?: string;
+    inicioEm: string;
+    fimEm?: string;
+    lat?: number;
+    lng?: number;
+    geojson?: Record<string, unknown>;
+    referencia?: string;
+    populacaoAfetada?: number;
+    precipAcumuladaMm?: number;
+  }): Promise<Record<string, unknown>> => {
+    const res = await apiFetch(`${getApiBaseUrl()}/api/v1/monitoring/eventos-observados`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        codigo_ibge: params.codigoIbge,
+        tipo: params.tipo ?? 'Alagamento Urbano',
+        fenomeno: params.fenomeno ?? 'pluvial',
+        severidade: params.severidade ?? 'media',
+        inicio_em: params.inicioEm,
+        fim_em: params.fimEm,
+        lat: params.lat,
+        lng: params.lng,
+        geojson: params.geojson,
+        referencia: params.referencia,
+        populacao_afetada: params.populacaoAfetada,
+        precip_acumulada_mm: params.precipAcumuladaMm,
+      }),
+    });
+    if (!res.ok) {
+      const detail = await res.json().catch(() => ({}));
+      throw new Error(detail.detail || 'Falha ao registrar evento observado');
+    }
+    return res.json();
+  },
+
+  listObservedFloodEvents: async (codigoIbge: string, limit = 50): Promise<{
+    codigo_ibge: string;
+    total: number;
+    eventos: Array<Record<string, unknown>>;
+  }> => {
+    const res = await apiFetch(
+      `${getApiBaseUrl()}/api/v1/monitoring/eventos-observados?codigo_ibge=${encodeURIComponent(codigoIbge)}&limit=${limit}`,
+    );
+    if (!res.ok) throw new Error('Falha ao listar eventos observados');
     return res.json();
   },
 

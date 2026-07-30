@@ -341,7 +341,7 @@ def build_risk_panel(db: Session, codigo_ibge: str, *, top_bairros: int = 8) -> 
         from app.services.unified_risk_model import build_ml_risk_component, modelo_risco_meta
 
         comp_ml = build_ml_risk_component(db, code)
-        modelo_meta = modelo_risco_meta(comp_ml)
+        modelo_meta = modelo_risco_meta(comp_ml, codigo_ibge=code)
     except Exception as exc:
         logger.info("componente ML painel %s: %s", code, exc)
         comp_ml = _component(

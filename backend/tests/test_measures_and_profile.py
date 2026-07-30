@@ -166,4 +166,8 @@ def test_build_municipal_profile(mock_capag, mock_maturity):
     assert perfil["capag"]["nota"] == "B"
     assert perfil["defesa_civil"]["tem_gasto_registrado"] is True
     assert perfil["plano_diretor"]["status"] == "OFICIAL"
+    assert perfil["plano_diretor"]["considerado"] is True
+    assert perfil["plano_diretor"]["titulo"]
+    assert "Plano Diretor" in (perfil["plano_diretor"]["mensagem"] or "")
+    assert any("Plano Diretor" in r for r in perfil["restricoes"])
     assert perfil["maturidade_tier"] == "Ouro"

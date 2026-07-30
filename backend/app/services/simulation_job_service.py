@@ -28,6 +28,7 @@ def run_rainfall_simulation_job(
     drain_removed_mm: float = 0.0,
     rede_saturada: bool = False,
     drenagem_meta: dict | None = None,
+    duracao_h: float = 1.0,
 ) -> str:
     job_id = create_job(
         "rainfall_simulation",
@@ -50,6 +51,7 @@ def run_rainfall_simulation_job(
                 drain_removed_mm=drain_removed_mm,
                 rede_saturada=rede_saturada,
                 drenagem_meta=drenagem_meta,
+                duracao_h=duracao_h,
             )
             _progress(job_id, 70, "uncertainty", "Calculando bandas de incerteza (±15%)…")
             try:
@@ -78,6 +80,8 @@ def run_rainfall_compare_job(
     muni_id: int,
     scenario_mm: float,
     baseline_mm: float,
+    *,
+    duracao_h: float = 1.0,
 ) -> str:
     job_id = create_job(
         "rainfall_compare",
@@ -89,7 +93,9 @@ def run_rainfall_compare_job(
         db = SessionLocal()
         try:
             _progress(job_id, 35, "scenario", f"Cenário atual ({scenario_mm:.0f} mm)…")
-            comparison = compare_rainfall_cached(db, muni_id, codigo_ibge, baseline_mm, scenario_mm)
+            comparison = compare_rainfall_cached(
+                db, muni_id, codigo_ibge, baseline_mm, scenario_mm, duracao_h=duracao_h,
+            )
             _progress(job_id, 90, "delta", "Calculando delta entre cenários…")
             return {
                 "kind": "rainfall_compare",

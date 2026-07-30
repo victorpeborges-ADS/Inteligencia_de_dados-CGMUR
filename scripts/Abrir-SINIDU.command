@@ -4,11 +4,21 @@
 #
 # Se o macOS bloquear o duplo-clique: clique com o botao direito → Abrir → Abrir.
 
+# Garante zsh mesmo se o Finder/Open With chamar via bash
+if [ -z "${ZSH_VERSION:-}" ]; then
+  exec /bin/zsh "$0" "$@"
+fi
+
 set -u
 
+pause() {
+  echo
+  read "REPLY?Pressione Enter para fechar esta janela..."
+}
+
 # Detecta a pasta do projeto (atalho na Area de Trabalho OU script dentro de scripts/)
-SCRIPT_PATH="${0:A}"
-SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
+# Evita ${0:A} (quebra se algum wrapper chamar com bash).
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 if [[ -f "$SCRIPT_DIR/docker-compose.yml" ]]; then
   PROJECT_DIR="$SCRIPT_DIR"
 elif [[ -f "$SCRIPT_DIR/../docker-compose.yml" ]]; then
@@ -22,26 +32,26 @@ APP_URL="http://localhost:3000"
 CORE_SERVICES=(db redis backend frontend)
 COMPOSE=(docker compose -f docker-compose.yml -f docker-compose.dev.yml)
 
-echo "Iniciando o SINIDU..."
+echo "========================================"
+echo "  SINIDU — inicializacao"
+echo "========================================"
 echo "Projeto: $PROJECT_DIR"
 echo
 
-# PATH do Docker Desktop (Terminal.app às vezes nao herda)
-export PATH="/usr/local/bin:/opt/homebrew/bin:$PATH"
+# PATH do Docker Desktop (Terminal.app as vezes nao herda)
+export PATH="/usr/local/bin:/opt/homebrew/bin:$HOME/.docker/bin:$PATH"
 
 if ! command -v docker >/dev/null 2>&1; then
-  echo "Docker CLI nao encontrado no PATH."
+  echo "ERRO: Docker CLI nao encontrado no PATH."
   echo "Instale o Docker Desktop e tente novamente."
-  echo
-  read "REPLY?Pressione Enter para sair..."
+  pause
   exit 1
 fi
 
 if ! open -a Docker >/dev/null 2>&1; then
-  echo "Nao foi possivel abrir o Docker Desktop."
+  echo "ERRO: nao foi possivel abrir o Docker Desktop."
   echo "Verifique se o Docker esta instalado em /Applications/Docker.app"
-  echo
-  read "REPLY?Pressione Enter para sair..."
+  pause
   exit 1
 fi
 
@@ -71,11 +81,10 @@ for attempt in {1..150}; do
 
   if [ "$attempt" -eq 150 ]; then
     echo
-    echo "O Docker nao ficou pronto a tempo."
+    echo "ERRO: o Docker nao ficou pronto a tempo."
     echo "Faca: Docker Desktop → Quit Docker Desktop, abra de novo, aguarde o icone verde,"
     echo "depois rode este script outra vez (sem fechar o Docker no meio)."
-    echo
-    read "REPLY?Pressione Enter para sair..."
+    pause
     exit 1
   fi
 
@@ -86,8 +95,8 @@ echo "Docker pronto."
 echo
 
 cd "$PROJECT_DIR" || {
-  echo "Nao encontrei a pasta do projeto: $PROJECT_DIR"
-  read "REPLY?Pressione Enter para sair..."
+  echo "ERRO: nao encontrei a pasta do projeto: $PROJECT_DIR"
+  pause
   exit 1
 }
 
@@ -95,12 +104,11 @@ if [[ ! -f "$PROJECT_DIR/docker-compose.yml" ]]; then
   echo "ERRO: docker-compose.yml nao encontrado em:"
   echo "  $PROJECT_DIR"
   echo "Atualize o atalho com o script corrigido em scripts/Abrir-SINIDU.command"
-  echo
-  read "REPLY?Pressione Enter para sair..."
+  pause
   exit 1
 fi
 
-# Container legado de produção costuma ficar com Cmd=node server.js (quebra o dev)
+# Container legado de producao costuma ficar com Cmd=node server.js (quebra o dev)
 frontend_cmd="$(docker inspect sinidu_frontend --format '{{json .Config.Cmd}}' 2>/dev/null || true)"
 if print "$frontend_cmd" | grep -q 'server.js'; then
   echo "Detectado frontend em modo producao antigo — recriando em modo desenvolvimento..."
@@ -108,13 +116,19 @@ if print "$frontend_cmd" | grep -q 'server.js'; then
 fi
 
 echo "Subindo servicos essenciais: ${CORE_SERVICES[*]}"
-if ! "${COMPOSE[@]}" up -d --build "${CORE_SERVICES[@]}" 2>&1; then
+if ! "${COMPOSE[@]}" up -d "${CORE_SERVICES[@]}" 2>&1; then
   echo
-  echo "Falha ao subir os containers."
-  echo "Abra o Docker Desktop, confirme que ha espaco em disco e tente novamente."
-  echo
-  read "REPLY?Pressione Enter para sair..."
-  exit 1
+  echo "Primeira tentativa falhou — tentando rebuild..."
+  if ! "${COMPOSE[@]}" up -d --build "${CORE_SERVICES[@]}" 2>&1; then
+    echo
+    echo "ERRO: falha ao subir os containers."
+    echo "Abra o Docker Desktop, confirme que ha espaco em disco e tente novamente."
+    echo
+    echo "Ultimos logs:"
+    docker compose -f docker-compose.yml logs --tail 30 backend frontend 2>&1 || true
+    pause
+    exit 1
+  fi
 fi
 
 echo
@@ -154,7 +168,7 @@ for attempt in {1..150}; do
     status="$(docker inspect -f '{{.State.Status}}' sinidu_frontend 2>/dev/null || echo missing)"
     if [ "$status" != "running" ]; then
       echo "Frontend parado — recriando..."
-      "${COMPOSE[@]}" up -d --force-recreate --build frontend 2>&1 || true
+      "${COMPOSE[@]}" up -d --force-recreate frontend 2>&1 || true
     fi
   fi
   if [ $((attempt % 10)) -eq 0 ]; then
@@ -164,10 +178,10 @@ for attempt in {1..150}; do
 done
 
 if [ "$backend_ok" -eq 1 ] && [ "$frontend_ok" -eq 1 ]; then
+  echo
   echo "SINIDU pronto. Abrindo navegador..."
   open "$APP_URL"
-  echo
-  read "REPLY?Pressione Enter para fechar esta janela..."
+  pause
   exit 0
 fi
 
@@ -181,5 +195,4 @@ docker logs sinidu_frontend --tail 25 2>&1 || true
 echo
 echo "Abrindo mesmo assim: $APP_URL"
 open "$APP_URL"
-echo
-read "REPLY?Pressione Enter para fechar esta janela..."
+pause

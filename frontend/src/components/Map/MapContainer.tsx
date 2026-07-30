@@ -1,19 +1,32 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
-import { MapContainer as LeafletMap, TileLayer, GeoJSON, useMap } from 'react-leaflet';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { MapContainer as LeafletMap, TileLayer, GeoJSON, useMap, useMapEvents } from 'react-leaflet';
 import { ChevronDown, ChevronRight, ChevronUp, AlertTriangle, X } from 'lucide-react';
 import L from 'leaflet';
 import { api } from '@/utils/api';
 import { getLayerStyle, getSimulationFeatureStyle } from './layerStyles';
 import { getSocioSubcamada, type SocioSubcamadaId } from '@/config/socioeconomicoSubcamadas';
 import {
+  DEPENDENCIA_COLORS,
   DEPENDENCIA_LABELS,
-  EDUCACAO_ETAPAS,
+  EQUIPAMENTO_DEPS_DEFAULT,
+  EQUIPAMENTO_TIPOS,
+  EQUIPAMENTO_TIPOS_DEFAULT,
   getEducacaoEtapa,
-  markerRadiusFromMatriculas,
+  matchEquipamentoFiltro,
+  type DependenciaId,
   type EducacaoEtapaId,
+  type EquipamentoTipoId,
 } from '@/config/educacaoInep';
+import {
+  layerTitles,
+  createFeaturePopupHandler,
+  createPointToLayer,
+  buildSimulationFeaturePopup,
+  buildRegionalFeaturePopup,
+  buildContourTooltip,
+} from './mapPopups';
 import {
   TERRITORIO_LEGEND,
   getTerritorioTipo,
@@ -82,51 +95,32 @@ type LegendItem = {
   label: string;
 };
 
-const layerTitles: Record<string, string> = {
-  municipio: 'Limite Municipal',
-  bairros: 'Bairros',
-  territorios_especiais: 'Territórios Especiais',
-  infraestrutura: 'Equipamentos e Redes',
-  educacao: 'Educação (INEP)',
-  socioeconomico: 'Socioeconômico',
-  cobertura: 'Uso do Solo',
-  lst_observada: 'LST observada',
-  vulnerabilidade: 'Vulnerabilidade',
-  inundacao: 'Risco de Inundação',
-  alertas: 'Alertas',
-  desastres: 'Desastres',
-  saneamento_drenagem: 'Saneamento e Drenagem',
-  adaptacao_climatica: 'Adaptação Climática',
-  prioridade_planejamento: 'Prioridade de Planejamento',
-  risco_consolidado: 'Risco consolidado',
-  lacunas_dados: 'Lacunas de Dados',
-  saude_risco: 'Saúde × Risco',
-  seguranca_publica: 'Segurança Pública',
-  vulnerabilidade_multidimensional: 'Vulnerabilidade Multidimensional',
-};
-
 const legendByLayer: Record<string, LegendItem[]> = {
   municipio: [{ color: '#38bdf8', label: 'Limite municipal' }],
   bairros: [{ color: '#6366f1', label: 'Malha de bairros' }],
   territorios_especiais: TERRITORIO_LEGEND,
   infraestrutura: [
-    { color: '#ef4444', label: 'Hospitais / UPAs' },
-    { color: '#3b82f6', label: 'Escolas' },
-    { color: '#c4b5fd', label: 'Vias arteriais' },
+    ...EQUIPAMENTO_TIPOS.filter((t) => t.id !== 'via').map((t) => ({
+      color: t.color,
+      label: `${t.short} · ${t.label}`,
+    })),
+    { color: '#94a3b8', label: 'V · Vias' },
   ],
-  educacao: EDUCACAO_ETAPAS.filter((e) => e.id !== 'todas').map((e) => ({
-    color: e.color,
-    label: e.label,
-  })),
+  educacao: [
+    { color: DEPENDENCIA_COLORS.federal, label: 'Federal' },
+    { color: DEPENDENCIA_COLORS.estadual, label: 'Estadual' },
+    { color: DEPENDENCIA_COLORS.municipal, label: 'Municipal' },
+    { color: DEPENDENCIA_COLORS.privada, label: 'Privada' },
+  ],
   socioeconomico: [
     { color: '#22c55e', label: 'Renda alta (terço superior)' },
     { color: '#eab308', label: 'Renda média (terço médio)' },
     { color: '#f97316', label: 'Renda baixa (terço inferior)' }
   ],
   cobertura: [
-    { color: '#10b981', label: 'Vegetação / parque' },
-    { color: '#0ea5e9', label: 'Corpo d\'água' },
-    { color: '#71717a', label: 'Área construída/outros' }
+    { color: '#15803d', label: 'Vegetação / parque' },
+    { color: '#1e3a8a', label: "Corpo d'água / rios" },
+    { color: '#a1a1aa', label: 'Área construída' },
   ],
   vulnerabilidade: [
     { color: '#7f1d1d', label: 'IVC alto' },
@@ -193,6 +187,104 @@ function MapController({ center, zoom }: { center: [number, number]; zoom: numbe
   useEffect(() => {
     map.setView(center, zoom, { animate: true, duration: 1.0 });
   }, [center, zoom, map]);
+  return null;
+}
+
+/** Clique no mapa com LST ativa → amostra temperatura GeoReDUS no ponto. */
+function LstPointIdentify({
+  enabled,
+  codigoIbge,
+}: {
+  enabled: boolean;
+  codigoIbge?: string;
+}) {
+  const map = useMap();
+  const reqId = useRef(0);
+
+  useMapEvents({
+    click: (e) => {
+      if (!enabled) return;
+      const { lat, lng } = e.latlng;
+      const id = ++reqId.current;
+      map.closePopup();
+      const popup = L.popup({
+        maxWidth: 300,
+        className: 'sinidu-lst-identify-popup',
+        autoPan: true,
+      })
+        .setLatLng(e.latlng)
+        .setContent(
+          `<div class="p-1 font-sans text-xs min-w-[200px]">
+            <p class="mb-1 text-[10px] font-bold uppercase tracking-wide text-orange-300">Temperatura de superfície (LST)</p>
+            <p class="text-[11px] text-zinc-300">Consultando mosaico GeoReDUS…</p>
+            <p class="mt-1 text-[9px] font-mono text-zinc-500">${lat.toFixed(5)}, ${lng.toFixed(5)}</p>
+          </div>`,
+        )
+        .openOn(map);
+
+      void api
+        .sampleLstPoint(lng, lat, codigoIbge)
+        .then((data) => {
+          if (id !== reqId.current) return;
+          if (data.temperatura_c == null || !data.disponivel) {
+            popup.setContent(
+              `<div class="p-1 font-sans text-xs min-w-[200px]">
+                <p class="mb-1 text-[10px] font-bold uppercase tracking-wide text-orange-300">Temperatura de superfície (LST)</p>
+                <p class="text-[11px] text-amber-200">Sem valor LST neste ponto</p>
+                <p class="mt-1 text-[9px] leading-snug text-zinc-500">${data.nota || ''}</p>
+                <p class="mt-1 text-[9px] font-mono text-zinc-500">${lat.toFixed(5)}, ${lng.toFixed(5)}</p>
+              </div>`,
+            );
+            return;
+          }
+          const temp = data.temperatura_c;
+          const tone =
+            temp >= 45 ? 'text-rose-300' : temp >= 38 ? 'text-orange-300' : temp >= 32 ? 'text-amber-200' : 'text-sky-200';
+          popup.setContent(
+            `<div class="p-1 font-sans text-xs min-w-[220px] max-w-[300px]">
+              <p class="mb-1 text-[10px] font-bold uppercase tracking-wide text-orange-300">Temperatura de superfície (LST)</p>
+              <p class="mb-1 flex items-baseline gap-1.5">
+                <span class="text-2xl font-black ${tone}">${temp.toFixed(1)}</span>
+                <span class="text-sm font-bold text-zinc-300">${data.unit || '°C'}</span>
+              </p>
+              <p class="mb-1 text-[11px] text-zinc-300">Temperatura estimada no ponto (pixel do mosaico)</p>
+              <p class="mt-2 flex flex-wrap gap-1">
+                <span class="rounded border border-sky-500/40 bg-sky-500/10 px-1.5 py-0.5 text-[9px] font-bold uppercase text-sky-200">${data.qualidade || 'Observado'}</span>
+                <span class="rounded border border-zinc-700 px-1.5 py-0.5 text-[9px] text-zinc-400">${data.periodo || '2021–2025'}</span>
+              </p>
+              <p class="mt-2 border-t border-zinc-800 pt-1 text-[10px] text-zinc-500">${data.fonte}${data.attribution ? ` · ${data.attribution}` : ''}</p>
+              <p class="mt-0.5 text-[9px] font-mono text-zinc-600">${lat.toFixed(5)}, ${lng.toFixed(5)}</p>
+            </div>`,
+          );
+        })
+        .catch((err: unknown) => {
+          if (id !== reqId.current) return;
+          const msg = err instanceof Error ? err.message : 'Falha na consulta';
+          popup.setContent(
+            `<div class="p-1 font-sans text-xs min-w-[200px]">
+              <p class="mb-1 text-[10px] font-bold uppercase tracking-wide text-orange-300">Temperatura de superfície (LST)</p>
+              <p class="text-[11px] text-rose-200">Não foi possível obter a LST neste ponto</p>
+              <p class="mt-1 text-[9px] text-zinc-500">${msg}</p>
+            </div>`,
+          );
+        });
+    },
+  });
+
+  useEffect(() => {
+    const container = map.getContainer();
+    if (enabled) {
+      container.style.cursor = 'crosshair';
+    } else {
+      container.style.cursor = '';
+      map.closePopup();
+      reqId.current += 1;
+    }
+    return () => {
+      container.style.cursor = '';
+    };
+  }, [enabled, map]);
+
   return null;
 }
 
@@ -346,21 +438,31 @@ export default function MapContainer({
   const toggleLayer = useAppStore((s) => s.toggleLayer);
   const showRegionalOverlayStore = useAppStore((s) => s.showRegionalOverlay);
   const setMapSpatialReady = useAppStore((s) => s.setMapSpatialReady);
+  const equipamentoTiposAtivos = useAppStore((s) => s.equipamentoTiposAtivos);
+  const toggleEquipamentoTipo = useAppStore((s) => s.toggleEquipamentoTipo);
+  const setEquipamentoTiposAtivos = useAppStore((s) => s.setEquipamentoTiposAtivos);
+  const equipamentoDepsAtivas = useAppStore((s) => s.equipamentoDepsAtivas);
+  const toggleEquipamentoDep = useAppStore((s) => s.toggleEquipamentoDep);
+  const setEquipamentoDepsAtivas = useAppStore((s) => s.setEquipamentoDepsAtivas);
 
   const activeRasterLayers = activeLayers.filter(isExternalRasterLayer);
+  const lstIdentifyActive = activeRasterLayers.includes('lst_observada');
+  // Chaves estáveis — array novo a cada render reiniciava o fetch e travava o loading.
+  const activeRasterKey = activeRasterLayers.join(',');
+  const rasterRescaleKey = activeRasterLayers
+    .map((id) => `${id}:${rasterRescale[id]?.min ?? ''}-${rasterRescale[id]?.max ?? ''}`)
+    .join('|');
 
   const layerMetaById = Object.fromEntries(layerOptions.map((opt) => [opt.id, opt]));
 
-  const activeLayersKey = activeLayers.join(',');
+  // Só camadas vetoriais: ligar/desligar LST não deve recarregar bairros nem prender o spinner.
+  const activeVectorKey = activeLayers.filter((id) => !isExternalRasterLayer(id)).join(',');
   const layerLoadGen = useRef(0);
   const loadedMunicipioRef = useRef<string | null>(null);
 
   // Fetch vector layers (raster layers use mosaicjson tile endpoints).
   useEffect(() => {
-    const vectorLayers = activeLayersKey
-      .split(',')
-      .filter(Boolean)
-      .filter((layerName) => !isExternalRasterLayer(layerName));
+    const vectorLayers = activeVectorKey.split(',').filter(Boolean);
 
     if (vectorLayers.length === 0) {
       setLayerData({});
@@ -388,41 +490,45 @@ export default function MapContainer({
         ...vectorLayers.filter((id) => id !== 'bairros' && id !== 'municipio'),
       ];
 
-      for (const layerName of ordered) {
-        if (!alive || layerLoadGen.current !== gen) return;
-        try {
-          const extraParams = buildLayerFetchParams(layerName, {
-            educacaoEtapa,
-            territorioTipo,
-            layerAnoByTema,
-          });
-          const data = await api.getLayerGeoJSON(layerName, selectedMunicipio, extraParams);
+      try {
+        for (const layerName of ordered) {
           if (!alive || layerLoadGen.current !== gen) return;
-          if (!data?.features || !Array.isArray(data.features)) {
-            console.error(`Layer ${layerName} retornou payload inválido`, data);
-            setFailedLayers((prev) => (prev.includes(layerName) ? prev : [...prev, layerName]));
-            continue;
-          }
-          setLayerData((prev) => ({ ...prev, [layerName]: data }));
-          if (layerName === 'bairros' || layerName === 'municipio') {
-            setMapSpatialReady(true);
-          }
-        } catch (err) {
-          console.error(`Error loading layer ${layerName}:`, err);
-          if (alive && layerLoadGen.current === gen) {
-            setFailedLayers((prev) => (prev.includes(layerName) ? prev : [...prev, layerName]));
+          try {
+            const extraParams = buildLayerFetchParams(layerName, {
+              educacaoEtapa,
+              territorioTipo,
+              layerAnoByTema,
+            });
+            const data = await api.getLayerGeoJSON(layerName, selectedMunicipio, extraParams);
+            if (!alive || layerLoadGen.current !== gen) return;
+            if (!data?.features || !Array.isArray(data.features)) {
+              console.error(`Layer ${layerName} retornou payload inválido`, data);
+              setFailedLayers((prev) => (prev.includes(layerName) ? prev : [...prev, layerName]));
+              continue;
+            }
+            setLayerData((prev) => ({ ...prev, [layerName]: data }));
+            if (layerName === 'bairros' || layerName === 'municipio') {
+              setMapSpatialReady(true);
+            }
+          } catch (err) {
+            console.error(`Error loading layer ${layerName}:`, err);
+            if (alive && layerLoadGen.current === gen) {
+              setFailedLayers((prev) => (prev.includes(layerName) ? prev : [...prev, layerName]));
+            }
           }
         }
-      }
-      if (alive && layerLoadGen.current === gen) {
-        setLoading(false);
-        setMapSpatialReady(true);
+      } finally {
+        // Sempre libera o spinner desta geração (evita travar se o effect for cancelado no meio).
+        if (layerLoadGen.current === gen) {
+          setLoading(false);
+          setMapSpatialReady(true);
+        }
       }
     };
 
     loadLayers().catch((err) => {
       console.error('Error loading layers:', err);
-      if (alive && layerLoadGen.current === gen) {
+      if (layerLoadGen.current === gen) {
         setLoading(false);
         setMapSpatialReady(true);
       }
@@ -433,13 +539,13 @@ export default function MapContainer({
     };
     // Não incluir layerAnoByTema/educacao/territorio aqui: mudam no boot e cancelavam o fetch de bairros.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeLayersKey, selectedMunicipio, setMapSpatialReady]);
+  }, [activeVectorKey, selectedMunicipio, setMapSpatialReady]);
 
   // Recarrega só camadas que dependem de ano/etapa quando esses filtros mudam.
   useEffect(() => {
     const dependent = activeLayers.filter(
-      (id) => id === 'cobertura' || id === 'socioeconomico' || id === 'educacao' || id === 'territorios_especiais' || id === 'lst_observada',
-    ).filter((id) => !isExternalRasterLayer(id));
+      (id) => id === 'cobertura' || id === 'socioeconomico' || id === 'educacao' || id === 'territorios_especiais',
+    );
     if (dependent.length === 0) return;
 
     let alive = true;
@@ -463,10 +569,11 @@ export default function MapContainer({
     return () => {
       alive = false;
     };
-  }, [educacaoEtapa, territorioTipo, layerAnoByTema, activeLayersKey, selectedMunicipio]);
+  }, [educacaoEtapa, territorioTipo, layerAnoByTema, activeVectorKey, selectedMunicipio]);
 
   useEffect(() => {
-    if (activeRasterLayers.length === 0) {
+    const rasterIds = activeRasterKey.split(',').filter(Boolean) as ExternalRasterId[];
+    if (rasterIds.length === 0) {
       setRasterConfigs({});
       setRasterLoading(false);
       return;
@@ -477,7 +584,7 @@ export default function MapContainer({
       setRasterLoading(true);
       try {
         const entries = await Promise.all(
-          activeRasterLayers.map(async (layerId) => {
+          rasterIds.map(async (layerId) => {
             const rescale = rasterRescale[layerId];
             const ano = layerId === 'lst_observada' ? layerAnoByTema.lst : undefined;
             const cfg = await api.getExternalRasterConfig(
@@ -513,7 +620,7 @@ export default function MapContainer({
     return () => {
       cancelled = true;
     };
-  }, [activeRasterLayers, selectedMunicipio, rasterRescale, layerAnoByTema.lst]);
+  }, [activeRasterKey, selectedMunicipio, rasterRescaleKey, layerAnoByTema.lst]);
 
   useEffect(() => {
     if (!showRegionalOverlay || !selectedMunicipio) {
@@ -552,355 +659,79 @@ export default function MapContainer({
       fillOpacity: (style.fillOpacity ?? 0.5) * layerOpacity,
       opacity: styleOpacity * layerOpacity,
     };
+    // LST identify: polígonos não podem capturar o clique (senão abre popup do limite municipal).
+    const passThrough = (s: Record<string, unknown>) =>
+      (lstIdentifyActive ? { ...s, interactive: false } : s);
     const thematicOnTop = activeLayers.some((l) =>
       ['cobertura', 'inundacao', 'vulnerabilidade', 'risco_consolidado', 'saneamento_drenagem', 'prioridade_planejamento', 'adaptacao_climatica', 'saude_risco', 'seguranca_publica', 'vulnerabilidade_multidimensional', 'lst_observada'].includes(l)
     );
     const simActive = Boolean(simGeoJSON) || (simContours?.features?.length ?? 0) > 0;
     if (layerName === 'bairros' && simActive) {
-      return {
+      return passThrough({
         ...withOpacity,
         fillOpacity: 0,
         fillColor: 'transparent',
         weight: 0.55,
         color: '#475569',
         opacity: 0.4 * layerOpacity,
-      };
+      });
     }
     if (layerName === 'bairros' && thematicOnTop) {
       const coberturaActive = activeLayers.includes('cobertura');
       if (coberturaActive) {
-        return {
+        return passThrough({
           ...withOpacity,
           fillOpacity: 0,
           fillColor: 'transparent',
           weight: 1.6,
           color: '#e2e8f0',
           opacity: 0.9 * layerOpacity,
-        };
+        });
       }
       // Mantém contorno legível mesmo com temáticas por cima
-      return {
+      return passThrough({
         ...withOpacity,
         fillOpacity: Math.min(withOpacity.fillOpacity, 0.18),
         weight: 1.4,
         color: '#c7d2fe',
         opacity: 0.9 * layerOpacity,
-      };
+      });
     }
     if (layerName === 'cobertura' && activeLayers.includes('bairros')) {
-      return { ...withOpacity, fillOpacity: Math.min(withOpacity.fillOpacity, 0.38) };
+      return passThrough({ ...withOpacity, fillOpacity: Math.min(withOpacity.fillOpacity, 0.38) });
     }
-    return withOpacity;
+    return passThrough(withOpacity);
   };
 
   const layerRenderOrder = buildVectorRenderOrder(activeLayers);
 
-  // Popup contents depending on layer properties
-  const onEachFeature = (layerName: string) => (feature: any, layer: any) => {
-    const props = feature.properties || {};
-    let popupContent = '<div class="p-1 font-sans text-xs min-w-[180px]">';
-    popupContent += `<p class="mb-1 text-[10px] font-bold uppercase tracking-wide text-indigo-300">${layerTitles[layerName] || layerName}</p>`;
-    
-    if (props.nome) {
-      popupContent += `<h4 class="font-bold text-sm text-zinc-100 border-b border-zinc-700 pb-1 mb-1">${props.nome}</h4>`;
-    }
-    
-    if (props.tipo) {
-      popupContent += `<p class="mb-1"><span class="text-zinc-400">Tipo:</span> <span class="capitalize">${props.tipo}</span></p>`;
-      if (props.subgrupo) popupContent += `<p class="mb-1"><span class="text-zinc-400">Subgrupo:</span> <span class="capitalize text-zinc-300">${props.subgrupo.replace('_', ' ')}</span></p>`;
-    }
-
-    if (props.tipo_label || props.tipo) {
-      popupContent += `<p class="mb-1"><span class="text-zinc-400">Tipo:</span> <span class="font-semibold text-fuchsia-200">${props.tipo_label || props.tipo}</span></p>`;
-    }
-    if (props.populacao_estimada != null) {
-      popupContent += `<p class="mb-1"><span class="text-zinc-400">População est.:</span> ${Number(props.populacao_estimada).toLocaleString('pt-BR')}</p>`;
-    }
-    if (props.codigo_oficial) {
-      popupContent += `<p class="mb-1 text-[10px] text-zinc-500">Código: ${props.codigo_oficial}</p>`;
-    }
-
-    if (props.codigo_inep) {
-      popupContent += `<p class="mb-1"><span class="text-zinc-400">Código INEP:</span> ${props.codigo_inep}</p>`;
-    }
-    if (props.dependencia) {
-      const dep = DEPENDENCIA_LABELS[props.dependencia] || props.dependencia;
-      popupContent += `<p class="mb-1"><span class="text-zinc-400">Dependência:</span> ${dep}</p>`;
-    }
-    if (props.matriculas_ativas != null) {
-      popupContent += `<p class="mb-1"><span class="text-zinc-400">Matrículas (etapa):</span> <span class="font-semibold text-sky-200">${Number(props.matriculas_ativas).toLocaleString('pt-BR')}</span></p>`;
-    }
-    if (props.matriculas_total != null) {
-      popupContent += `<p class="mb-1 text-[10px] text-zinc-500">Total escola: ${Number(props.matriculas_total).toLocaleString('pt-BR')} · Inf ${props.matriculas_infantil ?? 0} · Fund ${props.matriculas_fundamental ?? 0} · Méd ${props.matriculas_medio ?? 0}</p>`;
-    }
-    
-    if (props.codigo_bairro) {
-      popupContent += `<p class="mb-1"><span class="text-zinc-400">Código Bairro:</span> ${props.codigo_bairro}</p>`;
-    }
-    
-    if (props.populacao) {
-      popupContent += `<p class="mb-1"><span class="text-zinc-400">População:</span> ${props.populacao.toLocaleString()}</p>`;
-    }
-    
-    if (props.renda_media) {
-      popupContent += `<p class="mb-1"><span class="text-zinc-400">Renda Média:</span> R$ ${props.renda_media.toLocaleString(undefined, { minimumFractionDigits: 2 })}</p>`;
-    }
-    if (props.classe_renda) {
-      const cls = props.classe_renda === 'ALTA' ? 'alta' : props.classe_renda === 'MEDIA' ? 'média' : 'baixa';
-      popupContent += `<p class="mb-1"><span class="text-zinc-400">Classe (no município):</span> <span class="font-semibold">${cls}</span></p>`;
-    }
-    if (props.deficits_censo && typeof props.deficits_censo === 'object') {
-      const d = props.deficits_censo as Record<string, number>;
-      const labels: Record<string, string> = {
-        arborizacao: 'Sem arborização',
-        calcada: 'Sem calçada',
-        iluminacao: 'Sem iluminação',
-        agua: 'Sem rede de água',
-        esgoto: 'Esgoto inadequado',
-        lixo: 'Lixo sem coleta',
-        alfabetizacao: 'Baixa alfabetização',
-      };
-      popupContent += `<p class="mt-2 mb-1 text-[10px] font-bold uppercase text-amber-300">Déficits Censo 2022</p>`;
-      Object.entries(labels).forEach(([key, label]) => {
-        if (d[key] != null) {
-          popupContent += `<p class="mb-0.5 text-[10px] text-zinc-400">${label}: <span class="text-amber-200">${d[key]}%</span></p>`;
-        }
-      });
-    }
-
-    if (props.densidade_demografica) {
-      popupContent += `<p class="mb-1"><span class="text-zinc-400">Densidade:</span> ${props.densidade_demografica.toLocaleString()} hab/km²</p>`;
-    }
-    
-    if (props.nivel_alerta) {
-      popupContent += `<p class="mb-1"><span class="text-zinc-400">Nível do Alerta:</span> <span class="font-bold text-red-400">${props.nivel_alerta}</span></p>`;
-      if (props.descricao) popupContent += `<p class="mt-2 text-zinc-300 italic border-l-2 border-amber-500 pl-2 text-[10px]">${props.descricao}</p>`;
-    }
-    
-    if (props.classe_uso) {
-      popupContent += `<p class="mb-1"><span class="text-zinc-400">Uso do Solo (MapBiomas):</span> <span class="font-semibold text-zinc-300">${props.classe_uso}</span></p>`;
-    }
-
-    if (props.indice_vulnerabilidade !== undefined) {
-      popupContent += `<p class="mb-1"><span class="text-zinc-400">IVC:</span> <span class="font-bold text-rose-300">${props.indice_vulnerabilidade}</span></p>`;
-    }
-
-    if (props.indice_risco_inundacao !== undefined) {
-      popupContent += `<p class="mb-1"><span class="text-zinc-400">IRI:</span> <span class="font-bold text-sky-300">${props.indice_risco_inundacao}</span></p>`;
-      if (props.hidrografia_proximidade_score !== undefined) {
-        popupContent += `<p class="mb-1 text-[10px] text-zinc-500">Prox. hidrografia: ${props.hidrografia_proximidade_score} · Impermeab.: ${props.impermeabilizacao_score ?? '—'}</p>`;
-      }
-    }
-
-    if (props.capacidade_adaptacao !== undefined) {
-      popupContent += `<p class="mb-1"><span class="text-zinc-400">Adaptação:</span> <span class="font-bold text-emerald-300">${props.capacidade_adaptacao}</span></p>`;
-    }
-
-    if (props.layer === 'risco_consolidado' && props.nivel) {
-      popupContent += `<p class="mb-1"><span class="text-zinc-400">Risco agora:</span> <span class="font-bold text-rose-300">${props.nivel}</span>`;
-      if (props.score_sinidu != null) {
-        popupContent += ` <span class="text-zinc-500">(score ${props.score_sinidu})</span>`;
-      }
-      popupContent += `</p>`;
-      if (props.alerta_vivo) {
-        popupContent += `<p class="mb-1"><span class="text-zinc-400">Alerta vivo:</span> <span class="font-bold text-amber-300">${props.alerta_vivo}</span></p>`;
-      }
-    }
-    if (props.prioridade_planejamento !== undefined) {
-      popupContent += `<p class="mb-1"><span class="text-zinc-400">Prioridade:</span> <span class="font-bold text-fuchsia-300">${props.prioridade_planejamento}</span>`;
-      if (props.classe_prioridade) {
-        popupContent += ` <span class="text-[10px] text-fuchsia-200/80">(${props.classe_prioridade})</span>`;
-      }
-      popupContent += `</p>`;
-      if (props.classificacao_relativa) {
-        popupContent += `<p class="mb-1 text-[9px] text-zinc-500">Classe relativa ao município (tertil intra-urbano)</p>`;
-      }
-    }
-
-    if (props.risco_drenagem !== undefined) {
-      popupContent += `<p class="mb-1"><span class="text-zinc-400">Risco drenagem:</span> <span class="font-bold text-cyan-300">${props.risco_drenagem}</span>`;
-      if (props.classe_drenagem) {
-        popupContent += ` <span class="text-[10px] text-cyan-200/80">(${props.classe_drenagem})</span>`;
-      }
-      popupContent += `</p>`;
-      if (props.impermeabilizacao_score !== undefined) {
-        popupContent += `<p class="mb-1 text-[10px] text-zinc-500">IRI ${props.indice_risco_inundacao ?? '—'} · Impermeab. ${props.impermeabilizacao_score} · Hidrografia ${props.hidrografia_proximidade_score ?? '—'}</p>`;
-      }
-      if (props.snis?.deficit_saneamento_pct !== undefined) {
-        popupContent += `<p class="mb-1 text-[10px] text-zinc-500">Déficit SNIS esgoto/água: ${props.snis.deficit_saneamento_pct}% (${props.snis.ano_referencia ?? '—'})</p>`;
-      }
-      if (props.score_explicacao) {
-        popupContent += `<p class="mb-1 text-[9px] text-zinc-600">${props.score_explicacao}</p>`;
-      }
-    }
-
-    if (props.maturidade_dados !== undefined) {
-      popupContent += `<p class="mb-1"><span class="text-zinc-400">Maturidade dos dados:</span> <span class="font-bold text-indigo-300">${props.maturidade_dados}%</span></p>`;
-      if (props.lacunas_prioritarias) {
-        popupContent += `<p class="mb-1"><span class="text-zinc-400">Lacunas:</span> <span class="text-zinc-300">${props.lacunas_prioritarias}</span></p>`;
-      }
-    }
-
-    if (props.tipo && props.feature_kind === 'estabelecimento') {
-      popupContent += `<p class="mb-1"><span class="text-zinc-400">Tipo:</span> ${props.tipo}${props.leitos_sus ? ` · ${props.leitos_sus} leitos SUS` : ''}</p>`;
-    }
-    if (props.pressao_assistencial !== undefined) {
-      popupContent += `<p class="mb-1"><span class="text-zinc-400">Pressão assistencial:</span> <span class="font-bold">${props.pressao_assistencial}</span></p>`;
-    }
-    if (props.cobertura_classe) {
-      popupContent += `<p class="mb-1"><span class="text-zinc-400">Classe:</span> <span class="font-bold">${props.cobertura_classe}</span></p>`;
-    }
-
-    if (props.bairro) {
-      popupContent += `<p class="mb-1"><span class="text-zinc-400">Bairro:</span> ${props.bairro}</p>`;
-    }
-    if (props.cobertura_classe) {
-      popupContent += `<p class="mb-1"><span class="text-zinc-400">Cobertura:</span> <span class="font-bold">${props.cobertura_classe}</span></p>`;
-    }
-    if (props.distancia_maior_risco_km !== undefined && props.distancia_maior_risco_km !== null) {
-      popupContent += `<p class="mb-1"><span class="text-zinc-400">Dist. maior risco:</span> ${props.distancia_maior_risco_km} km</p>`;
-    }
-    if (props.taxa_violenta_100k !== undefined) {
-      popupContent += `<p class="mb-1"><span class="text-zinc-400">Taxa violenta / 100k:</span> ${props.taxa_violenta_100k}</p>`;
-    }
-    if (props.intensidade_seguranca !== undefined) {
-      popupContent += `<p class="mb-1"><span class="text-zinc-400">Intensidade local:</span> <span class="font-bold text-orange-300">${props.intensidade_seguranca}</span>`;
-      if (props.classe_intensidade) {
-        popupContent += ` <span class="text-[10px] text-orange-200/80">(${props.classe_intensidade})</span>`;
-      }
-      popupContent += `</p>`;
-      if (props.classificacao_relativa) {
-        popupContent += `<p class="mb-1 text-[9px] text-zinc-500">Classe relativa ao município (tertil intra-urbano)</p>`;
-      }
-      if (props.score_explicacao) {
-        popupContent += `<p class="mb-1 text-[9px] text-zinc-600">${props.score_explicacao}</p>`;
-      }
-    }
-
-    if (props.indice_vm !== undefined) {
-      popupContent += `<p class="mb-1"><span class="text-zinc-400">Índice VM:</span> <span class="font-bold text-purple-300">${props.indice_vm}</span>`;
-      if (props.classe_vm) {
-        popupContent += ` <span class="text-[10px] text-purple-200/80">(${props.classe_vm})</span>`;
-      }
-      popupContent += `</p>`;
-      if (props.classificacao_relativa) {
-        popupContent += `<p class="mb-1 text-[9px] text-zinc-500">Classe relativa ao município (tertil intra-urbano)</p>`;
-      }
-      if (props.score_explicacao) {
-        popupContent += `<p class="mb-1 text-[9px] text-zinc-600">${props.score_explicacao}</p>`;
-      }
-    }
-    if (props.vulnerabilidade_multidimensional) {
-      popupContent += `<p class="mb-1 font-bold text-fuchsia-300">⚠ Vulnerabilidade multidimensional</p>`;
-    }
-
-    if (props.score_componentes && props.layer === 'prioridade_planejamento') {
-      popupContent += `
-        <div class="mt-2 rounded-md border border-fuchsia-500/30 bg-fuchsia-950/30 p-2">
-          <p class="mb-1 text-[10px] font-bold uppercase text-fuchsia-200">Composição do score</p>
-          <p class="text-[10px] text-zinc-300">Vulnerabilidade: +${props.score_componentes.vulnerabilidade_pct} pts</p>
-          <p class="text-[10px] text-zinc-300">Inundação: +${props.score_componentes.inundacao_pct} pts</p>
-          <p class="text-[10px] text-zinc-300">Déficit de adaptação: +${props.score_componentes.deficit_adaptacao_pct} pts</p>
-          ${props.score_explicacao ? `<p class="mt-1 text-[9px] text-zinc-500">${props.score_explicacao}</p>` : ''}
-        </div>
-      `;
-    } else if (props.score_componentes) {
-      popupContent += `
-        <div class="mt-2 rounded-md border border-fuchsia-500/30 bg-fuchsia-950/30 p-2">
-          <p class="mb-1 text-[10px] font-bold uppercase text-fuchsia-200">Por que este score?</p>
-          <p class="text-[10px] text-zinc-300">Vulnerabilidade: +${props.score_componentes.vulnerabilidade_pct} pts</p>
-          <p class="text-[10px] text-zinc-300">Inundação: +${props.score_componentes.inundacao_pct} pts</p>
-          <p class="text-[10px] text-zinc-300">Déficit de adaptação: +${props.score_componentes.deficit_adaptacao_pct} pts</p>
-          ${props.score_explicacao ? `<p class="mt-1 text-[9px] text-zinc-500">${props.score_explicacao}</p>` : ''}
-        </div>
-      `;
-    }
-
-    if (props.qualidade_dado) {
-      const q = props.qualidade_dado;
-      const qualityColor =
-        q === 'Oficial'
-          ? 'text-emerald-300 border-emerald-500/40 bg-emerald-950/30'
-          : q === 'Referencia'
-            ? 'text-sky-300 border-sky-500/40 bg-sky-950/30'
-            : q === 'Estimado'
-              ? 'text-amber-300 border-amber-500/40 bg-amber-950/30'
-              : 'text-zinc-300 border-zinc-500/40 bg-zinc-950/30';
-      popupContent += `<p class="mt-2"><span class="rounded border px-1.5 py-0.5 text-[9px] font-bold uppercase ${qualityColor}">${props.qualidade_dado}</span></p>`;
-    }
-
-    if (props.fonte_referencia) {
-      popupContent += `<p class="mt-2 border-t border-zinc-800 pt-1 text-[10px] text-zinc-500">${props.fonte_referencia}</p>`;
-    }
-
-    popupContent += '</div>';
-    layer.bindPopup(popupContent);
-  };
-
-  const pointToLayer = (layerName: string) => (feature: any, latlng: L.LatLngExpression) => {
-    if (layerName === 'saude_risco') {
-      if (feature?.properties?.feature_kind !== 'estabelecimento') {
-        return L.circleMarker(latlng, { radius: 0, fillOpacity: 0, opacity: 0 });
-      }
-      const cls = feature?.properties?.cobertura_classe;
-      const color = cls === 'ADEQUADA' ? '#16a34a' : cls === 'ATENCAO' ? '#eab308' : '#ef4444';
-      const tipo = feature?.properties?.tipo;
-      const radius = tipo === 'HOSPITAL' ? 10 : tipo === 'SAMU' ? 9 : 7;
-      return L.circleMarker(latlng, { radius, fillColor: color, color: '#fff', weight: 2, fillOpacity: 0.95 });
-    }
-    if (layerName === 'infraestrutura') {
-      const tipo = feature?.properties?.tipo;
-      if (tipo === 'hospital') {
-        return L.circleMarker(latlng, { radius: 8, fillColor: '#ef4444', color: '#fff', weight: 2, fillOpacity: 0.9 });
-      }
-      if (tipo === 'escola') {
-        return L.circleMarker(latlng, { radius: 6, fillColor: '#3b82f6', color: '#fff', weight: 2, fillOpacity: 0.9 });
-      }
-      return L.circleMarker(latlng, { radius: 5, fillColor: '#a78bfa', color: '#fff', weight: 1.5, fillOpacity: 0.85 });
-    }
-    if (layerName === 'educacao') {
-      const props = feature?.properties || {};
-      const color = getEducacaoEtapa(educacaoEtapa).color;
-      const matriculas = Number(props.matriculas_ativas ?? props.matriculas_total ?? 0);
-      const radius = markerRadiusFromMatriculas(matriculas);
-      const marker = L.circleMarker(latlng, {
-        radius,
-        fillColor: color,
-        color: '#fff',
-        weight: 2,
-        fillOpacity: 0.9,
-      });
-      if (!showEducacaoBuffer) return marker;
-      const buffer = L.circle(latlng, {
-        radius: educacaoRaioM,
-        color,
-        weight: 1,
-        opacity: 0.45,
-        fillColor: color,
-        fillOpacity: 0.06,
-      });
-      return L.layerGroup([buffer, marker]);
-    }
-    const color = layerName === 'desastres' ? '#ef4444' : '#a78bfa';
-    return L.circleMarker(latlng, {
-      radius: layerName === 'desastres' ? 7 : 5,
-      fillColor: color,
-      color: '#f8fafc',
-      weight: 1.5,
-      opacity: 1,
-      fillOpacity: 0.85
-    });
-  };
+  const displayLayerData = useMemo(() => {
+    const infra = layerData.infraestrutura;
+    if (!infra?.features) return layerData;
+    const filtered = infra.features.filter((f: any) =>
+      matchEquipamentoFiltro(f?.properties || {}, equipamentoTiposAtivos, equipamentoDepsAtivas),
+    );
+    return {
+      ...layerData,
+      infraestrutura: { ...infra, features: filtered },
+    };
+  }, [layerData, equipamentoTiposAtivos, equipamentoDepsAtivas]);
 
   return (
     <div className="relative w-full h-full rounded-2xl overflow-hidden border border-border bg-zinc-950">
-      {/* Loading Overlay */}
-      {loading || rasterLoading ? (
+      {/* Loading Overlay — só bloqueia no fetch vetorial; raster LST não trava o mapa */}
+      {loading ? (
         <div className="absolute inset-0 bg-background/60 backdrop-blur-sm z-[1000] flex items-center justify-center">
           <div className="flex flex-col items-center gap-3">
             <div className="w-10 h-10 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin"></div>
             <span className="text-zinc-300 text-sm font-medium">Carregando dados espaciais...</span>
           </div>
+        </div>
+      ) : null}
+
+      {rasterLoading && !loading ? (
+        <div className="map-ui-chrome pointer-events-none absolute left-1/2 top-4 z-[1100] -translate-x-1/2 rounded-lg border border-orange-500/40 bg-zinc-950/90 px-3 py-1.5 text-[11px] text-orange-100 shadow-lg backdrop-blur-md">
+          Carregando LST…
         </div>
       ) : null}
 
@@ -933,6 +764,10 @@ export default function MapContainer({
         zoomControl={false}
       >
         <MapController center={mapFocus} zoom={zoom} />
+        <LstPointIdentify
+          enabled={lstIdentifyActive}
+          codigoIbge={selectedMunicipio}
+        />
         <FitBoundsToBaseLayers
           selectedMunicipio={selectedMunicipio}
           municipioFc={layerData.municipio}
@@ -965,51 +800,46 @@ export default function MapContainer({
 
         {/* Dynamic PostGIS geospatial layers, rendered in selection order for overlays */}
         {layerRenderOrder.map((layerName) => (
-          layerData[layerName] && (
+          displayLayerData[layerName] && (
             <GeoJSON
-              key={`${layerName}-${socioSubcamada}-${educacaoEtapa}-${territorioTipo}-${educacaoRaioM}-${showEducacaoBuffer}-${layerOpacityById[layerName] ?? 1}-${layerData[layerName].features?.length || 0}`}
-              data={layerData[layerName]}
+              key={`${layerName}-${lstIdentifyActive ? 'lst-id' : 'vec'}-${socioSubcamada}-${educacaoEtapa}-${territorioTipo}-${educacaoRaioM}-${showEducacaoBuffer}-${equipamentoTiposAtivos.join(',')}-${equipamentoDepsAtivas.join(',')}-${layerOpacityById[layerName] ?? 1}-${displayLayerData[layerName].features?.length || 0}`}
+              data={displayLayerData[layerName]}
               style={(feature) => getLayerStyleForFeature(layerName, feature)}
-              pointToLayer={pointToLayer(layerName)}
-              onEachFeature={onEachFeature(layerName)}
+              pointToLayer={createPointToLayer(layerName, { educacaoEtapa, showEducacaoBuffer, educacaoRaioM })}
+              onEachFeature={createFeaturePopupHandler(layerName, lstIdentifyActive)}
             />
           )
         ))}
 
         {showRegionalOverlay && regionalData?.geojson?.features?.length ? (
           <GeoJSON
-            key={`regional-${regionalEscopo}-${regionalData.geojson.features.length}`}
+            key={`regional-${lstIdentifyActive ? 'lst-id' : 'vec'}-${regionalEscopo}-${regionalData.geojson.features.length}`}
             data={regionalData.geojson}
             style={(feature) => {
               const kind = feature?.properties?.feature_kind;
-              if (kind === 'referencia_comparacao') {
-                return {
-                  fillColor: '#f59e0b',
-                  fillOpacity: 0.08,
-                  color: '#fbbf24',
-                  weight: 2.2,
-                  opacity: 0.9,
-                  dashArray: '8,5',
-                };
-              }
-              return {
-                fillColor: '#22d3ee',
-                fillOpacity: 0.04,
-                color: '#22d3ee',
-                weight: 1.6,
-                opacity: 0.75,
-                dashArray: '6,4',
-              };
+              const base =
+                kind === 'referencia_comparacao'
+                  ? {
+                      fillColor: '#f59e0b',
+                      fillOpacity: 0.08,
+                      color: '#fbbf24',
+                      weight: 2.2,
+                      opacity: 0.9,
+                      dashArray: '8,5',
+                    }
+                  : {
+                      fillColor: '#22d3ee',
+                      fillOpacity: 0.04,
+                      color: '#22d3ee',
+                      weight: 1.6,
+                      opacity: 0.75,
+                      dashArray: '6,4',
+                    };
+              return lstIdentifyActive ? { ...base, interactive: false } : base;
             }}
             onEachFeature={(feature, layer) => {
-              const props = feature.properties || {};
-              const kind = props.feature_kind === 'referencia_comparacao' ? 'Referência de comparação' : 'Município regional';
-              let content = `<div class="p-2 font-sans text-xs min-w-[180px]">
-                <p class="mb-1 text-[10px] font-bold uppercase tracking-wide text-teal-300">${kind}</p>
-                <h4 class="font-bold text-sm text-zinc-100 border-b border-zinc-700 pb-1 mb-1">${props.nome || 'Município'}</h4>`;
-              if (props.uf) content += `<p class="text-zinc-400">${props.uf}</p>`;
-              content += '</div>';
-              layer.bindPopup(content);
+              if (lstIdentifyActive) return;
+              layer.bindPopup(buildRegionalFeaturePopup(feature.properties || {}));
             }}
           />
         ) : null}
@@ -1017,40 +847,15 @@ export default function MapContainer({
         {/* Manchas de simulação por profundidade */}
         {simGeoJSON && simOverlays.showFlood && (
           <GeoJSON
-            key={`sim-${JSON.stringify(simGeoJSON).slice(0, 80)}`}
+            key={`sim-${lstIdentifyActive ? 'lst-id' : 'vec'}-${JSON.stringify(simGeoJSON).slice(0, 80)}`}
             data={simGeoJSON}
-            style={(feature) => getSimulationFeatureStyle(feature)}
+            style={(feature) => {
+              const base = getSimulationFeatureStyle(feature);
+              return lstIdentifyActive ? { ...base, interactive: false } : base;
+            }}
             onEachFeature={(feature, layer) => {
-              const props = feature.properties || {};
-              let content = `<div class="p-2 font-sans text-xs">
-                <h4 class="font-bold text-sm text-zinc-100 mb-1 border-b border-zinc-700 pb-1">${props.name || 'Mancha Simulada'}</h4>`;
-              if (props.temp_increase_celsius != null) {
-                content += `<p class="text-red-400 font-semibold">ΔT: +${props.temp_increase_celsius}°C</p>`;
-                if (props.temp_surface_celsius != null) {
-                  content += `<p class="text-orange-300">Superfície est.: ${props.temp_surface_celsius}°C</p>`;
-                }
-                if (props.heat_band) {
-                  content += `<p class="text-amber-300">Faixa: ${props.heat_band}</p>`;
-                }
-                if (props.vegetacao_pct != null) {
-                  content += `<p class="text-lime-300">Vegetação: ${props.vegetacao_pct}%</p>`;
-                }
-              }
-              if (props.precipitation_mm) {
-                content += `<p class="text-sky-400 font-semibold">Chuva: ${props.precipitation_mm} mm</p>`;
-              }
-              if (props.water_level_m) {
-                content += `<p class="text-sky-300">Cota simulada: ${props.water_level_m} m</p>`;
-              }
-              if (props.depth_band) {
-                content += `<p class="text-blue-300">Faixa: ${props.depth_band}</p>`;
-              }
-              if (props.intensity_pct) {
-                content += `<p class="text-sky-400 font-semibold">Impermeabilização: +${props.intensity_pct}%</p>`;
-              }
-              if (props.description) content += `<p class="mt-1 text-zinc-400 text-[10px]">${props.description}</p>`;
-              content += '</div>';
-              layer.bindPopup(content);
+              if (lstIdentifyActive) return;
+              layer.bindPopup(buildSimulationFeaturePopup(feature.properties || {}));
             }}
           />
         )}
@@ -1070,15 +875,8 @@ export default function MapContainer({
               };
             }}
             onEachFeature={(feature, layer) => {
-              const elev = feature.properties?.elevation_m;
-              const res = feature.properties?.dem_resolution_m;
-              const indexed = feature.properties?.index_contour;
-              if (elev != null) {
-                const tip = res != null
-                  ? `${indexed ? 'Cota indexada ' : 'Cota '}${elev} m · DEM ~${res} m`
-                  : `Cota ${elev} m`;
-                layer.bindTooltip(tip, { sticky: true, className: 'text-[10px]' });
-              }
+              const tip = buildContourTooltip(feature);
+              if (tip) layer.bindTooltip(tip, { sticky: true, className: 'text-[10px]' });
             }}
           />
         )}
@@ -1326,7 +1124,8 @@ export default function MapContainer({
                     />
                   </label>
                   <p className="text-[9px] leading-snug text-zinc-500">
-                    Raster externo (mosaicjson GeoReDUS) — sem ingestão PostGIS no Sinidu.
+                    Clique no mapa para ler a temperatura (°C) no ponto — mosaico GeoReDUS / Landsat.
+                    Raster externo (mosaicjson) — sem ingestão PostGIS no Sinidu.
                   </p>
                 </div>
               ) : layerName === 'socioeconomico' ? (
@@ -1371,13 +1170,93 @@ export default function MapContainer({
                     </div>
                   ))}
                   <p className="mt-1 text-[9px] leading-snug text-zinc-500">
-                    Etapa: {getEducacaoEtapa(educacaoEtapa).label} · Tamanho ∝ matrículas
+                    Cor = dependência (federal / estadual / municipal / privada)
+                    {educacaoEtapa !== 'todas' ? ` · filtro ${getEducacaoEtapa(educacaoEtapa).label}` : ''}
+                    {' '}· tamanho ∝ matrículas
                   </p>
                   {showEducacaoBuffer && (
                     <p className="text-[9px] leading-snug text-indigo-300/80">
                       Buffer de influência: {educacaoRaioM} m
                     </p>
                   )}
+                </div>
+              ) : layerName === 'infraestrutura' ? (
+                <div className="flex flex-col gap-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="text-[9px] font-bold uppercase tracking-wider text-teal-200">Tipo</p>
+                    <button
+                      type="button"
+                      onClick={() => setEquipamentoTiposAtivos([...EQUIPAMENTO_TIPOS_DEFAULT])}
+                      className="text-[8px] font-semibold text-teal-300/80 hover:text-teal-100"
+                    >
+                      Reset tipos
+                    </button>
+                  </div>
+                  <div className="grid grid-cols-1 gap-1">
+                    {EQUIPAMENTO_TIPOS.map((tipo) => {
+                      const active = equipamentoTiposAtivos.includes(tipo.id);
+                      return (
+                        <button
+                          key={tipo.id}
+                          type="button"
+                          onClick={() => toggleEquipamentoTipo(tipo.id)}
+                          className={`flex items-center gap-2 rounded-md px-1 py-0.5 text-left transition ${
+                            active ? 'bg-teal-500/10' : 'opacity-45'
+                          }`}
+                          title={active ? `Ocultar ${tipo.label}` : `Mostrar ${tipo.label}`}
+                        >
+                          <span
+                            className="inline-flex h-4 min-w-[18px] items-center justify-center rounded-full border-2 border-white/40 px-1 text-[8px] font-extrabold text-white"
+                            style={{ backgroundColor: tipo.color }}
+                          >
+                            {tipo.short}
+                          </span>
+                          <span className={`leading-tight ${active ? 'text-zinc-200' : 'text-zinc-500 line-through'}`}>
+                            {tipo.label}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <div className="flex items-center justify-between gap-2 pt-1">
+                    <p className="text-[9px] font-bold uppercase tracking-wider text-teal-200">Dependência (borda)</p>
+                    <button
+                      type="button"
+                      onClick={() => setEquipamentoDepsAtivas([...EQUIPAMENTO_DEPS_DEFAULT])}
+                      className="text-[8px] font-semibold text-teal-300/80 hover:text-teal-100"
+                    >
+                      Reset
+                    </button>
+                  </div>
+                  <div className="grid grid-cols-2 gap-1">
+                    {(Object.keys(DEPENDENCIA_LABELS) as DependenciaId[]).map((dep) => {
+                      const active = equipamentoDepsAtivas.includes(dep);
+                      return (
+                        <button
+                          key={dep}
+                          type="button"
+                          onClick={() => toggleEquipamentoDep(dep)}
+                          className={`flex items-center gap-1.5 rounded-md px-1 py-0.5 text-left ${
+                            active ? 'bg-teal-500/10' : 'opacity-45'
+                          }`}
+                        >
+                          <span
+                            className="h-3 w-3 shrink-0 rounded-full border-2 border-zinc-900"
+                            style={{ backgroundColor: DEPENDENCIA_COLORS[dep], boxShadow: `0 0 0 1.5px ${DEPENDENCIA_COLORS[dep]}` }}
+                          />
+                          <span className={`text-[10px] ${active ? 'text-zinc-200' : 'text-zinc-500 line-through'}`}>
+                            {DEPENDENCIA_LABELS[dep]}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <p className="text-[8px] leading-snug text-zinc-500">
+                    Preenchimento = tipo · borda = esfera. Clique para ocultar/mostrar.
+                    {displayLayerData.infraestrutura?.features
+                      ? ` · ${displayLayerData.infraestrutura.features.length.toLocaleString('pt-BR')} visíveis`
+                      : ''}
+                  </p>
                 </div>
               ) : (
                 <div className="grid grid-cols-1 gap-1.5">

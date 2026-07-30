@@ -35,6 +35,10 @@ FEATURE_DOMAINS: dict[str, tuple[str, ...]] = {
     "drenagem": (
         "capacidade_drenagem_mm_h",
         "saturacao_drenagem_40mm",
+        "lamina_proxy_mm",
+        "escoamento_excesso_mm",
+        "rede_saturada_flag",
+        "area_alagada_proxy_pct",
     ),
     "hand_hidrografia": (
         "water_proximity",
@@ -53,7 +57,7 @@ FEATURE_DOMAINS: dict[str, tuple[str, ...]] = {
 DOMAIN_LABELS_PT: dict[str, str] = {
     "chuva": "Chuva (volume/intensidade)",
     "solo_uso": "Solo e uso do solo",
-    "drenagem": "Capacidade de drenagem",
+    "drenagem": "Drenagem e proxy físico (SCS)",
     "hand_hidrografia": "HAND / hidrografia",
     "sazonalidade": "Sazonalidade",
 }

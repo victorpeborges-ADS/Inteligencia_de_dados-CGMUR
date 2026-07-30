@@ -12,6 +12,11 @@ from app.services import simulation_cache as sc
 @pytest.fixture(autouse=True)
 def enable_cache(monkeypatch):
     monkeypatch.setattr(sc, "SIMULATION_CACHE_ENABLED", True)
+    # Isola do Redis compartilhado com dev/docker — sem isso, uma chave residual de
+    # execução anterior faz o "primeiro" run já vir de cache, quebrando o teste.
+    fake_cache: dict[str, object] = {}
+    monkeypatch.setattr(sc, "cache_get_json", lambda key: fake_cache.get(key))
+    monkeypatch.setattr(sc, "cache_set_json", lambda key, value, ttl=None: fake_cache.__setitem__(key, value))
 
 
 def test_rainfall_cache_hit(monkeypatch):

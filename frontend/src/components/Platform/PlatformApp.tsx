@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import dynamic from 'next/dynamic';
 import { usePathname, useRouter } from 'next/navigation';
 import { api, getApiBaseUrl, type ContingencyPlan, type SocioeconomicRanking, type WorkshopDiagnostic } from '@/utils/api';
@@ -90,6 +90,12 @@ export default function PlatformApp({ initialTab }: PlatformAppProps) {
   const setEducacaoRaioM = useAppStore((s) => s.setEducacaoRaioM);
   const showEducacaoBuffer = useAppStore((s) => s.showEducacaoBuffer);
   const setShowEducacaoBuffer = useAppStore((s) => s.setShowEducacaoBuffer);
+  const equipamentoTiposAtivos = useAppStore((s) => s.equipamentoTiposAtivos);
+  const toggleEquipamentoTipo = useAppStore((s) => s.toggleEquipamentoTipo);
+  const setEquipamentoTiposAtivos = useAppStore((s) => s.setEquipamentoTiposAtivos);
+  const equipamentoDepsAtivas = useAppStore((s) => s.equipamentoDepsAtivas);
+  const toggleEquipamentoDep = useAppStore((s) => s.toggleEquipamentoDep);
+  const setEquipamentoDepsAtivas = useAppStore((s) => s.setEquipamentoDepsAtivas);
   const mapFocus = useAppStore((s) => s.mapFocus);
   const setMapFocus = useAppStore((s) => s.setMapFocus);
   const zoom = useAppStore((s) => s.zoom);
@@ -611,49 +617,67 @@ export default function PlatformApp({ initialTab }: PlatformAppProps) {
     navigateTab(UX_PROFILE_DEFAULT_TAB[profile]);
   };
 
+  // 20f.1 — navegação por teclado (Left/Right) entre abas, padrão WAI-ARIA tablist
+  const tabButtonRefs = useRef<Record<string, HTMLButtonElement | null>>({});
+  const handleTabListKeyDown = useCallback(
+    (event: React.KeyboardEvent<HTMLDivElement>) => {
+      if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+      event.preventDefault();
+      const currentIndex = tabConfig.findIndex((t) => t.id === activeTab);
+      if (currentIndex === -1) return;
+      const delta = event.key === 'ArrowRight' ? 1 : -1;
+      const nextTab = tabConfig[(currentIndex + delta + tabConfig.length) % tabConfig.length];
+      navigateTab(nextTab.id);
+      requestAnimationFrame(() => {
+        tabButtonRefs.current[nextTab.id]?.focus();
+      });
+    },
+    [tabConfig, activeTab, navigateTab],
+  );
+
   return (
     <main className="flex h-dvh max-h-dvh flex-col overflow-hidden bg-background font-sans text-foreground select-none">
-      {/* Premium Header */}
+      {/* Header institucional (20f.4) */}
       <header
-        className={`shrink-0 border-b border-border bg-card/65 backdrop-blur-md px-6 flex items-center justify-between z-50 transition-all duration-300 ${
-          focusMode ? 'min-h-[56px] py-2' : 'h-22 min-h-[88px]'
+        className={`shrink-0 border-b border-border bg-card/90 px-5 flex items-center justify-between z-50 transition-all duration-300 ${
+          focusMode ? 'min-h-[52px] py-2' : 'min-h-[72px] py-3'
         }`}
       >
-        <div className="flex items-center gap-4">
+        <div className="flex items-center gap-3.5">
           <img
             src="/logo-sinidu-clima.png"
             alt="Logo Sinidu+Clima"
-            className={`rounded-2xl border border-zinc-800 bg-black object-cover shadow-lg shadow-indigo-600/20 transition-all duration-300 ${
-              focusMode ? 'h-10 w-10' : 'h-[72px] w-[72px]'
+            className={`rounded-lg border border-border bg-black object-cover transition-all duration-300 ${
+              focusMode ? 'h-9 w-9' : 'h-14 w-14'
             }`}
           />
           <div className={focusMode ? 'hidden sm:block' : undefined}>
             <h1
-              className={`font-extrabold tracking-tight bg-gradient-to-r from-zinc-100 to-zinc-400 bg-clip-text text-transparent transition-all duration-300 ${
-                focusMode ? 'text-lg' : 'text-2xl'
+              className={`font-semibold tracking-tight text-zinc-100 transition-all duration-300 ${
+                focusMode ? 'text-base' : 'text-xl'
               }`}
             >
               Sinidu+Clima
               {!isInstitutionalMode() && (
-                <span className="text-indigo-400 font-medium"> INTERNO</span>
+                <span className="text-teal-400/90 font-medium text-sm"> · interno</span>
               )}
             </h1>
             {!focusMode && (
-              <span className="text-[11px] text-zinc-500 uppercase tracking-[0.22em] font-semibold block">
-                Plataforma de Inteligência Territorial
+              <span className="text-[11px] text-zinc-500 uppercase tracking-[0.12em] font-medium block">
+                Inteligência territorial climática
               </span>
             )}
           </div>
         </div>
         
-        {/* Pilot Info Badge */}
-        <div className="flex items-center gap-3">
+        {/* Controles do município / perfil */}
+        <div className="flex items-center gap-2.5">
           <ThemeToggle compact={focusMode} />
           <select
             value={uxProfile}
             onChange={(e) => handleUxProfileChange(e.target.value as UxProfile)}
             title={UX_PROFILE_HINTS[uxProfile]}
-            className="max-w-[160px] rounded-full border border-zinc-700 bg-zinc-950 px-3 py-1.5 text-[10px] font-bold uppercase tracking-wide text-zinc-200 outline-none focus:border-teal-400"
+            className="max-w-[160px] rounded-md border border-border bg-zinc-950 px-2.5 py-1.5 text-[10px] font-semibold uppercase tracking-wide text-zinc-200 outline-none focus:border-teal-500"
           >
             {(Object.keys(UX_PROFILE_LABELS) as UxProfile[]).map((p) => (
               <option key={p} value={p}>
@@ -665,10 +689,10 @@ export default function PlatformApp({ initialTab }: PlatformAppProps) {
             type="button"
             onClick={toggleFocusMode}
             title="Modo Focus — tecla F"
-            className={`flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider transition-all duration-300 ${
+            className={`flex items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-[10px] font-semibold uppercase tracking-wide transition-colors duration-200 ${
               focusMode
-                ? 'border-teal-400/50 bg-teal-500/20 text-teal-200'
-                : 'border-zinc-700 bg-zinc-950/80 text-zinc-400 hover:border-indigo-500/40 hover:text-indigo-200'
+                ? 'border-teal-500/45 bg-teal-500/15 text-teal-200'
+                : 'border-border bg-zinc-950/80 text-zinc-400 hover:border-teal-500/35 hover:text-teal-200'
             }`}
           >
             <Focus size={12} />
@@ -679,7 +703,7 @@ export default function PlatformApp({ initialTab }: PlatformAppProps) {
           <select
             value={selectedMunicipio}
             onChange={(e) => handleMunicipioChange(e.target.value)}
-            className="max-w-[280px] rounded-full border border-zinc-700 bg-zinc-950 px-3 py-1.5 text-xs font-semibold text-zinc-200 outline-none focus:border-indigo-400"
+            className="max-w-[280px] rounded-md border border-border bg-zinc-950 px-2.5 py-1.5 text-xs font-medium text-zinc-200 outline-none focus:border-teal-500"
             title="Município analisado — atualiza mapa, painéis, monitor e relatórios"
           >
             {municipalities.map((m) => (
@@ -692,9 +716,9 @@ export default function PlatformApp({ initialTab }: PlatformAppProps) {
             <button
               type="button"
               onClick={() => navigateTab('contingency')}
-              className={`flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-semibold transition-colors ${
+              className={`flex items-center gap-2 rounded-md border px-2.5 py-1.5 text-xs font-semibold transition-colors ${
                 alertaVivoChip.nivel === 'VERMELHO' || alertaVivoChip.nivel === 'LARANJA'
-                  ? 'border-rose-500/60 bg-rose-950/40 text-rose-200 animate-pulse hover:bg-rose-900/50'
+                  ? 'border-rose-500/60 bg-rose-950/40 text-rose-200'
                   : 'border-amber-500/50 bg-amber-950/40 text-amber-100 hover:bg-amber-900/50'
               }`}
               title={`CEMADEN 24h: ${alertaVivoChip.cemaden} alerta(s) · abrir contingência`}
@@ -704,7 +728,7 @@ export default function PlatformApp({ initialTab }: PlatformAppProps) {
             </button>
           )}
           {!alertaVivoChip?.vivo && (alertNivel === 'LARANJA' || alertNivel === 'VERMELHO') && (
-            <div className="flex items-center gap-2 rounded-full border border-rose-500/60 bg-rose-950/40 px-3 py-1.5 text-xs font-semibold text-rose-200 animate-pulse">
+            <div className="flex items-center gap-2 rounded-md border border-rose-500/60 bg-rose-950/40 px-2.5 py-1.5 text-xs font-semibold text-rose-200">
               <MapPin size={12} className="text-rose-400" />
               Alerta {alertNivel}
             </div>
@@ -713,7 +737,7 @@ export default function PlatformApp({ initialTab }: PlatformAppProps) {
       </header>
 
       {municipioEnsuring && (
-        <div className="border-b border-indigo-500/40 bg-indigo-950/40 px-6 py-3">
+        <div className="border-b border-teal-500/30 bg-teal-950/30 px-6 py-3">
           <MunicipioLoadProgress visible stepIndex={municipioLoadStep} />
         </div>
       )}
@@ -749,37 +773,58 @@ export default function PlatformApp({ initialTab }: PlatformAppProps) {
         </div>
       )}
 
-      {/* Workspace Area — altura travada: só o painel esquerdo rola (20f.5) */}
-      <div className="flex min-h-0 flex-1 overflow-hidden">
+      {/* Workspace Area — altura travada: só o painel esquerdo rola (20f.5); empilha em mobile (20f.1) */}
+      <div className="flex flex-col lg:flex-row min-h-0 flex-1 overflow-hidden">
         
-        {/* Left Sidepanel (Glassmorphism, 40% width) */}
+        {/* Left Sidepanel (Glassmorphism, largura design-system layout.sidebarWidth=440 em telas grandes) */}
         <section
           className={`border-r border-border bg-card/10 backdrop-blur-sm flex flex-col overflow-hidden shrink-0 z-40 transition-all duration-300 ease-in-out ${
-            focusMode ? 'w-0 border-r-0 opacity-0 pointer-events-none' : 'w-[450px] opacity-100'
+            focusMode
+              ? 'w-0 border-r-0 opacity-0 pointer-events-none'
+              : 'w-full max-h-[55dvh] lg:max-h-none lg:w-[440px] opacity-100'
           }`}
           aria-hidden={focusMode}
         >
           
           {/* Tab Navigation */}
-          <div className="flex flex-wrap border-b border-border bg-zinc-950/60 p-2 gap-1 shrink-0">
+          <div
+            role="tablist"
+            aria-label="Abas da plataforma"
+            onKeyDown={handleTabListKeyDown}
+            className="flex flex-nowrap lg:flex-wrap overflow-x-auto lg:overflow-x-visible border-b border-border bg-zinc-950/50 p-1.5 gap-0.5 shrink-0"
+          >
             {tabConfig.map(({ id, label, Icon }) => (
                 <button
                   key={id}
+                  ref={(el) => {
+                    tabButtonRefs.current[id] = el;
+                  }}
+                  role="tab"
+                  id={`tab-${id}`}
+                  aria-selected={activeTab === id}
+                  aria-controls={`tabpanel-${id}`}
+                  tabIndex={activeTab === id ? 0 : -1}
                   onClick={() => navigateTab(id)}
-                  className={`flex min-w-[72px] flex-1 flex-col items-center gap-1 py-2 px-1 rounded-lg text-[8px] font-bold uppercase tracking-wider transition-all duration-200 ${
+                  className={`flex min-w-[72px] flex-1 shrink-0 flex-col items-center gap-1 py-2 px-1 rounded-md text-[8px] font-semibold uppercase tracking-wide transition-colors duration-150 ${
                     activeTab === id
-                      ? 'bg-zinc-900 border border-zinc-800 text-indigo-400'
-                      : 'text-zinc-500 hover:text-zinc-300'
+                      ? 'bg-zinc-900 border border-teal-500/35 text-teal-300'
+                      : 'text-zinc-500 hover:text-zinc-300 border border-transparent'
                   }`}
                 >
-                  <Icon size={16} />
+                  <Icon size={15} />
                   <span>{label}</span>
                 </button>
             ))}
           </div>
 
           {/* Active Tab Panel Content */}
-          <div className="flex-1 min-h-0 overflow-y-auto p-5">
+          <div
+            className="flex-1 min-h-0 overflow-y-auto p-4"
+            role="tabpanel"
+            id={`tabpanel-${activeTab}`}
+            aria-labelledby={`tab-${activeTab}`}
+            tabIndex={0}
+          >
             <TabContextHint tab={activeTab} onNavigateTab={navigateTab} />
             {activeTab === 'dashboard' && (
               <div className="flex flex-col gap-4">
@@ -894,8 +939,8 @@ export default function PlatformApp({ initialTab }: PlatformAppProps) {
           </div>
         </section>
 
-        {/* Right Mapping View (60% width) */}
-        <section className="relative flex-1 overflow-hidden bg-zinc-950 ring-1 ring-inset ring-zinc-900/80">
+        {/* Right Mapping View — ocupa o restante; em mobile garante altura mínima abaixo do painel (20f.1) */}
+        <section className="relative min-h-[45dvh] lg:min-h-0 flex-1 overflow-hidden bg-zinc-950 ring-1 ring-inset ring-zinc-900/80">
           <WorkshopCenter
             selectedMunicipio={selectedMunicipio}
             municipioNome={selectedMunicipioInfo?.nome}
@@ -961,6 +1006,12 @@ export default function PlatformApp({ initialTab }: PlatformAppProps) {
             setEducacaoRaioM={setEducacaoRaioM}
             showEducacaoBuffer={showEducacaoBuffer}
             setShowEducacaoBuffer={setShowEducacaoBuffer}
+            equipamentoTiposAtivos={equipamentoTiposAtivos}
+            toggleEquipamentoTipo={toggleEquipamentoTipo}
+            setEquipamentoTiposAtivos={setEquipamentoTiposAtivos}
+            equipamentoDepsAtivas={equipamentoDepsAtivas}
+            toggleEquipamentoDep={toggleEquipamentoDep}
+            setEquipamentoDepsAtivas={setEquipamentoDepsAtivas}
             temporalActiveTemas={temporalActiveTemas}
             layerAnoByTema={layerAnoByTema}
             setLayerAnoForTema={setLayerAnoForTema}

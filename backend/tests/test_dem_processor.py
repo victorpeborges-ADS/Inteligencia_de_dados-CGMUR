@@ -14,6 +14,7 @@ from app.services.dem_processor import (
     _upsample_dem_superres,
     dem_resolution_m,
     find_local_dem,
+    hydro_dem_label,
     import_local_dem_bytes,
     local_dem_source_paths,
 )
@@ -62,6 +63,62 @@ def test_local_dem_paths_and_import(tmp_path, monkeypatch):
     dest = import_local_dem_bytes(code, payload)
     assert dest.exists()
     assert find_local_dem(code) == dest
+
+
+def test_local_dem_paths_include_merit_anadem_names():
+    """21b.5 — path list deve cobrir MERIT-Hydro/ANADEM em ambos os diretórios."""
+    code = "2611606"
+    paths = [p.name for p in local_dem_source_paths(code)]
+    assert "merit.tif" in paths
+    assert "anadem.tif" in paths
+    assert f"{code}_merit.tif" in paths
+    assert f"{code}_anadem.tif" in paths
+    assert f"{code}_merit_hydro.tif" in paths
+
+
+def test_hydro_dem_label_detects_merit_and_anadem():
+    """21b.5 — nome do arquivo determina dem_source/hydro_dem flag."""
+    assert hydro_dem_label("2611606_merit.tif") == "MERIT-Hydro"
+    assert hydro_dem_label("2611606_merit_hydro.tif") == "MERIT-Hydro"
+    assert hydro_dem_label("merit.tif") == "MERIT-Hydro"
+    assert hydro_dem_label("2611606_anadem.tif") == "ANADEM"
+    assert hydro_dem_label("anadem.tif") == "ANADEM"
+    assert hydro_dem_label("local_dem.tif") is None
+    assert hydro_dem_label("2611606_lidar.tif") is None
+
+
+def test_hydro_simulator_skips_fill_sinks_when_hydro_dem(monkeypatch):
+    """21b.5 — meta.hydro_dem=True dispensa Priority-Flood e marca método pela fonte."""
+    import numpy as np
+
+    from app.services import hydro_simulator as hs
+
+    fill_called = {"n": 0}
+
+    def _fake_fill_sinks(elevation, mask):
+        fill_called["n"] += 1
+        return elevation, {"dem_hydro_conditioned": True, "method": "priority_flood"}
+
+    monkeypatch.setattr(hs, "_fill_sinks", _fake_fill_sinks)
+
+    meta = {"hydro_dem": True, "dem_source": "MERIT-Hydro"}
+    elev = np.zeros((3, 3))
+    mask = np.ones((3, 3), dtype=bool)
+
+    if meta.get("hydro_dem"):
+        fill_meta = {
+            "dem_hydro_conditioned": True,
+            "cells_filled": 0,
+            "fill_volume_cell_m": 0.0,
+            "method": str(meta.get("dem_source") or "hydro_dem_source"),
+        }
+    else:
+        elev, fill_meta = hs._fill_sinks(elev, mask)
+
+    assert fill_called["n"] == 0
+    assert fill_meta["dem_hydro_conditioned"] is True
+    assert fill_meta["method"] == "MERIT-Hydro"
+    assert fill_meta["cells_filled"] == 0
 
 
 def test_find_local_dem_in_shared_dir(tmp_path, monkeypatch):

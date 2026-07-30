@@ -28,7 +28,7 @@ from app.services.live_alert_level import normalize_nivel
 
 logger = logging.getLogger(__name__)
 
-MODELO_RISCO_VERSAO = "21f.5"
+MODELO_RISCO_VERSAO = "21f.5+21f.2"
 
 ML_PROB_THRESHOLDS = (
     (0.75, "VERMELHO"),
@@ -156,8 +156,17 @@ def build_ml_risk_component(db: Session, codigo_ibge: str) -> dict[str, Any]:
     return comp
 
 
-def modelo_risco_meta(comp_ml: dict[str, Any]) -> dict[str, Any]:
+def modelo_risco_meta(
+    comp_ml: dict[str, Any],
+    *,
+    codigo_ibge: str | None = None,
+) -> dict[str, Any]:
     """Bloco documental embutido na API do painel."""
+    from ml.model_policy import bairro_production_model_ready
+
+    code = str(codigo_ibge).zfill(7)[:7] if codigo_ibge else None
+    bairro_ready = bool(code and bairro_production_model_ready(code))
+
     return {
         "versao": MODELO_RISCO_VERSAO,
         "nome": "Risco unificado Sinidu (estrutural × preditivo)",
@@ -177,9 +186,18 @@ def modelo_risco_meta(comp_ml: dict[str, Any]) -> dict[str, Any]:
             "qualidade": comp_ml.get("qualidade"),
             "selo_previsao": comp_ml.get("selo_previsao"),
         },
+        "ranking_bairros": {
+            "modo": "modelo_bairro" if bairro_ready else "blend_susc_iri",
+            "grain": "bairro" if bairro_ready else "municipal_blend",
+            "nota": (
+                "Modelo sklearn por bairro com features locais (HAND/CN/drenagem/susc.)"
+                if bairro_ready
+                else "Blend P_muni×suscetibilidade×IRI até existir artefato full_bairro."
+            ),
+        },
         "nota": (
             "Não substitui alerta CEMADEN nem laudo de engenharia. "
             "Selo único 20e.3: Observado (CEMADEN) / Estimado (OpenMeteo ou sintético) / "
-            "Derivado (ML full)."
+            "Derivado (ML full). Ranking intra-urbano: 21f.2."
         ),
     }

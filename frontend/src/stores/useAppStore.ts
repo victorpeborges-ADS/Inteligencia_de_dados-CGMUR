@@ -6,7 +6,11 @@ import type { TemporalTemaId, TemporalOptionsResponse } from '@/config/layerTemp
 import {
   DEFAULT_EDUCACAO_ETAPA,
   DEFAULT_EDUCACAO_RAIO_M,
+  EQUIPAMENTO_DEPS_DEFAULT,
+  EQUIPAMENTO_TIPOS_DEFAULT,
+  type DependenciaId,
   type EducacaoEtapaId,
+  type EquipamentoTipoId,
 } from '@/config/educacaoInep';
 import {
   DEFAULT_TERRITORIO_TIPO,
@@ -68,6 +72,14 @@ type AppStore = {
   setEducacaoRaioM: (value: number) => void;
   showEducacaoBuffer: boolean;
   setShowEducacaoBuffer: (value: boolean) => void;
+  /** Tipos de equipamento visíveis no mapa (vazio = nenhum). */
+  equipamentoTiposAtivos: EquipamentoTipoId[];
+  toggleEquipamentoTipo: (id: EquipamentoTipoId) => void;
+  setEquipamentoTiposAtivos: (ids: EquipamentoTipoId[]) => void;
+  /** Esferas administrativas visíveis (vazio = nenhum, exceto vias). */
+  equipamentoDepsAtivas: DependenciaId[];
+  toggleEquipamentoDep: (id: DependenciaId) => void;
+  setEquipamentoDepsAtivas: (ids: DependenciaId[]) => void;
   territorioTipo: TerritorioTipoId;
   setTerritorioTipo: (id: TerritorioTipoId) => void;
   temporalOptions: TemporalOptionsResponse | null;
@@ -190,6 +202,28 @@ export const useAppStore = create<AppStore>((set, get) => ({
   setEducacaoRaioM: (value) => set({ educacaoRaioM: value }),
   showEducacaoBuffer: true,
   setShowEducacaoBuffer: (value) => set({ showEducacaoBuffer: value }),
+  equipamentoTiposAtivos: [...EQUIPAMENTO_TIPOS_DEFAULT],
+  toggleEquipamentoTipo: (id) =>
+    set((state) => {
+      const has = state.equipamentoTiposAtivos.includes(id);
+      return {
+        equipamentoTiposAtivos: has
+          ? state.equipamentoTiposAtivos.filter((t) => t !== id)
+          : [...state.equipamentoTiposAtivos, id],
+      };
+    }),
+  setEquipamentoTiposAtivos: (ids) => set({ equipamentoTiposAtivos: ids }),
+  equipamentoDepsAtivas: [...EQUIPAMENTO_DEPS_DEFAULT],
+  toggleEquipamentoDep: (id) =>
+    set((state) => {
+      const has = state.equipamentoDepsAtivas.includes(id);
+      return {
+        equipamentoDepsAtivas: has
+          ? state.equipamentoDepsAtivas.filter((d) => d !== id)
+          : [...state.equipamentoDepsAtivas, id],
+      };
+    }),
+  setEquipamentoDepsAtivas: (ids) => set({ equipamentoDepsAtivas: ids }),
   territorioTipo: DEFAULT_TERRITORIO_TIPO,
   setTerritorioTipo: (id) => set({ territorioTipo: id }),
   temporalOptions: null,

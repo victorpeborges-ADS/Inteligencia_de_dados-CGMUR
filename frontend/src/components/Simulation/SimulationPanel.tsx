@@ -2,14 +2,14 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { api, HeatLstComparison, MitigationPlan, RainfallComparison, SimulationInterpret, SimulationOutput, SlopeInterpretation } from '@/utils/api';
-import { Play, Pause, RotateCcw, AlertTriangle, HelpCircle, Thermometer, Droplet, FileText, Waves, Layers, Mountain, Activity, Sparkles, Copy, ClipboardCheck, Droplets, ExternalLink, Building2, Users, School, Stethoscope, ChevronDown, ChevronRight, Info } from 'lucide-react';
+import { Play, RotateCcw, AlertTriangle, HelpCircle, Thermometer, Droplet, FileText, Waves, Layers, Mountain, Droplets, ExternalLink, ChevronDown, ChevronRight, Info } from 'lucide-react';
 import { georedusMunicipioUrl } from '@/config/georedus';
 import PredictiveAnalysis from './PredictiveAnalysis';
-import RotatingLoader, { INTERPRETATION_MESSAGES, SIMULATION_MESSAGES } from '@/components/UI/RotatingLoader';
-import TermTooltip from '@/components/UI/TermTooltip';
-import SimulationNextSteps from './SimulationNextSteps';
+import RotatingLoader, { SIMULATION_MESSAGES } from '@/components/UI/RotatingLoader';
 import { EmptyState } from '@/design-system';
 import Badge from '@/design-system/components/Badge';
+import SimulationResults from './SimulationResults';
+import { formatDuration, isVolumeSimulation } from './simulationFormat';
 
 export type SimOverlayOptions = {
   showFlood: boolean;
@@ -23,16 +23,23 @@ export const DEFAULT_SIM_OVERLAYS: SimOverlayOptions = {
   showFlow: true,
 };
 
-function isVolumeSimulation(geojson: unknown): boolean {
-  const features = (geojson as { features?: Array<{ properties?: Record<string, unknown> }> })?.features;
-  if (!features?.length) return false;
-  return features.some(
-    (f) =>
-      f.properties?.layer_type === 'flood_band'
-      || f.properties?.depth_band
-      || f.properties?.temp_increase_celsius != null,
-  );
+// 17g.3 — escala de tempo do evento simulado: 1h a 7 dias (índices mapeiam para minutos).
+const DURATION_STEPS_MIN = [60, 120, 180, 360, 720, 1440, 2160, 2880, 4320, 7200, 10080];
+
+function durationStepIndex(min: number): number {
+  let best = 0;
+  let bestDelta = Infinity;
+  DURATION_STEPS_MIN.forEach((v, i) => {
+    const delta = Math.abs(v - min);
+    if (delta < bestDelta) {
+      bestDelta = delta;
+      best = i;
+    }
+  });
+  return best;
 }
+
+export type SimulationTab = 'waterproofing' | 'heat_island' | 'rainfall' | 'drainage' | 'mitigation' | 'climate_extra';
 
 interface SimulationProps {
   onSimulate: (payload: SimulationOutput | any) => void;
@@ -74,7 +81,7 @@ export default function SimulationPanel({
   onCrossRiskLayers,
   mapMode3dActive = false,
 }: SimulationProps) {
-  const [activeTab, setActiveTab] = useState<'waterproofing' | 'heat_island' | 'rainfall' | 'drainage' | 'predictive' | 'mitigation' | 'climate_extra'>('rainfall');
+  const [activeTab, setActiveTab] = useState<SimulationTab>('rainfall');
   const [contingencyNotice, setContingencyNotice] = useState<{ tone: 'ok' | 'error'; message: string } | null>(null);
   const [limitsOpen, setLimitsOpen] = useState(true);
   const [waterproofingPct, setWaterproofingPct] = useState(25);
@@ -84,7 +91,24 @@ export default function SimulationPanel({
   const [heatImpermExtraPct, setHeatImpermExtraPct] = useState(15);
   const [heatShadePct, setHeatShadePct] = useState(0);
   const [heatVentPct, setHeatVentPct] = useState(0);
-  const [rainfallMm, setRainfallMm] = useState(120);
+  const [rainfallMm, setRainfallMm] = useState(105);
+  const [rainSlider, setRainSlider] = useState({ min: 20, max: 350, step: 5 });
+  const [rainDurationMin, setRainDurationMin] = useState(60);
+  const [rainAnchors, setRainAnchors] = useState<
+    Array<{
+      id: string;
+      label: string;
+      data: string;
+      precipitacao_mm: number;
+      duracao_h: number;
+      antecedente_mm: number;
+      bairros: string[];
+      fonte: string;
+      url?: string;
+      nota?: string;
+    }>
+  >([]);
+  const [showMlScore, setShowMlScore] = useState(false);
   const [idfTr, setIdfTr] = useState<number | null>(null);
   const [idfCurves, setIdfCurves] = useState<
     Array<{ periodo_retorno_anos: number; duracao_min: number; precipitacao_mm: number; label: string }>
@@ -248,8 +272,10 @@ export default function SimulationPanel({
       .getIdfCurves(codigoIbge)
       .then((cat) => {
         if (cancelled) return;
-        const curves60 = (cat.curvas || []).filter((c) => c.duracao_min === (cat.default_duracao_min || 60));
-        setIdfCurves(curves60);
+        // Preferir 24h (série diária APAC/INMET) quando existir; senão 60 min.
+        const preferDur = (cat.curvas || []).some((c) => c.duracao_min === 1440) ? 1440 : (cat.default_duracao_min || 60);
+        const curves = (cat.curvas || []).filter((c) => c.duracao_min === preferDur);
+        setIdfCurves(curves.length ? curves : (cat.curvas || []).filter((c) => c.duracao_min === 60));
         setIdfFonte(cat.fonte);
       })
       .catch(() => {
@@ -257,6 +283,25 @@ export default function SimulationPanel({
           setIdfCurves([]);
           setIdfFonte(null);
         }
+      });
+    api
+      .getRainfallAnchors(codigoIbge)
+      .then((cat) => {
+        if (cancelled) return;
+        setRainAnchors(cat.anchors || []);
+        if (cat.slider) {
+          setRainSlider({
+            min: Math.round(cat.slider.min_mm),
+            max: Math.round(cat.slider.max_mm),
+            step: Math.round(cat.slider.step_mm) || 5,
+          });
+          if (cat.slider.default_mm != null) {
+            setRainfallMm((prev) => (prev === 105 || prev === 120 ? Math.round(cat.slider.default_mm) : prev));
+          }
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setRainAnchors([]);
       });
     api
       .getSeaLevelScenarios(codigoIbge)
@@ -481,6 +526,7 @@ export default function SimulationPanel({
           baselineRainfallMm,
           codigoIbge,
           onJobProgress,
+          rainDurationMin,
         );
         setRainfallComparison(comparison);
         data = comparison.scenario;
@@ -490,7 +536,8 @@ export default function SimulationPanel({
           codigoIbge,
           onJobProgress,
           {
-            ...(idfTr != null ? { periodoRetornoAnos: idfTr, duracaoMin: 60 } : {}),
+            ...(idfTr != null ? { periodoRetornoAnos: idfTr } : {}),
+            duracaoMin: rainDurationMin,
             ...(seaCoastal && seaScenario !== 'atual' ? { cenarioNivelMar: seaScenario } : {}),
             chuvaAntecedenteMm: antecedentMm,
             aplicarDrenagem,
@@ -726,26 +773,25 @@ export default function SimulationPanel({
           {lidarMessage && <p className="mt-2 text-[10px] text-sky-100">{lidarMessage}</p>}
         </div>
       )}
-      {/* Simulation Selector tabs */}
-      <div className="grid grid-cols-7 gap-1 bg-zinc-950 p-1 rounded-lg border border-border">
-        {(['rainfall', 'predictive', 'waterproofing', 'heat_island', 'climate_extra', 'drainage', 'mitigation'] as const).map((tab) => (
+      {/* Simulation Selector tabs — Chuva unifica mancha DEM + score preditivo */}
+      <div className="grid grid-cols-6 gap-1 bg-zinc-950 p-1 rounded-lg border border-border">
+        {(['rainfall', 'waterproofing', 'heat_island', 'climate_extra', 'drainage', 'mitigation'] as const).map((tab) => (
           <button
             key={tab}
-            onClick={() => { setActiveTab(tab); setResult(null); setMitigationPlan(null); setSimInterpret(null); setInterpretError(null); if (tab !== 'predictive') onClear(); }}
+            onClick={() => { setActiveTab(tab); setResult(null); setMitigationPlan(null); setSimInterpret(null); setInterpretError(null); onClear(); }}
             className={`py-1.5 px-0.5 rounded text-[8px] font-bold uppercase tracking-wider transition-all ${
               activeTab === tab 
                 ? 'bg-card text-indigo-400 border border-zinc-800' 
                 : 'text-zinc-400 hover:text-zinc-200'
             }`}
           >
-            {tab === 'rainfall' ? 'Chuva' : tab === 'predictive' ? 'Preditiva' : tab === 'waterproofing' ? 'Asfalto' : tab === 'heat_island' ? 'Calor' : tab === 'climate_extra' ? 'Seca/Arb' : tab === 'drainage' ? 'Drenagem' : 'Mitigar'}
+            {tab === 'rainfall' ? 'Chuva' : tab === 'waterproofing' ? 'Asfalto' : tab === 'heat_island' ? 'Calor' : tab === 'climate_extra' ? 'Seca/Arb' : tab === 'drainage' ? 'Drenagem' : 'Mitigar'}
           </button>
         ))}
       </div>
 
       {/* 20h.2 — limites metodológicos sempre visíveis na aba Simulações */}
-      {activeTab !== 'predictive' && (
-        <div className="rounded-xl border border-amber-500/30 bg-amber-950/20 px-3 py-2.5">
+      <div className="rounded-xl border border-amber-500/30 bg-amber-950/20 px-3 py-2.5">
           <button
             type="button"
             onClick={() => setLimitsOpen((v) => !v)}
@@ -779,20 +825,9 @@ export default function SimulationPanel({
             </div>
           )}
         </div>
-      )}
 
       {/* Simulator Forms */}
       <div className="bg-card/40 backdrop-blur-md border border-border p-4 rounded-xl">
-        {activeTab === 'predictive' && (
-          <PredictiveAnalysis
-            codigoIbge={codigoIbge}
-            municipioNome={municipioNome}
-            municipioLoaded={municipioLoaded}
-            onPredict={onSimulate}
-            onClear={onClear}
-          />
-        )}
-
         {activeTab === 'rainfall' && (
           <div className="flex flex-col gap-4">
             <div className="rounded-lg border border-sky-500/25 bg-gradient-to-br from-sky-950/40 to-zinc-950/60 p-3">
@@ -802,8 +837,9 @@ export default function SimulationPanel({
                     <Droplet size={16} className="text-accent-sky" /> Onde alaga se chover forte?
                   </h4>
                   <p className="mt-1.5 text-[11px] leading-relaxed text-zinc-400">
-                    Escolha quanto chove e rode a simulação. O mapa mostra as áreas que tendem a alagar
-                    e as encostas com risco de deslizamento.
+                    Um único fluxo: volume de chuva (IDF + eventos históricos APAC/CEMADEN/imprensa) →
+                    mancha DEM no mapa, população atingida, deslizamento, mobilidade e tempo de escoamento.
+                    Score multi-horizonte (ML) fica opcional abaixo — mesmo cenário.
                   </p>
                 </div>
                 <Badge tone="derived">Simulação · Derivado</Badge>
@@ -818,7 +854,7 @@ export default function SimulationPanel({
               {idfCurves.length > 0 && (
                 <div className="flex flex-col gap-1.5">
                   <p className="text-[11px] text-zinc-400">
-                    Atalhos: chuva típica de projeto (quanto mais raro o evento, mais mm)
+                    Atalhos IDF{idfFonte ? ` · ${idfFonte}` : ''} (quanto mais raro, mais mm)
                   </p>
                   <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-4">
                     {idfCurves.map((c) => {
@@ -835,10 +871,11 @@ export default function SimulationPanel({
                         <button
                           key={c.periodo_retorno_anos}
                           type="button"
-                          title={`Evento que ocorre em média 1 vez a cada ${c.periodo_retorno_anos} anos`}
+                          title={`Evento que ocorre em média 1 vez a cada ${c.periodo_retorno_anos} anos · ${c.duracao_min} min`}
                           onClick={() => {
                             setIdfTr(c.periodo_retorno_anos);
                             setRainfallMm(Math.round(c.precipitacao_mm));
+                            setRainDurationMin(DURATION_STEPS_MIN[durationStepIndex(c.duracao_min)]);
                           }}
                           className={`rounded-lg border px-2 py-2 text-left transition ${
                             active
@@ -856,27 +893,87 @@ export default function SimulationPanel({
                   </div>
                 </div>
               )}
+              {rainAnchors.length > 0 && (
+                <div className="flex flex-col gap-1.5">
+                  <p className="text-[11px] text-zinc-400">
+                    Eventos históricos documentados (calibram o volume — não são a mancha)
+                  </p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {rainAnchors.map((a) => {
+                      const active = Math.abs(rainfallMm - a.precipitacao_mm) <= 8;
+                      return (
+                        <button
+                          key={a.id}
+                          type="button"
+                          title={a.nota || a.fonte}
+                          onClick={() => {
+                            setIdfTr(null);
+                            setRainfallMm(Math.round(a.precipitacao_mm));
+                            setRainDurationMin(DURATION_STEPS_MIN[durationStepIndex(a.duracao_h * 60)]);
+                            setAntecedentMm(Math.round(a.antecedente_mm));
+                            setShowRainAdvanced(true);
+                          }}
+                          className={`rounded-full border px-2.5 py-1 text-[10px] font-semibold transition ${
+                            active
+                              ? 'border-amber-400/50 bg-amber-500/20 text-amber-100'
+                              : 'border-zinc-700 bg-zinc-950/70 text-zinc-300 hover:border-amber-500/40'
+                          }`}
+                        >
+                          {a.label} · {Math.round(a.precipitacao_mm)} mm/{formatDuration(a.duracao_h * 60)}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
               <input
                 type="range"
-                min="40"
-                max="250"
-                step="10"
-                value={rainfallMm}
+                min={rainSlider.min}
+                max={rainSlider.max}
+                step={rainSlider.step}
+                value={Math.min(rainSlider.max, Math.max(rainSlider.min, rainfallMm))}
                 onChange={(e) => {
                   setIdfTr(null);
                   setRainfallMm(Number(e.target.value));
                 }}
-                onPointerDown={() => {}}
-                onPointerUp={() => {
-                  if (activeTab === 'rainfall' && codigoIbge && municipioLoaded !== false) {
-                    void handleSimulate();
-                  }
-                }}
                 className="w-full h-1.5 bg-zinc-800 rounded-lg appearance-none cursor-pointer accent-sky-500"
               />
               <div className="flex justify-between text-[9px] text-zinc-600">
-                <span>Chuva leve</span>
-                <span>Chuva extrema</span>
+                <span>{rainSlider.min} mm</span>
+                <span className="text-zinc-500">passo {rainSlider.step} mm · ajuste e clique em Rodar Simulação</span>
+                <span>{rainSlider.max} mm</span>
+              </div>
+            </div>
+
+            <div className="flex flex-col gap-2 rounded-lg border border-violet-500/25 bg-violet-950/10 p-2.5">
+              <div className="flex flex-wrap items-baseline justify-between gap-1">
+                <span className="text-xs font-semibold text-zinc-300">
+                  Em quanto tempo cai essa chuva?
+                </span>
+                <span className="font-bold text-violet-300">
+                  {formatDuration(rainDurationMin)}
+                  <span className="ml-1.5 font-normal text-[10px] text-zinc-500">
+                    ≈ {(rainfallMm / (rainDurationMin / 60)).toFixed(rainDurationMin >= 1440 ? 1 : 0)} mm/h
+                  </span>
+                </span>
+              </div>
+              <p className="text-[10px] leading-relaxed text-zinc-500">
+                Mesmos {rainfallMm} mm concentrados em 1h formam mancha muito mais abrupta que
+                espalhados em vários dias — a duração muda intensidade, mancha, deslizamento e hidrograma.
+              </p>
+              <input
+                type="range"
+                min={0}
+                max={DURATION_STEPS_MIN.length - 1}
+                step={1}
+                value={durationStepIndex(rainDurationMin)}
+                onChange={(e) => setRainDurationMin(DURATION_STEPS_MIN[Number(e.target.value)])}
+                className="w-full h-1.5 bg-zinc-800 rounded-lg appearance-none cursor-pointer accent-violet-500"
+              />
+              <div className="flex justify-between text-[9px] text-zinc-600">
+                <span>1 h (flash)</span>
+                <span>24 h</span>
+                <span>7 dias (sustentada)</span>
               </div>
             </div>
 
@@ -1037,6 +1134,33 @@ export default function SimulationPanel({
               <p className="mt-2 text-[9px] italic leading-relaxed text-zinc-500">
                 Proxy territorial para planejamento — não substitui modelagem hidrodinâmica 2D/HEC-RAS.
               </p>
+            </div>
+
+            <div className="rounded-lg border border-violet-500/25 bg-violet-950/10">
+              <button
+                type="button"
+                onClick={() => setShowMlScore((v) => !v)}
+                className="flex w-full items-center justify-between px-3 py-2.5 text-left"
+              >
+                <span className="text-[11px] font-semibold text-violet-200">
+                  Score preditivo multi-horizonte (ML) — opcional
+                </span>
+                <span className="text-zinc-500">{showMlScore ? '−' : '+'}</span>
+              </button>
+              {showMlScore && (
+                <div className="border-t border-violet-500/20 px-3 py-3">
+                  <PredictiveAnalysis
+                    embedded
+                    codigoIbge={codigoIbge}
+                    municipioNome={municipioNome}
+                    municipioLoaded={municipioLoaded}
+                    precipEventMm={rainfallMm}
+                    antecedentMm={antecedentMm}
+                    onPredict={onSimulate}
+                    onClear={onClear}
+                  />
+                </div>
+              )}
             </div>
           </div>
         )}
@@ -1574,7 +1698,7 @@ export default function SimulationPanel({
           </div>
         )}
 
-        {activeTab !== 'predictive' && loading && activeTab === 'rainfall' && (
+        {loading && activeTab === 'rainfall' && (
           <div className="mt-4 rounded-lg border border-sky-500/30 bg-sky-950/20 p-3 space-y-2">
             {simProgress && (
               <>
@@ -1597,7 +1721,7 @@ export default function SimulationPanel({
           <p className="mt-2 rounded-lg border border-rose-800/50 bg-rose-950/30 px-3 py-2 text-[10px] text-rose-200">{simError}</p>
         )}
 
-        {activeTab !== 'predictive' && !result && !loading && (
+        {!result && !loading && (
           <EmptyState
             icon={Droplets}
             compact
@@ -1611,8 +1735,7 @@ export default function SimulationPanel({
           />
         )}
 
-        {/* Action buttons — ocultos na aba preditiva (tem botão próprio) */}
-        {activeTab !== 'predictive' && (
+        {/* Action buttons */}
         <div className="flex gap-2 mt-5 border-t border-zinc-800 pt-4">
           <button
             onClick={handleSimulate}
@@ -1631,8 +1754,7 @@ export default function SimulationPanel({
             Limpar
           </button>
         </div>
-        )}
-        {activeTab !== 'predictive' && result && (
+        {result && (
           <button
             onClick={handleGenerateMitigationPlan}
             disabled={planLoading}
@@ -1642,7 +1764,7 @@ export default function SimulationPanel({
             {planLoading ? 'Gerando plano...' : 'Gerar Plano de Ação Sugerido'}
           </button>
         )}
-        {activeTab !== 'predictive' && result && (
+        {result && (
           <button
             onClick={handleGenerateContingency}
             disabled={contingencyLoading}
@@ -1654,1284 +1776,50 @@ export default function SimulationPanel({
         )}
       </div>
 
-      {/* Simulator Results */}
-      {result && onView3D && onFocusWorkshop && onCrossRiskLayers && (
-        <SimulationNextSteps
-          scenarioLabel={
-            activeTab === 'rainfall'
-              ? `${rainfallMm} mm${compareRainfall ? ` vs ${baselineRainfallMm} mm` : ''}`
-              : result.scenario_type || 'Simulação'
-          }
-          isVolumeSim={isVolumeSimulation(result.geometry)}
-          auto3dApplied={mapMode3dActive && isVolumeSimulation(result.geometry)}
-          fromCache={result.from_cache}
-          onView3D={onView3D}
-          onFocusWorkshop={onFocusWorkshop}
-          onCrossRiskLayers={onCrossRiskLayers}
-          onExportPdf={handleExportPdf}
-          exportPdfLoading={exportLoading === 'pdf'}
-        />
-      )}
-
-      {result && (
-        <div className="bg-card/40 border border-border p-4 rounded-xl flex flex-col gap-4 animate-fadeIn">
-          <div className="flex items-start justify-between gap-2">
-            <div>
-              <h4 className="font-extrabold text-zinc-200 text-xs uppercase tracking-wide">Resultados da Simulação</h4>
-              {result.simulation_meta?.dem_available && (
-                <p className="mt-0.5 text-[9px] text-lime-400/80 font-mono">
-                  DEM: {result.simulation_meta.dem_source} · Δh max {result.simulation_meta.max_depth_m} m
-                  {result.simulation_meta.flood_patches != null && (
-                    <> · {result.simulation_meta.flood_patches} manchas</>
-                  )}
-                  {result.simulation_meta.dem_hydro_conditioned && (
-                    <span className="ml-1 text-teal-300">· hidro-corrigido</span>
-                  )}
-                  {result.from_cache && (
-                    <span className="ml-1 text-sky-300">· cache</span>
-                  )}
-                </p>
-              )}
-            </div>
-            {result.simulation_meta?.method && (
-              <span className="rounded border border-indigo-500/30 bg-indigo-500/10 px-2 py-0.5 text-[8px] font-bold uppercase text-indigo-200">
-                {result.simulation_meta.method}
-                {result.simulation_meta.model_version && (
-                  <> · v{result.simulation_meta.model_version}</>
-                )}
-              </span>
-            )}
-          </div>
-          <div className="flex flex-wrap gap-2">
-            <button
-              type="button"
-              onClick={handleExportGeojson}
-              disabled={exportLoading !== null}
-              className="rounded-lg border border-lime-500/30 bg-lime-950/20 px-3 py-1.5 text-[10px] font-bold uppercase text-lime-200 hover:bg-lime-950/40 disabled:opacity-50"
-            >
-              {exportLoading === 'geojson' ? 'Exportando…' : 'Exportar GeoJSON'}
-            </button>
-            <button
-              type="button"
-              onClick={handleExportKmz}
-              disabled={exportLoading !== null || !result.geometry}
-              title="Abre no Google Earth, QGIS ou ArcGIS"
-              className="rounded-lg border border-amber-500/30 bg-amber-950/20 px-3 py-1.5 text-[10px] font-bold uppercase text-amber-200 hover:bg-amber-950/40 disabled:opacity-50"
-            >
-              {exportLoading === 'kmz' ? 'Gerando KMZ…' : 'Exportar KMZ'}
-            </button>
-            <button
-              type="button"
-              onClick={handleExportPdf}
-              disabled={exportLoading !== null}
-              className="rounded-lg border border-sky-500/30 bg-sky-950/20 px-3 py-1.5 text-[10px] font-bold uppercase text-sky-200 hover:bg-sky-950/40 disabled:opacity-50"
-            >
-              {exportLoading === 'pdf' ? 'Gerando PDF…' : 'PDF para oficina'}
-            </button>
-          </div>
-          {result.scenario_type === 'ExtremeRainfall' && result.simulation_meta?.uncertainty_bands && (
-            <div className="rounded-lg border border-amber-500/25 bg-amber-950/20 px-3 py-2.5">
-              <p className="text-[11px] font-semibold text-amber-100">
-                Faixa de incerteza do modelo
-              </p>
-              <p className="mt-0.5 text-[10px] leading-snug text-zinc-400">
-                Se a chuva for um pouco menor ou maior (±{result.simulation_meta.uncertainty_bands.precip_delta_pct ?? 15}%), a profundidade e a área mudam assim:
-              </p>
-              <div className="mt-2 grid grid-cols-3 gap-1.5 text-center">
-                {(
-                  [
-                    ['optimistic', 'Chuva menor', 'text-emerald-300'],
-                    ['expected', 'Cenário atual', 'text-sky-300'],
-                    ['pessimistic', 'Chuva maior', 'text-rose-300'],
-                  ] as const
-                ).map(([key, label, tone]) => {
-                  const band = result.simulation_meta?.uncertainty_bands?.[key];
-                  if (!band) return null;
-                  return (
-                    <div key={key} className="rounded border border-zinc-800 bg-zinc-950/50 px-1.5 py-1.5">
-                      <p className={`text-[9px] font-bold ${tone}`}>{label}</p>
-                      <p className="text-[11px] font-extrabold text-zinc-100">
-                        até {band.max_depth_m?.toFixed?.(1) ?? band.max_depth_m} m
-                      </p>
-                      <p className="text-[9px] text-zinc-500">
-                        {(band.affected_population ?? 0).toLocaleString?.('pt-BR') ?? band.affected_population} pessoas
-                      </p>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-
-          {result.scenario_type === 'ExtremeRainfall' && result.simulation_meta?.flood_timeline && (
-            <div className="sticky bottom-0 z-10 rounded-lg border border-sky-500/25 bg-sky-950/90 px-3 py-2.5 shadow-lg backdrop-blur-md">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div>
-                  <p className="text-[11px] font-semibold text-sky-100">Evolução no tempo</p>
-                  <p className="text-[10px] text-zinc-400">
-                    Como a mancha sobe e baixa ao longo de {result.simulation_meta.flood_timeline.duration_h} h
-                    · {result.simulation_meta.flood_timeline.n_steps} frames (aproximação — não é hidrodinâmica 2D).
-                  </p>
-                </div>
-                <div className="flex flex-wrap items-center gap-1.5">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const peak = result.simulation_meta?.flood_timeline?.peak_index ?? 0;
-                      setFloodPlaying(false);
-                      setFloodTIndex(peak);
-                      applyFloodTimelineFrame(result, peak, false);
-                    }}
-                    className="inline-flex items-center gap-1 rounded border border-zinc-600 bg-zinc-900/80 px-2 py-1 text-[10px] font-bold text-zinc-200 hover:bg-zinc-800"
-                    title="Ir ao pico"
-                  >
-                    <RotateCcw size={12} />
-                    Pico
-                  </button>
-                  <button
-                    type="button"
-                    disabled={!result.simulation_meta?.flood_timeline_features?.length}
-                    onClick={() => setFloodPlaying((p) => !p)}
-                    className="inline-flex items-center gap-1 rounded border border-sky-500/40 bg-sky-500/10 px-2 py-1 text-[10px] font-bold text-sky-100 hover:bg-sky-500/20 disabled:cursor-not-allowed disabled:opacity-40"
-                  >
-                    {floodPlaying ? <Pause size={12} /> : <Play size={12} />}
-                    {floodPlaying ? 'Pausar' : 'Animar'}
-                  </button>
-                </div>
-              </div>
-              {!result.simulation_meta?.flood_timeline_features?.length && (
-                <p className="mt-2 flex items-start gap-1.5 rounded border border-amber-500/30 bg-amber-950/30 px-2 py-1.5 text-[10px] text-amber-100">
-                  <AlertTriangle size={12} className="mt-0.5 shrink-0" />
-                  Frames da mancha não vieram nesta resposta — rode a simulação de novo para animar o mapa.
-                </p>
-              )}
-              {(() => {
-                const tl = result.simulation_meta!.flood_timeline!;
-                const step = tl.steps[floodTIndex] || tl.steps[tl.peak_index];
-                return (
-                  <div className="mt-2 space-y-1.5">
-                    <input
-                      type="range"
-                      min={0}
-                      max={tl.n_steps - 1}
-                      step={1}
-                      value={floodTIndex}
-                      onChange={(e) => {
-                        const idx = Number(e.target.value);
-                        setFloodPlaying(false);
-                        setFloodTIndex(idx);
-                        applyFloodTimelineFrame(result, idx, false);
-                      }}
-                      className="w-full accent-sky-400"
-                    />
-                    <div className="flex flex-wrap items-center justify-between gap-2 text-[10px]">
-                      <span className="font-semibold text-sky-200 capitalize">
-                        {step?.fase || '—'} · t = {step?.t_h ?? 0} h
-                      </span>
-                      <span className="font-mono text-zinc-400">
-                        até {step?.max_depth_m ?? '—'} m · {step?.flood_patches ?? 0} manchas
-                      </span>
-                    </div>
-                    <p className="text-[10px] leading-snug text-zinc-300">
-                      {step?.narrativa
-                        || 'Olhe o mapa à direita — a mancha acompanha este instante.'}
-                    </p>
-                    <div className="flex flex-wrap items-center gap-3 pt-0.5">
-                      <label className="flex items-center gap-1.5 text-[9px] text-zinc-400">
-                        Ritmo
-                        <select
-                          value={floodSpeedMs}
-                          onChange={(e) => setFloodSpeedMs(Number(e.target.value))}
-                          className="rounded border border-zinc-700 bg-zinc-950 px-1.5 py-0.5 text-[10px] text-zinc-200"
-                        >
-                          <option value={800}>Lento</option>
-                          <option value={500}>Normal</option>
-                          <option value={280}>Rápido</option>
-                        </select>
-                      </label>
-                      <label className="flex items-center gap-1.5 text-[9px] text-zinc-400">
-                        <input
-                          type="checkbox"
-                          checked={floodLoop}
-                          onChange={(e) => setFloodLoop(e.target.checked)}
-                          className="accent-sky-400"
-                        />
-                        Loop
-                      </label>
-                      <span className="text-[8px] text-zinc-600">Selo Derivado · triagem ≠ laudo</span>
-                    </div>
-                  </div>
-                );
-              })()}
-            </div>
-          )}
-
-          <div className="h-px bg-zinc-800 w-full" />
-
-          {(analysisLoading || simInterpret || interpretError) && (
-            <div
-              id="interpretacao-ia"
-              className="animate-fadeIn rounded-xl border border-zinc-800 border-l-4 border-l-[#1D9E75] bg-card/40 p-4 flex flex-col gap-3"
-            >
-              <div className="flex items-center justify-between gap-2">
-                <h4 className="font-extrabold text-zinc-200 text-xs uppercase tracking-wide flex items-center gap-1.5">
-                  <Sparkles size={14} className="text-[#1D9E75]" />
-                  Interpretação Sinidu·IA
-                </h4>
-                {simInterpret && (
-                  <div className="flex flex-wrap items-center gap-1.5">
-                    {simInterpret.from_cache && (
-                      <span className="rounded border border-sky-500/30 bg-sky-950/30 px-2 py-0.5 text-[8px] font-bold uppercase text-sky-200">
-                        cache
-                      </span>
-                    )}
-                    <span className="rounded border border-teal-500/30 bg-teal-950/30 px-2 py-0.5 text-[8px] font-bold uppercase text-teal-200">
-                      Modelo: {simInterpret.ai_provider === 'deterministic' ? 'Regras' : simInterpret.ai_provider || 'Mistral'}
-                    </span>
-                  </div>
-                )}
-              </div>
-
-              {analysisLoading && (
-                <div className="space-y-2">
-                  <RotatingLoader messages={INTERPRETATION_MESSAGES} className="text-teal-200" />
-                  <div className="h-3 w-full animate-pulse rounded bg-zinc-800/80" />
-                  <div className="h-3 w-5/6 animate-pulse rounded bg-zinc-800/60" />
-                </div>
-              )}
-
-              {interpretError && !analysisLoading && (
-                <div className="rounded border border-rose-500/30 bg-rose-950/20 p-2">
-                  <p className="text-[10px] text-rose-200">{interpretError}</p>
-                  <button
-                    type="button"
-                    onClick={() => void runInterpret(result, rainfallComparison, heatLstComparison)}
-                    className="mt-2 text-[9px] font-bold uppercase text-rose-300 underline"
-                  >
-                    Tentar novamente
-                  </button>
-                </div>
-              )}
-
-              {simInterpret && !analysisLoading && (
-                <>
-                  <div>
-                    <span className="text-[9px] font-bold uppercase tracking-wider text-teal-400">Resumo</span>
-                    <p className="mt-1 text-[11px] leading-relaxed text-zinc-200">{simInterpret.resumo_executivo}</p>
-                  </div>
-
-                  {simInterpret.areas_criticas.length > 0 && (
-                    <div>
-                      <span className="text-[9px] font-bold uppercase tracking-wider text-teal-400">Áreas críticas</span>
-                      <ul className="mt-1 space-y-0.5">
-                        {simInterpret.areas_criticas.map((a) => (
-                          <li key={a} className="text-[10px] text-zinc-300">• {a}</li>
-                        ))}
-                      </ul>
-                    </div>
-                  )}
-
-                  {simInterpret.equipamentos_em_risco.length > 0 && (
-                    <div>
-                      <span className="text-[9px] font-bold uppercase tracking-wider text-teal-400">Equipamentos em risco</span>
-                      <ul className="mt-1 space-y-0.5">
-                        {simInterpret.equipamentos_em_risco.slice(0, 4).map((e) => (
-                          <li key={e} className="text-[10px] text-amber-200/90">• {e}</li>
-                        ))}
-                      </ul>
-                    </div>
-                  )}
-
-                  {simInterpret.comparacao_historica && (
-                    <p className="text-[10px] text-zinc-400">
-                      <span className="text-zinc-500">≈ Histórico:</span> {simInterpret.comparacao_historica}
-                    </p>
-                  )}
-
-                  {simInterpret.interpretacao_diferencial && (
-                    <div className="rounded border border-indigo-500/25 bg-indigo-950/20 p-2">
-                      <span className="text-[9px] font-bold uppercase text-indigo-300">Comparação vs referência</span>
-                      <p className="mt-1 text-[10px] leading-relaxed text-indigo-100/90">
-                        {simInterpret.interpretacao_diferencial}
-                      </p>
-                    </div>
-                  )}
-
-                  {simInterpret.recomendacoes_imediatas.length > 0 && (
-                    <div>
-                      <span className="text-[9px] font-bold uppercase tracking-wider text-emerald-400">Recomendações</span>
-                      <ul className="mt-1 space-y-0.5">
-                        {simInterpret.recomendacoes_imediatas.map((r) => (
-                          <li key={r} className="text-[10px] text-emerald-200/90">→ {r}</li>
-                        ))}
-                      </ul>
-                    </div>
-                  )}
-
-                  {slopeInterpret && (
-                    <div className="rounded border border-rose-500/25 bg-rose-950/15 p-2">
-                      <span className="text-[9px] font-bold uppercase text-rose-300">
-                        Encostas · {slopeInterpret.nivel_suscetibilidade} · COBRADE {slopeInterpret.referencia_cobrade}
-                      </span>
-                      <p className="mt-1 text-[10px] leading-relaxed text-rose-100/80">{slopeInterpret.interpretacao_ia}</p>
-                    </div>
-                  )}
-
-                  <p className="text-[8px] italic text-zinc-600">{simInterpret.disclaimer}</p>
-
-                  <div className="flex flex-wrap gap-2 pt-1">
-                    <button
-                      type="button"
-                      onClick={handleIncludeInReport}
-                      disabled={exportLoading === 'pdf'}
-                      className="flex items-center gap-1 rounded-lg border border-teal-600/40 bg-teal-950/30 px-2.5 py-1.5 text-[9px] font-bold uppercase text-teal-200 hover:bg-teal-900/40 disabled:opacity-50"
-                    >
-                      <FileText size={11} />
-                      {exportLoading === 'pdf' ? 'Gerando…' : 'Incluir no Relatório PDF'}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={handleCopyInterpret}
-                      className="flex items-center gap-1 rounded-lg border border-zinc-700 px-2.5 py-1.5 text-[9px] font-bold uppercase text-zinc-300 hover:bg-zinc-900"
-                    >
-                      {copyOk ? <ClipboardCheck size={11} className="text-teal-400" /> : <Copy size={11} />}
-                      {copyOk ? 'Copiado' : 'Copiar'}
-                    </button>
-                  </div>
-                </>
-              )}
-            </div>
-          )}
-
-          {rainfallComparison && activeTab === 'rainfall' && (
-            <div className="rounded-lg border border-amber-500/25 bg-amber-950/15 p-3">
-              <span className="text-[9px] font-extrabold uppercase tracking-wider text-amber-200 block mb-2">
-                Delta vs referência ({rainfallComparison.delta.baseline_mm} mm → {rainfallComparison.delta.scenario_mm} mm)
-              </span>
-              <div className="grid grid-cols-2 gap-2 text-[10px]">
-                <div className="rounded border border-zinc-800 bg-zinc-950/60 p-2">
-                  <span className="text-zinc-500 block">Área adicional</span>
-                  <strong className="text-amber-200">+{rainfallComparison.delta.affected_area_km2} km²</strong>
-                </div>
-                <div className="rounded border border-zinc-800 bg-zinc-950/60 p-2">
-                  <span className="text-zinc-500 block">População adicional</span>
-                  <strong className="text-amber-200">+{rainfallComparison.delta.affected_population.toLocaleString()} hab</strong>
-                </div>
-                <div className="rounded border border-zinc-800 bg-zinc-950/60 p-2">
-                  <span className="text-zinc-500 block">Δ profundidade máx.</span>
-                  <strong className="text-amber-200">+{rainfallComparison.delta.max_depth_m} m</strong>
-                </div>
-                <div className="rounded border border-zinc-800 bg-zinc-950/60 p-2">
-                  <span className="text-zinc-500 block">Novos bairros</span>
-                  <strong className="text-amber-200">{rainfallComparison.delta.bairros_novos.length}</strong>
-                </div>
-              </div>
-              {rainfallComparison.delta.bairros_novos.length > 0 && (
-                <p className="mt-2 text-[9px] text-zinc-400">
-                  Novos bairros expostos: {rainfallComparison.delta.bairros_novos.slice(0, 8).join(', ')}
-                  {rainfallComparison.delta.bairros_novos.length > 8 ? '…' : ''}
-                </p>
-              )}
-            </div>
-          )}
-
-          {(lstCompareLoading || heatLstComparison) && activeTab === 'heat_island' && (
-            <div className="rounded-lg border border-emerald-500/25 bg-emerald-950/15 p-3">
-              <span className="text-[9px] font-extrabold uppercase tracking-wider text-emerald-200 block mb-2">
-                Observado × Derivado — LST GeoReDUS vs cenário Sinidu
-              </span>
-              {lstCompareLoading && (
-                <p className="text-[10px] text-zinc-400 italic">Consultando LST observada nos bairros críticos…</p>
-              )}
-              {heatLstComparison && !lstCompareLoading && (
-                <>
-                  <div className="grid grid-cols-2 gap-2 text-[10px]">
-                    <div className="rounded border border-sky-500/25 bg-zinc-950/60 p-2">
-                      <span className="text-zinc-500 block">LST GeoReDUS · Observado</span>
-                      <strong className="text-sky-200">
-                        {heatLstComparison.lst_mediana_c != null ? `${heatLstComparison.lst_mediana_c}°C` : '—'}
-                      </strong>
-                    </div>
-                    <div className="rounded border border-indigo-500/25 bg-zinc-950/60 p-2">
-                      <span className="text-zinc-500 block">Sinidu · Derivado</span>
-                      <strong className="text-rose-200">
-                        {heatLstComparison.sim_temp_mediana_c != null ? `${heatLstComparison.sim_temp_mediana_c}°C` : '—'}
-                      </strong>
-                    </div>
-                    <div className="rounded border border-zinc-800 bg-zinc-950/60 p-2">
-                      <span className="text-zinc-500 block">Δ mediano</span>
-                      <strong className="text-emerald-200">
-                        {heatLstComparison.divergencia_mediana_c != null
-                          ? `${heatLstComparison.divergencia_mediana_c > 0 ? '+' : ''}${heatLstComparison.divergencia_mediana_c}°C`
-                          : '—'}
-                      </strong>
-                    </div>
-                    <div className="rounded border border-zinc-800 bg-zinc-950/60 p-2">
-                      <span className="text-zinc-500 block">Amostras LST</span>
-                      <strong className="text-emerald-200">
-                        {heatLstComparison.amostras_validas}/{heatLstComparison.amostras_total}
-                      </strong>
-                    </div>
-                  </div>
-                  <p className="mt-2 text-[10px] leading-relaxed text-zinc-300">{heatLstComparison.narrativa}</p>
-                  {heatLstComparison.bairros.length > 0 && heatLstComparison.disponivel && (
-                    <div className="mt-2 max-h-28 overflow-y-auto rounded border border-zinc-800/80 bg-zinc-950/50">
-                      <table className="w-full text-[9px]">
-                        <thead>
-                          <tr className="text-left text-zinc-500 border-b border-zinc-800">
-                            <th className="px-2 py-1 font-bold">Bairro</th>
-                            <th className="px-2 py-1 font-bold">LST · Obs.</th>
-                            <th className="px-2 py-1 font-bold">Sinidu · Deriv.</th>
-                            <th className="px-2 py-1 font-bold">Δ</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {heatLstComparison.bairros
-                            .filter((row) => row.lst_observada_c != null)
-                            .slice(0, 8)
-                            .map((row) => (
-                              <tr key={row.bairro} className="border-b border-zinc-900/80 text-zinc-300">
-                                <td className="px-2 py-1 truncate max-w-[90px]">{row.bairro}</td>
-                                <td className="px-2 py-1 text-sky-300">{row.lst_observada_c}°</td>
-                                <td className="px-2 py-1 text-rose-300">{row.temp_simulada_c}°</td>
-                                <td className="px-2 py-1 text-emerald-300">
-                                  {row.delta_c != null ? `${row.delta_c > 0 ? '+' : ''}${row.delta_c}°` : '—'}
-                                </td>
-                              </tr>
-                            ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  )}
-                  {heatLstComparison.limites_metodologicos.length > 0 && (
-                    <ul className="mt-2 list-disc space-y-0.5 pl-4 text-[9px] italic text-zinc-500">
-                      {heatLstComparison.limites_metodologicos.map((item) => (
-                        <li key={item}>{item}</li>
-                      ))}
-                    </ul>
-                  )}
-                </>
-              )}
-            </div>
-          )}
-
-          <div className="grid grid-cols-2 gap-3">
-            <div className="bg-zinc-950/60 p-2.5 rounded-lg border border-zinc-800">
-              <span className="text-[9px] text-zinc-400 font-bold uppercase tracking-wider block">
-                {result.scenario_type === 'potencial_solar_telhado' ? 'Área de telhado' : 'Área Afetada'}
-              </span>
-              <span className="text-sm font-extrabold text-zinc-200">{result.affected_area_km2} km²</span>
-            </div>
-            <div className="bg-zinc-950/60 p-2.5 rounded-lg border border-zinc-800">
-              <span className="text-[9px] text-zinc-400 font-bold uppercase tracking-wider block">Impacto Estimado</span>
-              <span className="text-sm font-extrabold text-accent-rose">
-                {result.scenario_type === 'VegetationLoss' || result.scenario_type === 'HeatIsland'
-                  ? `+${result.impact_value}°C`
-                  : result.scenario_type === 'potencial_solar_telhado'
-                    ? `${Number(result.impact_value).toLocaleString()} kWp`
-                    : result.scenario_type === 'telhado_verde_permeabilidade'
-                      ? `${Number(result.impact_value).toLocaleString()} km² evitados`
-                      : `${result.impact_value.toLocaleString()} hab`}
-              </span>
-            </div>
-          </div>
-
-          {result.scenario_type === 'potencial_solar_telhado' && (
-            <div className="rounded-lg border border-amber-500/25 bg-amber-950/20 px-3 py-2.5 text-[11px] text-zinc-300">
-              <p className="text-[9px] font-extrabold uppercase tracking-wider text-amber-300">Potencial solar</p>
-              <p className="mt-1">
-                {(result as { potencia_total_mwp?: number }).potencia_total_mwp ?? '—'} MWp ·{' '}
-                {(result as { geracao_total_mwh_ano?: number }).geracao_total_mwh_ano ?? '—'} MWh/ano ·{' '}
-                {(result as { edificios_avaliados?: number }).edificios_avaliados ?? 0} edifícios
-              </p>
-            </div>
-          )}
-
-          {result.scenario_type === 'telhado_verde_permeabilidade' && (result as { delta?: { area_evitada_km2?: number; populacao_evitada?: number } }).delta && (
-            <div className="rounded-lg border border-lime-500/25 bg-lime-950/20 px-3 py-2.5 text-[11px] text-zinc-300">
-              <p className="text-[9px] font-extrabold uppercase tracking-wider text-lime-300">Mitigação telhado verde</p>
-              <p className="mt-1">
-                Área evitada: {(result as { delta: { area_evitada_km2?: number } }).delta.area_evitada_km2 ?? 0} km² ·
-                Pop. evitada: {((result as { delta: { populacao_evitada?: number } }).delta.populacao_evitada ?? 0).toLocaleString()}
-              </p>
-            </div>
-          )}
-
-          {result.scenario_type === 'infraestrutura_verde_calor' && (
-            <div className="rounded-lg border border-lime-500/25 bg-lime-950/20 px-3 py-2.5 text-[11px] text-zinc-300">
-              <p className="text-[9px] font-extrabold uppercase tracking-wider text-lime-300">Infraverde × calor</p>
-              <p className="mt-1">
-                Resfriamento até {(result as { delta?: { resfriamento_max_c?: number } }).delta?.resfriamento_max_c ?? result.impact_value} °C ·
-                {((result as { delta?: { populacao_menos_exposta?: number } }).delta?.populacao_menos_exposta ?? 0).toLocaleString()} hab. menos expostos
-              </p>
-            </div>
-          )}
-
-          {result.scenario_type === 'comparador_intervencoes' && (
-            <div className="rounded-lg border border-indigo-500/25 bg-indigo-950/20 px-3 py-2.5 text-[11px] text-zinc-300">
-              <p className="text-[9px] font-extrabold uppercase tracking-wider text-indigo-300">Antes → Depois</p>
-              <p className="mt-1 text-[10px] text-zinc-400">
-                {(result as { label_antes?: string }).label_antes} → {(result as { label_depois?: string }).label_depois}
-              </p>
-              <p className="mt-1">
-                {(result as { delta?: { resumo?: string } }).delta?.resumo || result.metric_impact}
-              </p>
-            </div>
-          )}
-
-          {result.scenario_type === 'sombra_insolacao' && (
-            <div className="rounded-lg border border-amber-500/25 bg-amber-950/20 px-3 py-2.5 text-[11px] text-zinc-300">
-              <p className="text-[9px] font-extrabold uppercase tracking-wider text-amber-300">Sombra / insolação</p>
-              <p className="mt-1">
-                Índice médio {result.impact_value} · sol elev. {(result as { sol?: { elevacao_graus?: number } }).sol?.elevacao_graus ?? '—'}° ·
-                sombra {(result as { resumo?: { sombra_media?: number } }).resumo?.sombra_media ?? '—'}
-              </p>
-            </div>
-          )}
-
-          {result.scenario_type === 'ExtremeRainfall' && result.simulation_meta?.exposicao_cenario && (
-            <div className="rounded-lg border border-cyan-500/25 bg-cyan-950/20 px-3 py-2.5">
-              <p className="text-[9px] font-extrabold uppercase tracking-wider text-cyan-300">
-                Exposição do cenário · edifícios × inundação
-              </p>
-              {result.simulation_meta.exposicao_cenario.disponivel ? (
-                <>
-                  <div className="mt-2 grid grid-cols-2 gap-2 text-[11px] text-zinc-300 sm:grid-cols-4">
-                    <span className="flex items-center gap-1.5">
-                      <Building2 size={13} className="text-cyan-400" />
-                      <strong>{result.simulation_meta.exposicao_cenario.edificios_expostos}</strong>
-                      <span className="text-[10px] text-zinc-500">
-                        / {result.simulation_meta.exposicao_cenario.edificios_total} edif.
-                      </span>
-                    </span>
-                    <span className="flex items-center gap-1.5">
-                      <Users size={13} className="text-sky-400" />
-                      <strong>
-                        {(
-                          result.simulation_meta.exposicao_cenario.populacao_edificios_estimada
-                          ?? result.simulation_meta.exposicao_cenario.populacao_exposta
-                          ?? 0
-                        ).toLocaleString('pt-BR')}
-                      </strong>
-                      <span className="text-[10px] text-zinc-500">hab/edif.</span>
-                    </span>
-                    <span className="flex items-center gap-1.5">
-                      <School size={13} className="text-indigo-400" />
-                      <strong>{result.simulation_meta.exposicao_cenario.escolas_expostas?.n ?? 0}</strong>
-                      <span className="text-[10px] text-zinc-500">escolas</span>
-                    </span>
-                    <span className="flex items-center gap-1.5">
-                      <Stethoscope size={13} className="text-rose-400" />
-                      <strong>{result.simulation_meta.exposicao_cenario.saude_exposta?.n ?? 0}</strong>
-                      <span className="text-[10px] text-zinc-500">saúde</span>
-                    </span>
-                  </div>
-                  <div className="mt-2 flex flex-wrap gap-1.5 text-[9px]">
-                    <span className="rounded border border-sky-500/30 bg-sky-500/10 px-1.5 py-0.5 text-sky-200">
-                      superficial {result.simulation_meta.exposicao_cenario.por_faixa.superficial ?? 0}
-                    </span>
-                    <span className="rounded border border-blue-500/30 bg-blue-500/10 px-1.5 py-0.5 text-blue-200">
-                      moderada {result.simulation_meta.exposicao_cenario.por_faixa.moderada ?? 0}
-                    </span>
-                    <span className="rounded border border-indigo-500/40 bg-indigo-500/15 px-1.5 py-0.5 text-indigo-100">
-                      crítica {result.simulation_meta.exposicao_cenario.por_faixa.critica ?? 0}
-                    </span>
-                  </div>
-                  {(result.simulation_meta.exposicao_cenario.amostra?.length ?? 0) > 0 && (
-                    <ul className="mt-2 max-h-24 space-y-0.5 overflow-y-auto text-[9px] text-zinc-400">
-                      {result.simulation_meta.exposicao_cenario.amostra!.slice(0, 6).map((b) => (
-                        <li key={b.id}>
-                          {b.nome || `Edifício #${b.id}`} · {b.depth_band} (~{b.depth_m} m) · {b.altura_m} m
-                          {b.populacao_estimada != null && b.populacao_estimada > 0
-                            ? ` · ~${b.populacao_estimada.toLocaleString('pt-BR')} hab`
-                            : ''}
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                  {result.simulation_meta.exposicao_cenario.edificios_total === 0 && (
-                    <p className="mt-1.5 text-[9px] text-amber-200/80">
-                      Sem footprints carregados — ative a camada Edificações 3D ou sync OSM para contar prédios.
-                    </p>
-                  )}
-                </>
-              ) : (
-                <p className="mt-1 text-[10px] text-zinc-400">
-                  {result.simulation_meta.exposicao_cenario.motivo || 'Exposição por edifício indisponível neste cenário.'}
-                </p>
-              )}
-            </div>
-          )}
-
-          {result.scenario_type === 'ExtremeRainfall' && result.simulation_meta?.exposicao_deslizamento && (
-            <div className="rounded-lg border border-red-500/25 bg-red-950/15 px-3 py-2.5">
-              <p className="text-[9px] font-extrabold uppercase tracking-wider text-red-300">
-                Exposição · edifícios × deslizamento
-                {result.simulation_meta.exposicao_deslizamento.slope_threshold_deg != null
-                  ? ` (≥ ${result.simulation_meta.exposicao_deslizamento.slope_threshold_deg}°)`
-                  : ''}
-              </p>
-              {result.simulation_meta.exposicao_deslizamento.disponivel ? (
-                <>
-                  <div className="mt-2 flex flex-wrap gap-3 text-[11px] text-zinc-300">
-                    <span>
-                      <strong>{result.simulation_meta.exposicao_deslizamento.edificios_expostos}</strong>
-                      <span className="text-[10px] text-zinc-500">
-                        {' '}/ {result.simulation_meta.exposicao_deslizamento.edificios_total} edif.
-                      </span>
-                    </span>
-                    <span>
-                      <strong>
-                        {(result.simulation_meta.exposicao_deslizamento.populacao_edificios_estimada || 0).toLocaleString('pt-BR')}
-                      </strong>
-                      <span className="text-[10px] text-zinc-500"> hab/edif.</span>
-                    </span>
-                  </div>
-                  <div className="mt-2 flex flex-wrap gap-1.5 text-[9px]">
-                    <span className="rounded border border-orange-500/30 bg-orange-500/10 px-1.5 py-0.5 text-orange-200">
-                      moderada {result.simulation_meta.exposicao_deslizamento.por_faixa.moderada ?? 0}
-                    </span>
-                    <span className="rounded border border-red-500/30 bg-red-500/10 px-1.5 py-0.5 text-red-200">
-                      alta {result.simulation_meta.exposicao_deslizamento.por_faixa.alta ?? 0}
-                    </span>
-                    <span className="rounded border border-rose-500/40 bg-rose-500/15 px-1.5 py-0.5 text-rose-100">
-                      crítica {result.simulation_meta.exposicao_deslizamento.por_faixa.critica ?? 0}
-                    </span>
-                  </div>
-                  {(result.simulation_meta.exposicao_deslizamento.amostra?.length ?? 0) > 0 && (
-                    <ul className="mt-2 max-h-20 space-y-0.5 overflow-y-auto text-[9px] text-zinc-400">
-                      {result.simulation_meta.exposicao_deslizamento.amostra!.slice(0, 5).map((b) => (
-                        <li key={b.id}>
-                          {b.nome || `Edifício #${b.id}`} · {b.slope_band} (~{b.mean_slope_deg}°)
-                          {b.populacao_estimada ? ` · ~${b.populacao_estimada.toLocaleString('pt-BR')} hab` : ''}
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                </>
-              ) : (
-                <p className="mt-1 text-[10px] text-zinc-400">
-                  {result.simulation_meta.exposicao_deslizamento.motivo || 'Sem edifícios em encostas críticas neste cenário.'}
-                </p>
-              )}
-            </div>
-          )}
-
-          {result.scenario_type === 'HeatIsland' && result.simulation_meta && (
-            <div className="grid grid-cols-3 gap-2">
-              <div className="rounded-lg border border-rose-500/20 bg-rose-950/10 p-2 text-center">
-                <span className="block text-[8px] uppercase text-zinc-500">Pico previsto</span>
-                <span className="text-xs font-bold text-rose-300">
-                  {result.simulation_meta.temperatura_pico_c ?? result.input_value}°C
-                </span>
-              </div>
-              <div className="rounded-lg border border-rose-500/20 bg-rose-950/10 p-2 text-center">
-                <span className="block text-[8px] uppercase text-zinc-500">Temp local máx</span>
-                <span className="text-xs font-bold text-rose-300">
-                  {result.simulation_meta.temp_pico_local_c ?? '—'}°C
-                </span>
-              </div>
-              <div className="rounded-lg border border-rose-500/20 bg-rose-950/10 p-2 text-center">
-                <span className="block text-[8px] uppercase text-zinc-500">Ilha de calor máx</span>
-                <span className="text-xs font-bold text-rose-300">
-                  +{result.simulation_meta.max_delta_t_c ?? result.impact_value}°C
-                </span>
-              </div>
-            </div>
-          )}
-
-          {result.scenario_type === 'HeatIsland' && result.simulation_meta?.exposicao_cenario && (
-            <div className="rounded-lg border border-orange-500/25 bg-orange-950/15 px-3 py-2.5">
-              <p className="text-[9px] font-extrabold uppercase tracking-wider text-orange-300">
-                Exposição · edifícios × calor
-              </p>
-              {result.simulation_meta.exposicao_cenario.disponivel ? (
-                <>
-                  <div className="mt-2 flex flex-wrap gap-3 text-[11px] text-zinc-300">
-                    <span>
-                      <strong>{result.simulation_meta.exposicao_cenario.edificios_expostos}</strong>
-                      <span className="text-[10px] text-zinc-500">
-                        {' '}/ {result.simulation_meta.exposicao_cenario.edificios_total} edif.
-                      </span>
-                    </span>
-                    <span>
-                      <strong>
-                        {(
-                          result.simulation_meta.exposicao_cenario.populacao_edificios_estimada
-                          ?? result.simulation_meta.exposicao_cenario.populacao_exposta
-                          ?? 0
-                        ).toLocaleString('pt-BR')}
-                      </strong>
-                      <span className="text-[10px] text-zinc-500"> hab/edif.</span>
-                    </span>
-                  </div>
-                  <div className="mt-2 flex flex-wrap gap-1.5 text-[9px]">
-                    <span className="rounded border border-amber-500/30 bg-amber-500/10 px-1.5 py-0.5 text-amber-200">
-                      leve {result.simulation_meta.exposicao_cenario.por_faixa.leve
-                        ?? result.simulation_meta.exposicao_cenario.por_faixa.superficial ?? 0}
-                    </span>
-                    <span className="rounded border border-orange-500/30 bg-orange-500/10 px-1.5 py-0.5 text-orange-200">
-                      moderada {result.simulation_meta.exposicao_cenario.por_faixa.moderada ?? 0}
-                    </span>
-                    <span className="rounded border border-rose-500/40 bg-rose-500/15 px-1.5 py-0.5 text-rose-100">
-                      severa {result.simulation_meta.exposicao_cenario.por_faixa.severa
-                        ?? result.simulation_meta.exposicao_cenario.por_faixa.critica ?? 0}
-                    </span>
-                  </div>
-                  {(result.simulation_meta.exposicao_cenario.amostra?.length ?? 0) > 0 && (
-                    <ul className="mt-2 max-h-20 space-y-0.5 overflow-y-auto text-[9px] text-zinc-400">
-                      {result.simulation_meta.exposicao_cenario.amostra!.slice(0, 5).map((b) => (
-                        <li key={b.id}>
-                          {b.nome || `Edifício #${b.id}`} · {b.heat_band || b.depth_band}
-                          {b.delta_t_c != null ? ` (+${b.delta_t_c}°C)` : ''}
-                          {b.temp_local_c != null ? ` · ${b.temp_local_c}°C` : ''}
-                          {b.populacao_estimada ? ` · ~${b.populacao_estimada.toLocaleString('pt-BR')} hab` : ''}
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                </>
-              ) : (
-                <p className="mt-1 text-[10px] text-zinc-400">
-                  {result.simulation_meta.exposicao_cenario.motivo || 'Exposição térmica por edifício indisponível.'}
-                </p>
-              )}
-            </div>
-          )}
-
-          {result.scenario_type === 'HeatIsland'
-            && (result.simulation_meta?.ganho_vegetal_pct ?? 0) > 0
-            && (result.simulation_meta?.resfriamento_max_c ?? 0) > 0 && (
-            <div className="rounded-lg border border-lime-500/30 bg-lime-950/15 p-3">
-              <div className="flex items-center gap-1.5 mb-2">
-                <Thermometer size={13} className="text-lime-300" />
-                <span className="text-[10px] font-extrabold uppercase tracking-wide text-lime-200">
-                  Benefício da arborização (+{result.simulation_meta?.ganho_vegetal_pct}% de cobertura)
-                </span>
-              </div>
-              <div className="grid grid-cols-2 gap-2">
-                <div className="rounded border border-lime-500/20 bg-zinc-950/50 p-2 text-center">
-                  <span className="block text-[8px] uppercase text-zinc-500">Resfriamento máx</span>
-                  <span className="text-sm font-extrabold text-lime-300">
-                    −{result.simulation_meta?.resfriamento_max_c}°C
-                  </span>
-                </div>
-                <div className="rounded border border-lime-500/20 bg-zinc-950/50 p-2 text-center">
-                  <span className="block text-[8px] uppercase text-zinc-500">Resfriamento médio</span>
-                  <span className="text-sm font-extrabold text-lime-300">
-                    −{result.simulation_meta?.resfriamento_medio_c}°C
-                  </span>
-                </div>
-              </div>
-              <p className="mt-2 text-[9px] leading-relaxed text-lime-200/70">
-                Redução da ilha de calor comparada ao mesmo cenário sem arborização — priorize
-                os bairros de maior ΔT e vulnerabilidade (IVC).
-              </p>
-            </div>
-          )}
-
-          {result.simulation_meta?.dem_available && (
-            <div className="grid grid-cols-3 gap-2">
-              <div className="rounded-lg border border-lime-500/20 bg-lime-950/10 p-2 text-center">
-                <span className="block text-[8px] uppercase text-zinc-500">Resolução DEM</span>
-                <span className="text-xs font-bold text-lime-300">
-                  ~{result.simulation_meta.dem_resolution_m ?? 30} m
-                </span>
-              </div>
-              <div className="rounded-lg border border-lime-500/20 bg-lime-950/10 p-2 text-center">
-                <span className="block text-[8px] uppercase text-zinc-500">Isolinhas</span>
-                <span className="text-xs font-bold text-lime-300">
-                  {result.simulation_meta.contour_interval_m} m
-                  {result.simulation_meta.contour_count != null && (
-                    <span className="block text-[8px] font-normal text-zinc-500">
-                      {result.simulation_meta.contour_count} curvas
-                    </span>
-                  )}
-                </span>
-              </div>
-              <div className="rounded-lg border border-lime-500/20 bg-lime-950/10 p-2 text-center">
-                <span className="block text-[8px] uppercase text-zinc-500">Incerteza vertical</span>
-                <span className="text-xs font-bold text-lime-300">
-                  ±{result.simulation_meta.vertical_accuracy_m ?? 16} m
-                </span>
-              </div>
-            </div>
-          )}
-
-          {result.scenario_type === 'ExtremeRainfall' && result.simulation_meta?.calibration && (
-            <div className="rounded-lg border border-violet-500/25 bg-violet-950/15 px-3 py-2">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div>
-                  <p className="text-[9px] font-extrabold uppercase tracking-wider text-violet-300">
-                    Calibração local
-                  </p>
-                  <p className="mt-0.5 text-[10px] text-zinc-400">
-                    {result.simulation_meta.calibration.nota
-                      || `Fonte ${result.simulation_meta.calibration.source}`}
-                    {result.simulation_meta.calibration.hit_rate != null && (
-                      <> · hit S2ID {(result.simulation_meta.calibration.hit_rate * 100).toFixed(0)}%</>
-                    )}
-                  </p>
-                  <p className="mt-0.5 font-mono text-[9px] text-zinc-500">
-                    rise×{result.simulation_meta.calibration.rise_scale} · runoff×
-                    {result.simulation_meta.calibration.runoff_scale} · v
-                    {result.simulation_meta.calibration.version}
-                  </p>
-                </div>
-                {codigoIbge && (
-                  <button
-                    type="button"
-                    disabled={calibBusy}
-                    onClick={async () => {
-                      setCalibBusy(true);
-                      setCalibMsg(null);
-                      try {
-                        const out = await api.recalibrateHydro(codigoIbge, { auto: true });
-                        setCalibMsg(out.nota || 'Calibração atualizada. Rode a simulação de novo.');
-                      } catch (e) {
-                        setCalibMsg(e instanceof Error ? e.message : 'Falha na calibração');
-                      } finally {
-                        setCalibBusy(false);
-                      }
-                    }}
-                    className="rounded border border-violet-500/40 bg-violet-500/10 px-2 py-1 text-[9px] font-bold text-violet-100 hover:bg-violet-500/20 disabled:opacity-50"
-                  >
-                    {calibBusy ? 'Calibrando…' : 'Recalibrar S2ID'}
-                  </button>
-                )}
-              </div>
-              {calibMsg && <p className="mt-1.5 text-[9px] text-violet-200/90">{calibMsg}</p>}
-            </div>
-          )}
-
-          {result.simulation_meta?.shade_factor_medio != null && (
-            <div className="rounded-lg border border-sky-500/30 bg-sky-950/20 px-3 py-2">
-              <p className="text-[9px] font-extrabold uppercase tracking-wider text-sky-200">
-                Sombra e vento (17g.1f)
-              </p>
-              <p className="mt-1 text-[10px] text-zinc-300">
-                Fator sombra médio {result.simulation_meta.shade_factor_medio}
-                {result.simulation_meta.ventilacao_factor_medio != null
-                  ? ` · ventilação ${result.simulation_meta.ventilacao_factor_medio}`
-                  : ''}
-                {result.simulation_meta.sombreamento_pct
-                  ? ` · intervenção sombra ${result.simulation_meta.sombreamento_pct}%`
-                  : ''}
-                {result.simulation_meta.corredores_vento_pct
-                  ? ` · vento ${result.simulation_meta.corredores_vento_pct}%`
-                  : ''}
-              </p>
-            </div>
-          )}
-
-          {result.simulation_meta?.modulo && (
-            <div className="rounded-lg border border-amber-500/30 bg-amber-950/20 px-3 py-2">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <p className="text-[9px] font-extrabold uppercase tracking-wider text-amber-200">
-                  {result.simulation_meta.modulo === 'seca' ? 'Estresse hídrico' : 'Proxy arbovírus'}
-                </p>
-                {result.simulation_meta.nivel_label && (
-                  <span className="rounded border border-amber-500/40 bg-amber-500/15 px-1.5 py-0.5 text-[8px] font-bold uppercase text-amber-100">
-                    {result.simulation_meta.nivel_label}
-                  </span>
-                )}
-              </div>
-              <p className="mt-1 text-[10px] text-zinc-300">
-                Índice municipal {result.simulation_meta.indice_municipal ?? result.impact_value}
-                {result.simulation_meta.temperatura_media_c != null
-                  ? ` · ${result.simulation_meta.temperatura_media_c} °C`
-                  : ''}
-                {result.simulation_meta.precip_72h_mm != null
-                  ? ` · precip 72h ${result.simulation_meta.precip_72h_mm} mm`
-                  : ''}
-              </p>
-              {result.simulation_meta.nota && (
-                <p className="mt-1 text-[9px] leading-relaxed text-zinc-500">{result.simulation_meta.nota}</p>
-              )}
-            </div>
-          )}
-
-          {result.simulation_meta?.drenagem_urbana?.aplicado && (
-            <div
-              className={`rounded-lg border px-3 py-2 ${
-                result.simulation_meta.drenagem_urbana.saturada
-                  ? 'border-amber-500/35 bg-amber-950/25'
-                  : 'border-cyan-500/30 bg-cyan-950/20'
-              }`}
-            >
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <p className="text-[9px] font-extrabold uppercase tracking-wider text-cyan-200">
-                  Rede de drenagem (proxy)
-                </p>
-                {result.simulation_meta.drenagem_urbana.saturada && (
-                  <span className="rounded border border-amber-500/40 bg-amber-500/15 px-1.5 py-0.5 text-[8px] font-bold uppercase text-amber-100">
-                    saturada
-                  </span>
-                )}
-              </div>
-              <p className="mt-1 text-[10px] text-zinc-300">
-                Capacidade {result.simulation_meta.drenagem_urbana.capacidade_mm_h} mm/h · removidos{' '}
-                {result.simulation_meta.drenagem_urbana.removido_mm} mm
-                {result.simulation_meta.drenagem_urbana.fonte
-                  ? ` · ${result.simulation_meta.drenagem_urbana.fonte}`
-                  : ''}
-              </p>
-              {result.simulation_meta.drenagem_urbana.nota && (
-                <p className="mt-1 text-[9px] leading-relaxed text-zinc-500">
-                  {result.simulation_meta.drenagem_urbana.nota}
-                </p>
-              )}
-            </div>
-          )}
-
-          {result.simulation_meta?.selo_confianca && (
-            <div className="rounded-lg border border-sky-500/25 bg-sky-950/20 px-3 py-2">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <p className="text-[9px] font-extrabold uppercase tracking-wider text-sky-300">
-                  Selo de confiança
-                </p>
-                <div className="flex gap-1">
-                  <span className="rounded border border-sky-500/40 bg-sky-500/10 px-1.5 py-0.5 text-[8px] font-bold uppercase text-sky-100">
-                    <TermTooltip term={result.simulation_meta.selo_confianca.selo_qualidade} />
-                  </span>
-                  <span className="rounded border border-zinc-600 px-1.5 py-0.5 text-[8px] font-bold uppercase text-zinc-300">
-                    {result.simulation_meta.selo_confianca.nivel_confianca}
-                  </span>
-                </div>
-              </div>
-              <p className="mt-1 text-[9px] leading-relaxed text-zinc-400">
-                {result.simulation_meta.selo_confianca.interpretacao}
-              </p>
-              <button
-                type="button"
-                onClick={async () => {
-                  try {
-                    const md = await api.buildMethodNote({
-                      tipo: simulationTipo(),
-                      codigo_ibge: codigoIbge || undefined,
-                      simulation_meta: result.simulation_meta as Record<string, unknown>,
-                      format: 'markdown',
-                    });
-                    const blob = new Blob([typeof md === 'string' ? md : JSON.stringify(md, null, 2)], {
-                      type: 'text/markdown;charset=utf-8',
-                    });
-                    const url = URL.createObjectURL(blob);
-                    const a = document.createElement('a');
-                    a.href = url;
-                    a.download = `nota-metodologica-${codigoIbge || 'sim'}.md`;
-                    a.click();
-                    URL.revokeObjectURL(url);
-                  } catch {
-                    /* ignore */
-                  }
-                }}
-                className="mt-2 inline-flex items-center gap-1 rounded border border-sky-500/30 px-2 py-1 text-[9px] font-bold text-sky-200 hover:bg-sky-500/10"
-              >
-                <FileText size={11} /> Baixar nota metodológica
-              </button>
-            </div>
-          )}
-
-          {result.simulation_meta?.validacao_s2id?.disponivel && (
-            <div className="rounded-lg border border-amber-500/25 bg-amber-950/15 px-3 py-2">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <p className="text-[9px] font-extrabold uppercase tracking-wider text-amber-300">
-                  Validação S2ID
-                </p>
-                <span className="rounded border border-amber-500/40 px-1.5 py-0.5 text-[8px] font-bold uppercase text-amber-100">
-                  acordo {result.simulation_meta.validacao_s2id.acordo}
-                </span>
-              </div>
-              <p className="mt-1 text-[9px] leading-relaxed text-zinc-400">
-                {result.simulation_meta.validacao_s2id.narrativa}
-              </p>
-              {result.simulation_meta.validacao_s2id.hit_rate != null && (
-                <p className="mt-0.5 text-[8px] font-mono text-zinc-500">
-                  hit rate {(result.simulation_meta.validacao_s2id.hit_rate * 100).toFixed(0)}% ·{' '}
-                  {result.simulation_meta.validacao_s2id.eventos_na_mancha}/
-                  {result.simulation_meta.validacao_s2id.eventos_com_geometria} eventos na mancha
-                </p>
-              )}
-            </div>
-          )}
-
-          {result.simulation_meta?.precision_note && (
-            <p className="text-[9px] leading-relaxed text-zinc-500 italic">
-              {result.simulation_meta.precision_note}
-            </p>
-          )}
-
-          {result.simulation_meta?.dem_available && (
-            <div className="grid grid-cols-3 gap-2">
-              <div className="rounded-lg border border-zinc-800 bg-zinc-950/40 p-2 text-center">
-                <span className="block text-[8px] uppercase text-zinc-500">Cota mín.</span>
-                <span className="text-xs font-bold text-zinc-300">{result.simulation_meta.altitude_min_m} m</span>
-              </div>
-              <div className="rounded-lg border border-zinc-800 bg-zinc-950/40 p-2 text-center">
-                <span className="block text-[8px] uppercase text-zinc-500">Cota média</span>
-                <span className="text-xs font-bold text-zinc-300">{result.simulation_meta.altitude_media_m} m</span>
-              </div>
-              <div className="rounded-lg border border-zinc-800 bg-zinc-950/40 p-2 text-center">
-                <span className="block text-[8px] uppercase text-zinc-500">Cota máx.</span>
-                <span className="text-xs font-bold text-zinc-300">{result.simulation_meta.altitude_max_m} m</span>
-              </div>
-            </div>
-          )}
-
-          {result.scenario_type === 'ExtremeRainfall' && result.simulation_meta?.flow_accumulation_applied && (
-            <div className="grid grid-cols-3 gap-2">
-              <div className="rounded-lg border border-sky-500/20 bg-sky-950/10 p-2 text-center">
-                <span className="block text-[8px] uppercase text-zinc-500">Acúmulo D8</span>
-                <span className="text-xs font-bold text-sky-300">{result.simulation_meta.max_flow_accumulation ?? '—'}</span>
-              </div>
-              <div className="rounded-lg border border-sky-500/20 bg-sky-950/10 p-2 text-center">
-                <span className="block text-[8px] uppercase text-zinc-500">Impermeab.</span>
-                <span className="text-xs font-bold text-sky-300">
-                  {result.simulation_meta.mean_impermeability != null
-                    ? `${Math.round(result.simulation_meta.mean_impermeability * 100)}%`
-                    : '—'}
-                </span>
-              </div>
-              <div className="rounded-lg border border-sky-500/20 bg-sky-950/10 p-2 text-center">
-                <span className="block text-[8px] uppercase text-zinc-500">Bairros</span>
-                <span className="text-xs font-bold text-sky-300">
-                  {result.simulation_meta.bairros_atingidos_count ?? result.affected_bairros.length}
-                </span>
-              </div>
-            </div>
-          )}
-
-          {(result.contours?.features?.length > 0 || result.flow_paths?.features?.length > 0) && (
-            <div className="rounded-lg border border-zinc-800 bg-zinc-950/40 p-2.5">
-              <span className="text-[9px] text-zinc-400 font-bold uppercase tracking-wider block mb-1.5">Visibilidade no mapa</span>
-              <div className="flex flex-wrap gap-2 mb-2">
-                {(
-                  [
-                    { key: 'showFlood' as const, label: 'Manchas de alagamento', activeClass: 'border-sky-500/40 bg-sky-500/15 text-sky-200' },
-                    { key: 'showContours' as const, label: 'Curvas de nível', activeClass: 'border-lime-500/40 bg-lime-500/15 text-lime-200' },
-                    { key: 'showFlow' as const, label: 'Escoamento D8', activeClass: 'border-cyan-500/40 bg-cyan-500/15 text-cyan-200' },
-                  ] as const
-                ).map(({ key, label, activeClass }) => {
-                  const active = overlayOptions[key];
-                  return (
-                    <button
-                      key={key}
-                      type="button"
-                      onClick={() => onOverlayChange({ ...overlayOptions, [key]: !active })}
-                      className={`rounded-full border px-2 py-0.5 text-[9px] transition ${
-                        active ? activeClass : 'border-zinc-700 bg-zinc-900 text-zinc-500 line-through'
-                      }`}
-                    >
-                      {label}
-                    </button>
-                  );
-                })}
-              </div>
-              <span className="text-[9px] text-zinc-400 font-bold uppercase tracking-wider block mb-1.5">Camadas geradas</span>
-              <div className="flex flex-wrap gap-2">
-                {result.geometry?.features?.length > 0 && (
-                  <span className="rounded-full border border-sky-500/30 bg-sky-500/10 px-2 py-0.5 text-[9px] text-sky-200">
-                    {result.geometry.features.length} mancha(s)
-                  </span>
-                )}
-                {result.contours?.features?.length > 0 && (
-                  <span className="rounded-full border border-lime-500/30 bg-lime-500/10 px-2 py-0.5 text-[9px] text-lime-200">
-                    {result.contours.features.length} curvas de nível
-                  </span>
-                )}
-                {result.flow_paths?.features?.length > 0 && (
-                  <span className="rounded-full border border-cyan-500/30 bg-cyan-500/10 px-2 py-0.5 text-[9px] text-cyan-200">
-                    {result.flow_paths.features.length} vetores escoamento
-                  </span>
-                )}
-              </div>
-            </div>
-          )}
-
-          <div>
-            <span className="text-[9px] text-zinc-400 font-bold uppercase tracking-wider block mb-1">Métricas de Consequência</span>
-            <p className="text-xs text-zinc-300 bg-zinc-950/40 p-2 border border-zinc-800/80 rounded italic">
-              {result.metric_impact}: {result.scenario_type === 'VegetationLoss' || result.scenario_type === 'HeatIsland'
-                ? `Elevação térmica projetada em até +${result.impact_value}°C nos bairros mais expostos.`
-                : `Aproximadamente ${result.affected_population.toLocaleString()} cidadãos residem nos setores inundáveis afetados.`}
-            </p>
-          </div>
-
-          {result.affected_bairros.length > 0 && (
-            <div>
-              <span className="text-[9px] text-zinc-400 font-bold uppercase tracking-wider block mb-1">Bairros Atingidos</span>
-              <div className="flex flex-wrap gap-1">
-                {(result.simulation_meta?.bairros_exposicao?.length
-                  ? result.simulation_meta.bairros_exposicao.map((row) => (
-                      <span
-                        key={row.bairro}
-                        className="text-[9px] bg-zinc-950 border border-zinc-800 text-zinc-300 py-0.5 px-2 rounded-full font-medium"
-                        title={`${row.populacao_exposta.toLocaleString()} hab expostos`}
-                      >
-                        {row.bairro} · {row.exposicao_pct}%
-                      </span>
-                    ))
-                  : result.affected_bairros.map((b) => (
-                      <span key={b} className="text-[9px] bg-zinc-950 border border-zinc-800 text-zinc-300 py-0.5 px-2 rounded-full font-medium">
-                        {b}
-                      </span>
-                    )))}
-              </div>
-            </div>
-          )}
-
-          {result.risk_context && result.risk_context.length > 0 && (
-            <div>
-              <span className="text-[9px] text-zinc-400 font-bold uppercase tracking-wider block mb-1.5">
-                Contexto IVC × IRI (top 5)
-              </span>
-              <div className="flex flex-col gap-1">
-                {result.risk_context.slice(0, 5).map((row) => (
-                  <div key={row.bairro} className="flex items-center justify-between rounded border border-zinc-800 bg-zinc-950/50 px-2 py-1">
-                    <span className="text-[10px] text-zinc-300 font-medium">{row.bairro}</span>
-                    <span className="text-[9px] font-mono text-indigo-300">
-                      IVC {row.ivc.toFixed(2)} · IRI {row.iri.toFixed(2)}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-        </div>
-      )}
-
-      {mitigationPlan && (
-        <div className="bg-card/40 border border-emerald-500/25 p-4 rounded-xl flex flex-col gap-4 animate-fadeIn">
-          <div>
-            <h4 className="font-extrabold text-zinc-200 text-xs uppercase tracking-wide">Plano de Ação Sugerido</h4>
-            <p className="mt-1 text-[10px] text-zinc-400">
-              Severidade <strong className="text-emerald-300">{mitigationPlan.severidade}</strong> para {mitigationPlan.evento.tipo}
-              {` (${mitigationPlan.evento.valor_entrada ?? mitigationPlan.evento.precipitacao_mm} ${mitigationPlan.evento.unidade || 'mm'})`},
-              {` ${mitigationPlan.evento.area_afetada_km2} km²`} e {mitigationPlan.evento.populacao_afetada.toLocaleString('pt-BR')} pessoa(s) exposta(s).
-            </p>
-          </div>
-
-          <div>
-            <span className="text-[9px] text-zinc-400 font-bold uppercase tracking-wider block mb-2">Ações proporcionais ao evento</span>
-            <div className="flex flex-col gap-2">
-              {mitigationPlan.acoes_tecnicas_padrao.map((item, idx) => (
-                <div key={`${item.horizonte}-${idx}`} className="rounded-lg border border-zinc-800 bg-zinc-950/50 p-2.5">
-                  <div className="text-[10px] font-extrabold text-emerald-300">{item.horizonte}</div>
-                  <p className="mt-1 text-[11px] leading-relaxed text-zinc-200">{item.acao}</p>
-                  <p className="mt-1 text-[9px] leading-relaxed text-zinc-500">{item.justificativa} {item.proporcionalidade}</p>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          <div>
-            <span className="text-[9px] text-zinc-400 font-bold uppercase tracking-wider block mb-2">Experiências do município</span>
-            {mitigationPlan.experiencias_municipais.length > 0 ? (
-              <div className="flex flex-col gap-2">
-                {mitigationPlan.experiencias_municipais.map((item) => (
-                  <div key={item.titulo} className="rounded-lg border border-zinc-800 bg-zinc-950/40 p-2">
-                    <strong className="text-[10px] text-zinc-200">{item.titulo}</strong>
-                    <p className="mt-1 text-[10px] leading-relaxed text-zinc-400">{item.descricao}</p>
-                    <p className="mt-1 text-[9px] text-zinc-600">Fonte: {item.fonte}</p>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <p className="rounded-lg border border-zinc-800 bg-zinc-950/40 p-2 text-[10px] text-zinc-500">
-                Sem experiências municipais verificáveis para este tipo de evento.
-              </p>
-            )}
-          </div>
-
-          <div>
-            <span className="text-[9px] text-zinc-400 font-bold uppercase tracking-wider block mb-2">Municípios e casos análogos</span>
-            {mitigationPlan.municipios_analogos.length > 0 ? (
-              <div className="flex flex-wrap gap-1.5">
-                {mitigationPlan.municipios_analogos.map((item) => (
-                  <span key={item.codigo_ibge} className="rounded-full border border-indigo-500/30 bg-indigo-500/10 px-2 py-1 text-[9px] font-bold text-indigo-200">
-                    {item.nome}-{item.uf}: {(item.coeficiente_similaridade * 100).toFixed(0)}%
-                  </span>
-                ))}
-              </div>
-            ) : (
-              <p className="rounded-lg border border-zinc-800 bg-zinc-950/40 p-2 text-[10px] text-zinc-500">
-                Não foram encontrados municípios análogos suficientes com os dados disponíveis.
-              </p>
-            )}
-            {mitigationPlan.casos_analogos.length === 0 && (
-              <p className="mt-2 rounded-lg border border-amber-500/20 bg-amber-950/10 p-2 text-[10px] text-amber-200/80">
-                Campo de casos análogos vazio: não há solução e resultado verificáveis por fonte oficial nesta versão do banco.
-              </p>
-            )}
-          </div>
-
-          <div>
-            <span className="text-[9px] text-zinc-400 font-bold uppercase tracking-wider block mb-2">Plano Diretor: pode fazer / não pode fazer</span>
-            <div className="grid grid-cols-1 gap-2">
-              <div className="rounded-lg border border-emerald-500/20 bg-emerald-950/10 p-2">
-                <strong className="text-[10px] text-emerald-200">Pode priorizar, se compatível</strong>
-                {mitigationPlan.diretrizes_plano_diretor.length > 0 ? (
-                  mitigationPlan.diretrizes_plano_diretor.map((item, idx) => (
-                    <p key={`${item.descricao}-${idx}`} className="mt-1 text-[10px] leading-relaxed text-zinc-400">{item.descricao} <span className="text-zinc-600">({item.fonte})</span></p>
-                  ))
-                ) : (
-                  <p className="mt-1 text-[10px] text-zinc-500">Sem diretriz específica extraída de fonte oficial legível.</p>
-                )}
-              </div>
-              <div className="rounded-lg border border-rose-500/20 bg-rose-950/10 p-2">
-                <strong className="text-[10px] text-rose-200">Não deve / depende de validação legal</strong>
-                {mitigationPlan.restricoes_plano_diretor.length > 0 ? (
-                  mitigationPlan.restricoes_plano_diretor.map((item, idx) => (
-                    <p key={`${item.descricao}-${idx}`} className="mt-1 text-[10px] leading-relaxed text-zinc-400">{item.descricao} <span className="text-zinc-600">({item.fonte})</span></p>
-                  ))
-                ) : (
-                  <p className="mt-1 text-[10px] text-zinc-500">Sem restrição específica extraída de fonte oficial legível.</p>
-                )}
-              </div>
-            </div>
-          </div>
-
-          {mitigationPlan.capacidade_investimento && (
-            <div>
-              <span className="text-[9px] text-zinc-400 font-bold uppercase tracking-wider block mb-2">Capacidade de Investimento</span>
-              <div className="rounded-lg border border-indigo-500/20 bg-indigo-950/10 p-3 flex flex-col gap-2">
-                <p className="text-[10px] text-zinc-300">
-                  CAPAG: <strong>{mitigationPlan.capacidade_investimento.nota_capag || 'não informada'}</strong>
-                  {' · '}IVC médio: <strong>{mitigationPlan.capacidade_investimento.media_ivc?.toFixed(2) ?? '—'}</strong>
-                </p>
-                {mitigationPlan.capacidade_investimento.alertas.map((item, idx) => (
-                  <p key={`${item}-${idx}`} className="text-[10px] font-semibold text-amber-300">{item}</p>
-                ))}
-                <div>
-                  <strong className="text-[10px] text-indigo-200">Fontes de financiamento compatíveis</strong>
-                  <ul className="mt-1 list-disc pl-4 text-[10px] text-zinc-400">
-                    {mitigationPlan.capacidade_investimento.fontes_financiamento_sugeridas.map((item) => (
-                      <li key={item}>{item}</li>
-                    ))}
-                  </ul>
-                </div>
-                {mitigationPlan.capacidade_investimento.observacao && (
-                  <p className="text-[9px] italic text-zinc-500">{mitigationPlan.capacidade_investimento.observacao}</p>
-                )}
-              </div>
-            </div>
-          )}
-
-          <div>
-            <span className="text-[9px] text-zinc-400 font-bold uppercase tracking-wider block mb-2">Fontes e lacunas</span>
-            <div className="flex flex-col gap-1">
-              {mitigationPlan.fontes_consultadas.map((item) => (
-                <p key={item.titulo} className="text-[9px] text-zinc-500">
-                  {item.titulo}: <span className="text-zinc-400">{item.status}</span>
-                </p>
-              ))}
-              {mitigationPlan.lacunas.map((item, idx) => (
-                <p key={`${item}-${idx}`} className="text-[9px] text-amber-300/80">Lacuna: {item}</p>
-              ))}
-            </div>
-          </div>
-        </div>
-      )}
+      <SimulationResults
+        result={result}
+        mitigationPlan={mitigationPlan}
+        simInterpret={simInterpret}
+        slopeInterpret={slopeInterpret}
+        analysisLoading={analysisLoading}
+        interpretError={interpretError}
+        copyOk={copyOk}
+        exportLoading={exportLoading}
+        rainfallComparison={rainfallComparison}
+        heatLstComparison={heatLstComparison}
+        lstCompareLoading={lstCompareLoading}
+        activeTab={activeTab}
+        rainfallMm={rainfallMm}
+        compareRainfall={compareRainfall}
+        baselineRainfallMm={baselineRainfallMm}
+        floodTIndex={floodTIndex}
+        floodPlaying={floodPlaying}
+        floodLoop={floodLoop}
+        floodSpeedMs={floodSpeedMs}
+        calibBusy={calibBusy}
+        calibMsg={calibMsg}
+        codigoIbge={codigoIbge}
+        overlayOptions={overlayOptions}
+        onOverlayChange={onOverlayChange}
+        mapMode3dActive={mapMode3dActive}
+        onView3D={onView3D}
+        onFocusWorkshop={onFocusWorkshop}
+        onCrossRiskLayers={onCrossRiskLayers}
+        setFloodPlaying={setFloodPlaying}
+        setFloodTIndex={setFloodTIndex}
+        setFloodSpeedMs={setFloodSpeedMs}
+        setFloodLoop={setFloodLoop}
+        setCalibBusy={setCalibBusy}
+        setCalibMsg={setCalibMsg}
+        applyFloodTimelineFrame={applyFloodTimelineFrame}
+        runInterpret={runInterpret}
+        handleExportGeojson={handleExportGeojson}
+        handleExportKmz={handleExportKmz}
+        handleExportPdf={handleExportPdf}
+        handleIncludeInReport={handleIncludeInReport}
+        handleCopyInterpret={handleCopyInterpret}
+        simulationTipo={simulationTipo}
+      />
     </div>
   );
 }

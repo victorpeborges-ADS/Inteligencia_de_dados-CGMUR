@@ -10,13 +10,13 @@ type PanelSectionProps = {
 };
 
 const TIER_BORDER: Record<NonNullable<PanelSectionProps['tier']>, string> = {
-  primary: 'border-indigo-500/25 bg-indigo-950/10',
+  primary: 'border-teal-500/25 bg-teal-950/10',
   secondary: 'border-border bg-card/50',
   action: 'border-border bg-zinc-950/40',
 };
 
 const TIER_TITLE: Record<NonNullable<PanelSectionProps['tier']>, string> = {
-  primary: 'text-indigo-300',
+  primary: 'text-teal-300',
   secondary: 'text-zinc-300',
   action: 'text-zinc-400',
 };
@@ -30,10 +30,10 @@ export default function PanelSection({
   className = '',
 }: PanelSectionProps) {
   return (
-    <section className={`rounded-xl border p-4 ${TIER_BORDER[tier]} ${className}`}>
-      <div className="mb-3 flex items-start justify-between gap-3">
+    <section className={`rounded-lg border p-3.5 ${TIER_BORDER[tier]} ${className}`}>
+      <div className="mb-2.5 flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <h4 className={`text-xs font-extrabold uppercase tracking-wide ${TIER_TITLE[tier]}`}>{title}</h4>
+          <h4 className={`text-xs font-bold uppercase tracking-wide ${TIER_TITLE[tier]}`}>{title}</h4>
           {description && (
             <p className="mt-1 text-[10px] leading-snug text-zinc-500">{description}</p>
           )}

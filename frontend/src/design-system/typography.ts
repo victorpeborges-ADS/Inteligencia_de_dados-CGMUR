@@ -1,6 +1,7 @@
+/** Tipografia 20f.4 — Source Sans 3 (institucional; evita Inter genérico). */
 export const typography = {
   fontFamily: {
-    sans: ['Inter', 'system-ui', 'sans-serif'],
+    sans: ['"Source Sans 3"', 'Segoe UI', 'system-ui', 'sans-serif'],
   },
   fontSize: {
     micro: '8px',
@@ -20,8 +21,8 @@ export const typography = {
     extrabold: 800,
   },
   letterSpacing: {
-    tight: '-0.02em',
-    wide: '0.12em',
-    wider: '0.22em',
+    tight: '-0.015em',
+    wide: '0.08em',
+    wider: '0.14em',
   },
 } as const;

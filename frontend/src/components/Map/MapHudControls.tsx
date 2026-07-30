@@ -42,9 +42,9 @@ const LAYER_LEGEND: Record<string, { title: string; items: { color: string; labe
   cobertura: {
     title: 'Cobertura do solo',
     items: [
-      { color: '#14532d', label: 'Vegetação' },
-      { color: '#71717a', label: 'Urbano' },
-      { color: '#0ea5e9', label: 'Água' },
+      { color: '#15803d', label: 'Vegetação / parque' },
+      { color: '#a1a1aa', label: 'Área construída' },
+      { color: '#1e3a8a', label: "Corpo d'água / rios" },
     ],
   },
   socioeconomico: {

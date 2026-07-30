@@ -85,6 +85,73 @@ def persist_openmeteo_daily(
     return n
 
 
+def materialize_cemaden_daily_from_snapshots(
+    db: Session,
+    codigo_ibge: str,
+) -> int:
+    """Materializa série diária oficial a partir de snapshots CEMADEN (21b.1).
+
+    O getJson2 entrega acumulados rolantes (acc24hr…), não chuva de calendário.
+    A cada sync, o último snapshot_24h do dia civil por estação vira uma linha
+    `granularidade=diaria` — assim a série oficial cresce sem captcha do histórico
+    mensal. Não substitui CSV 10/10 min depositado; documenta a proxy no payload.
+    """
+    code = str(codigo_ibge).zfill(7)[:7]
+    snaps = (
+        db.query(SeriePluviometricaObservada)
+        .filter(
+            SeriePluviometricaObservada.codigo_ibge == code,
+            SeriePluviometricaObservada.fonte == "cemaden",
+            SeriePluviometricaObservada.granularidade == "snapshot_24h",
+        )
+        .order_by(SeriePluviometricaObservada.observed_at.asc())
+        .all()
+    )
+    if not snaps:
+        return 0
+
+    # Último snapshot do dia civil por estação
+    best: dict[tuple[str, dt.date], Any] = {}
+    for row in snaps:
+        day = row.observed_at.date() if hasattr(row.observed_at, "date") else row.observed_at
+        key = (str(row.estacao_id), day)
+        prev = best.get(key)
+        if prev is None or row.observed_at >= prev.observed_at:
+            best[key] = row
+
+    now = utc_now()
+    out: list[dict[str, Any]] = []
+    for (estacao_id, day), row in best.items():
+        out.append({
+            "codigo_ibge": code,
+            "municipio_id": row.municipio_id,
+            "estacao_id": str(estacao_id)[:64],
+            "estacao_nome": (row.estacao_nome or f"CEMADEN {estacao_id}")[:120],
+            "lat": row.lat,
+            "lng": row.lng,
+            "observed_at": dt.datetime.combine(day, dt.time(0, 0)),
+            "precip_mm": float(row.precip_mm or 0.0),
+            "granularidade": "diaria",
+            "data_quality": "oficial",
+            "fonte": "cemaden",
+            "ingestido_em": now,
+            "raw_payload": {
+                "origem": "snapshot_24h_materializado",
+                "nota": (
+                    "Proxy diário: último acc24hr do dia civil por estação "
+                    "(janela rolante 24h do CEMADEN, não total calendário). "
+                    "Série histórica 10 min continua via CSV depositado."
+                ),
+                "snapshot_observed_at": (
+                    row.observed_at.isoformat() if row.observed_at else None
+                ),
+            },
+        })
+    n = upsert_pluvio_rows(db, out)
+    logger.info("CEMADEN diário materializado %s: %d dias×estação", code, n)
+    return n
+
+
 def daily_series_from_db(
     db: Session,
     codigo_ibge: str,

@@ -112,6 +112,32 @@ def saude_sync_municipality(
     return collect_saude_municipality(db, codigo_ibge, force=force)
 
 
+@router.post("/equipamentos/sync/{codigo_ibge}")
+def equipamentos_sync_municipality(
+    codigo_ibge: str,
+    force: bool = Query(default=True),
+    db: Session = Depends(get_db),
+):
+    """Recife: escolas, creches, faculdades, hospitais e UPAs com dependência administrativa."""
+    code = str(codigo_ibge).zfill(7)[:7]
+    if code != "2611606":
+        return {
+            "codigo_ibge": code,
+            "skipped": True,
+            "reason": "Inventário ampliado disponível apenas para Recife (2611606) nesta versão.",
+        }
+    from app.data_connectors.equipamentos_recife_collector import sync_equipamentos_recife
+    from etl.etl_osm import load_simulated_roads_only
+    from app.models import Municipio
+
+    result = sync_equipamentos_recife(db, force=force, commit=False)
+    muni = db.query(Municipio).filter(Municipio.codigo_ibge == code).first()
+    if muni and not result.get("skipped"):
+        load_simulated_roads_only(db, muni.id)
+    db.commit()
+    return result
+
+
 @router.post("/territorial/sync/{codigo_ibge}")
 def territorial_sync_municipality(
     codigo_ibge: str,

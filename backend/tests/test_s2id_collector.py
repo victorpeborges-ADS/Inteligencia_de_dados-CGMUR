@@ -14,21 +14,43 @@ from app.data_connectors.s2id_collector import (
 
 
 def test_recife_pilot_has_multiple_events():
-    assert len(RECIFE_S2ID_EVENTS) >= 6
+    assert len(RECIFE_S2ID_EVENTS) >= 10
     tipos = {e["tipo"] for e in RECIFE_S2ID_EVENTS}
     assert "Inundação" in tipos
     assert "Deslizamento de Terra" in tipos
+    assert all(e.get("descricao") for e in RECIFE_S2ID_EVENTS)
+    assert all(e.get("link_noticia") for e in RECIFE_S2ID_EVENTS)
 
 
 def test_recife_pilot_damage_total_realistic():
     total = sum(float(e["danos"]) for e in RECIFE_S2ID_EVENTS)
-    assert total >= 150_000_000
+    assert total >= 200_000_000
 
 
-def test_recife_events_have_coordinates():
-    for event in RECIFE_S2ID_EVENTS:
-        assert -35 < event["lng"] < -34
-        assert -8.2 < event["lat"] < -7.9
+def test_enrich_s2id_feature_props_recife():
+    from app.data_connectors.s2id_collector import (
+        build_s2id_enrichment_index,
+        enrich_s2id_feature_props,
+    )
+    import datetime
+
+    idx = build_s2id_enrichment_index("2611606")
+    props = enrich_s2id_feature_props(
+        tipo_desastre="Deslizamento de Terra",
+        data_ocorrencia=datetime.date(2022, 5, 28),
+        populacao_afetada=12000,
+        danos_materiais=45_000_000,
+        referencia="Morros do Ibura",
+        data_quality="oficial_curado",
+        fonte="s2id_curado",
+        enrichment=idx,
+        eventos_municipio=11,
+    )
+    assert props["mortos"] == 51
+    assert props["descricao"]
+    assert props["medidas"]
+    assert "g1.globo.com" in (props["link_noticia"] or "")
+    assert props["detalhe_completo"] is True
 
 
 def test_events_for_recife_uses_curated():

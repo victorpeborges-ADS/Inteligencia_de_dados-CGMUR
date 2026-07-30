@@ -20,7 +20,7 @@ export default function KpiCard({
   value,
   description,
   icon: Icon,
-  iconClassName = 'text-indigo-400',
+  iconClassName = 'text-teal-400',
   tier = 'secondary',
   quality,
   badge,
@@ -31,9 +31,9 @@ export default function KpiCard({
 
   return (
     <div
-      className={`min-w-0 overflow-hidden rounded-xl border backdrop-blur-md transition-all duration-300 ${
+      className={`min-w-0 overflow-hidden rounded-lg border transition-colors duration-200 ${
         isPrimary
-          ? 'border-indigo-500/35 bg-indigo-950/20 p-4 shadow-lg shadow-indigo-950/20'
+          ? 'border-teal-500/30 bg-teal-950/15 p-3.5'
           : 'border-border bg-card/60 p-3 hover:border-zinc-700'
       } ${className}`}
     >

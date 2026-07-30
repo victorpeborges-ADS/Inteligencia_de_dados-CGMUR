@@ -472,6 +472,7 @@ class EstabelecimentoSaude(Base):
     cnes_codigo = Column(String(20), nullable=True)
     nome = Column(String(255), nullable=False)
     tipo = Column(String(40), nullable=False)
+    dependencia = Column(String(20), nullable=True)  # federal|estadual|municipal|privada
     leitos_sus = Column(Integer, default=0)
     esf = Column(Boolean, default=False)
     geom = Column(Geometry(geometry_type="POINT", srid=4326, spatial_index=True))
@@ -695,9 +696,43 @@ class EventoAlagamentoObservado(Base):
     fonte = Column(String(80), nullable=False)  # s2id_curado | defesa_civil | campo | ana_cota
     data_quality = Column(String(30), nullable=False, default="oficial", index=True)
     referencia = Column(String(255), nullable=True)
+    # 21d.9 — fenômeno hidrológico: pluvial (chuva local) | fluvial (cheia de rio) | misto
+    fenomeno = Column(String(20), nullable=True, index=True)
     geom = Column(Geometry(geometry_type="GEOMETRY", srid=4326, spatial_index=True))
     criado_em = Column(DateTime, default=utc_now, nullable=False)
     payload = Column(JSON, default=dict)
+
+
+class SerieFluviometricaObservada(Base):
+    """Cota/vazão de rio persistida no PostGIS (Fase 21c.3/21d.9) — ANA HidroWeb (CSV ou API)."""
+
+    __tablename__ = "serie_fluviometrica_observada"
+    __table_args__ = (
+        Index(
+            "ux_serie_fluvio_fonte_estacao_ts_muni",
+            "fonte",
+            "estacao_id",
+            "observed_at",
+            "codigo_ibge",
+            unique=True,
+        ),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    codigo_ibge = Column(String(7), nullable=False, index=True)
+    municipio_id = Column(Integer, ForeignKey("municipios.id", ondelete="SET NULL"), nullable=True)
+    estacao_id = Column(String(64), nullable=False, index=True)
+    estacao_nome = Column(String(120), nullable=True)
+    lat = Column(Numeric(10, 6), nullable=True)
+    lng = Column(Numeric(10, 6), nullable=True)
+    observed_at = Column(DateTime, nullable=False, index=True)
+    cota_m = Column(Numeric(10, 3), nullable=True)
+    vazao_m3s = Column(Numeric(12, 3), nullable=True)
+    granularidade = Column(String(20), nullable=False, default="horaria")  # horaria | diaria
+    data_quality = Column(String(30), nullable=False, default="oficial", index=True)
+    fonte = Column(String(40), nullable=False, default="ana", index=True)  # ana
+    ingestido_em = Column(DateTime, default=utc_now, nullable=False)
+    raw_payload = Column(JSON, nullable=True)
 
 
 class MunicipioGeoportalPublicacao(Base):

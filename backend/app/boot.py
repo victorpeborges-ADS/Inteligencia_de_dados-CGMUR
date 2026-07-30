@@ -40,6 +40,8 @@ MIGRATIONS = (
     "023_contingency_operacional.sql",
     "024_previsao_verificacao_archive.sql",
     "025_pluvio_eventos_observados.sql",
+    "026_estabelecimento_dependencia.sql",
+    "027_serie_fluviometrica.sql",
 )
 
 

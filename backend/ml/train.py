@@ -13,6 +13,7 @@ from sklearn.model_selection import TimeSeriesSplit
 from sqlalchemy.orm import Session
 
 from ml.constants import (
+    BAIRRO_MODEL_VERSION,
     FEATURE_COLUMNS,
     FEATURE_DEFAULTS,
     HOLDOUT_TRAIN_END_YEAR,
@@ -20,9 +21,15 @@ from ml.constants import (
     ML_TARGET_IBGE_CODES,
     MODEL_VERSION,
 )
-from ml.features import build_labeled_dataset, feature_matrix
+from ml.features import build_labeled_dataset, build_labeled_dataset_bairro, feature_matrix
 from ml.model_factory import attach_permutation_importances, fit_classifier, make_classifier
-from ml.paths import ensure_dirs, model_meta_path, model_path
+from ml.paths import (
+    bairro_model_meta_path,
+    bairro_model_path,
+    ensure_dirs,
+    model_meta_path,
+    model_path,
+)
 from ml.validation import evaluate_protocol, evaluate_spatial_hit_rate, write_model_card
 
 logger = logging.getLogger(__name__)
@@ -213,6 +220,121 @@ def train_municipality(db: Session, codigo_ibge: str, force: bool = False) -> di
         auc,
         validation_public.get("brier_model"),
         threshold,
+        meta["training_seconds"],
+    )
+    # 21f.2 — treina também o modelo por bairro (não bloqueia o municipal)
+    try:
+        meta["bairro_model"] = train_municipality_bairro(db, codigo_ibge, force=force)
+    except Exception as exc:
+        logger.warning("Treino bairro %s falhou: %s", codigo_ibge, exc)
+        meta["bairro_model"] = {"model_kind": "error", "note": str(exc)}
+    return meta
+
+
+def train_municipality_bairro(db: Session, codigo_ibge: str, force: bool = False) -> dict[str, Any]:
+    """Treina classificador grain=bairro (Fase 21f.2) com o mesmo protocolo 21e."""
+    ensure_dirs()
+    start = time.time()
+    df = build_labeled_dataset_bairro(db, codigo_ibge, force=force)
+    if df.empty or "label" not in df.columns:
+        return {
+            "codigo_ibge": codigo_ibge,
+            "model_kind": "insufficient_labels_bairro",
+            "grain": "bairro",
+            "n_positive": 0,
+            "note": "Dataset bairro vazio.",
+        }
+
+    x, y = feature_matrix(df)
+    n_pos = int(y.sum())
+    if n_pos == 0:
+        return {
+            "codigo_ibge": codigo_ibge,
+            "model_kind": "insufficient_labels_bairro",
+            "grain": "bairro",
+            "n_positive": 0,
+            "note": "Sem rótulos positivos espacializados por bairro.",
+        }
+
+    validation = evaluate_protocol(df, rain_threshold_mm=50.0, calibrate=True)
+    validation_public = {
+        k: v for k, v in validation.items()
+        if k not in {"model", "train_df", "test_df"}
+    }
+
+    if validation.get("ok") and validation.get("model") is not None:
+        model = validation["model"]
+        train_df = validation["train_df"]
+        x_fit, y_fit = feature_matrix(train_df)
+        algo_name = validation.get("algorithm") or ML_ALGORITHM
+        if not validation.get("calibrated"):
+            model, algo_name = make_classifier(algo_name)
+            fit_classifier(model, x_fit, y_fit, algorithm=algo_name)
+            attach_permutation_importances(model, x_fit, y_fit)
+        fit_n_pos = int(y_fit.sum())
+        auc = validation.get("auc_roc_holdout")
+        if validation.get("discard_model"):
+            model_kind = "full_bairro_below_baseline"
+            note = "Hold-out OK, Brier abaixo do baseline — ranking usa fallback blend."
+        else:
+            model_kind = "full_bairro"
+            note = (
+                f"Treino bairro hold-out ≤{HOLDOUT_TRAIN_END_YEAR}; "
+                f"algoritmo={algo_name}."
+            )
+    else:
+        auc = _temporal_cv_auc(x, y)
+        model, algo_name = make_classifier(ML_ALGORITHM)
+        try:
+            fit_classifier(model, x, y, algorithm=algo_name)
+        except Exception:
+            model, algo_name = make_classifier("random_forest")
+            fit_classifier(model, x, y, algorithm=algo_name)
+        attach_permutation_importances(model, x, y)
+        fit_n_pos = n_pos
+        model_kind = "full_bairro_no_holdout"
+        note = f"{validation.get('reason') or 'holdout_fallback'} · algoritmo={algo_name}"
+
+    terrain = _terrain_from_df(df)
+    threshold = _find_threshold_mm(model, terrain)
+
+    meta = {
+        "codigo_ibge": codigo_ibge,
+        "model_version": BAIRRO_MODEL_VERSION,
+        "model_kind": model_kind,
+        "grain": "bairro",
+        "algorithm": validation.get("algorithm") or locals().get("algo_name") or ML_ALGORITHM,
+        "auc_roc_cv": auc,
+        "n_samples": len(df),
+        "n_positive": fit_n_pos,
+        "n_bairros": int(df["bairro_id"].nunique()) if "bairro_id" in df.columns else None,
+        "threshold_mm_24h": threshold,
+        "terrain": terrain,
+        "feature_columns": FEATURE_COLUMNS,
+        "label_policy": "official_spatial_or_susc_quartile",
+        "validation": validation_public,
+        "note": note,
+        "trained_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "training_seconds": round(time.time() - start, 2),
+    }
+
+    with bairro_model_path(codigo_ibge).open("wb") as fh:
+        pickle.dump({"model": model, "meta": meta}, fh)
+    bairro_model_meta_path(codigo_ibge).write_text(
+        json.dumps(meta, ensure_ascii=False, indent=2, default=str),
+        encoding="utf-8",
+    )
+    card_path = bairro_model_meta_path(codigo_ibge).with_name(
+        f"flood_model_{codigo_ibge}_bairro_card.md"
+    )
+    write_model_card(card_path, codigo_ibge=codigo_ibge, meta=meta, validation=validation_public)
+
+    logger.info(
+        "Modelo bairro %s — kind=%s AUC=%s n_pos=%s (%.1fs)",
+        codigo_ibge,
+        model_kind,
+        auc,
+        fit_n_pos,
         meta["training_seconds"],
     )
     return meta

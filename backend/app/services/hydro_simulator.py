@@ -31,7 +31,7 @@ from app.services.dem_processor import (
 # SRTM GL1 — resolução horizontal ~30 m; RMSE vertical típico ±16 m (NASA/USGS)
 SRTM_HORIZONTAL_M = 30.0
 SRTM_VERTICAL_RMSE_M = 16.0
-HYDRO_MODEL_VERSION = "2.7"
+HYDRO_MODEL_VERSION = "2.8"
 
 # 17g.1b — fatores do hidrograma triangular (subida → pico → recessão)
 HYDROGRAPH_FACTORS = (
@@ -50,7 +50,36 @@ HYDROGRAPH_FACTORS = (
     0.12,
 )
 HYDROGRAPH_DURATION_H = 6.0
+HYDROGRAPH_DURATION_H_MAX = 120.0
 MAX_TIMELINE_POLYGONS_PER_BAND = 12
+# Duração de referência (h) para a calibração original do modelo (evento curto/intenso).
+# Mantém retrocompatibilidade: duracao_h == REFERENCE_DURATION_H → intensity_factor == 1.0.
+REFERENCE_DURATION_H = 1.0
+INTENSITY_FACTOR_MIN = 0.35
+INTENSITY_FACTOR_MAX = 1.0
+LANDSLIDE_INTENSITY_FACTOR_MIN = 0.55
+LANDSLIDE_INTENSITY_FACTOR_MAX = 1.25
+
+
+def _intensity_factor(duracao_h: float, *, floor: float = INTENSITY_FACTOR_MIN, ceil: float = INTENSITY_FACTOR_MAX) -> float:
+    """17g.3 — mesma lâmina (mm) espalhada em janela maior tem intensidade (mm/h) menor.
+
+    ``ratio`` é a intensidade relativa à referência de 1h (na qual o modelo foi calibrado
+    originalmente): ratio = REFERENCE_DURATION_H / duracao_h. Em duracao_h=1h, factor=1.0
+    (idêntico ao comportamento anterior à duração ajustável). Em janelas maiores (24h–7d),
+    o fator cai suavemente — mais tempo para infiltração/escoamento reduz o pico da mancha,
+    mesmo com o mesmo volume total (mm) precipitado.
+    """
+    dur = max(0.25, float(duracao_h or REFERENCE_DURATION_H))
+    ratio = REFERENCE_DURATION_H / dur
+    factor = ratio ** 0.3 if ratio > 0 else floor
+    return float(np.clip(factor, floor, ceil))
+
+
+def _hydrograph_duration_for(duracao_h: float) -> float:
+    """Janela de animação do hidrograma escala com a duração do evento de chuva."""
+    dur = max(0.25, float(duracao_h or REFERENCE_DURATION_H))
+    return float(np.clip(dur * 1.15, HYDROGRAPH_DURATION_H, HYDROGRAPH_DURATION_H_MAX))
 
 _FASE_NARRATIVA = {
     "subida": "A mancha sobe — áreas mais baixas começam a alagar.",
@@ -724,14 +753,25 @@ def landslide_features_from_slope(
     muni_id: int,
     *,
     chuva_antecedente_mm: float = 0.0,
+    duracao_h: float = REFERENCE_DURATION_H,
 ) -> list[dict[str, Any]]:
-    """Deslizamento por declividade × gatilho de chuva (evento + antecedente) — 17g.1e."""
+    """Deslizamento por declividade × gatilho de chuva (evento + antecedente) — 17g.1e.
+
+    Chuva concentrada em poucas horas eleva a poropressão nas encostas muito mais rápido
+    que o mesmo volume distribuído ao longo de dias (padrão bem documentado em limiares
+    intensidade-duração de deslizamento, ex. Caine 1980) — por isso o gatilho aplica um
+    fator de intensidade sobre a chuva do evento (a antecedente já reflete a saturação
+    prévia do solo e não é reamplificada).
+    """
     lat_c = (muni_geom.bounds[1] + muni_geom.bounds[3]) / 2.0
     slope_deg = _compute_slope_degrees(elev := np.nan_to_num(elevation, nan=np.nanmean(elevation)), lat_c, res_x, res_y)
 
     ant = max(0.0, float(chuva_antecedente_mm or 0.0))
-    # Chuva efetiva: evento + metade da antecedente (saturação do solo)
-    chuva_efetiva = float(precip_mm) + 0.5 * ant
+    intensity_amp = _intensity_factor(
+        duracao_h, floor=LANDSLIDE_INTENSITY_FACTOR_MIN, ceil=LANDSLIDE_INTENSITY_FACTOR_MAX,
+    )
+    # Chuva efetiva: evento (ponderado pela intensidade) + metade da antecedente (solo já saturado)
+    chuva_efetiva = float(precip_mm) * intensity_amp + 0.5 * ant
     slope_threshold = max(10.0, SLOPE_CRITICAL_DEG - (chuva_efetiva / 12.0))
     slope_norm = np.clip(slope_deg / 45.0, 0.0, 1.0)
     rain_factor = float(np.clip(chuva_efetiva / 150.0, 0.0, 1.5))
@@ -789,7 +829,8 @@ def landslide_features_from_slope(
                 "landslide_method": "slope_rainfall_trigger",
                 "description": (
                     f"Encosta ≥ {slope_threshold:.0f}° com chuva efetiva {chuva_efetiva:.0f} mm "
-                    f"(evento {precip_mm:.0f} + antecedente {ant:.0f}); FS≈{zone_fs:.2f}."
+                    f"(evento {precip_mm:.0f} mm ×{intensity_amp:.2f} intensidade + antecedente {ant:.0f}); "
+                    f"FS≈{zone_fs:.2f}."
                 ),
             },
         })
@@ -877,6 +918,7 @@ def flood_bands_geojson(
     drain_removed_mm: float = 0.0,
     rede_saturada: bool = False,
     calib: dict[str, Any] | None = None,
+    duracao_h: float = REFERENCE_DURATION_H,
 ) -> tuple[dict[str, Any], np.ndarray]:
     """Estima manchas de alagamento por profundidade com DEM, acúmulo D8 e impermeabilização."""
     muni_mask = _muni_raster_mask(elevation, muni_geom, west, south, res_x, res_y)
@@ -911,7 +953,9 @@ def flood_bands_geojson(
         urban_w = 0.55 + 0.45 * np.clip(impermeability_raster, 0.0, 1.0)
         effective_rain_m = np.maximum(0.0, effective_rain_m - drain_m * urban_w)
 
-    flood_rise_m = effective_rain_m * (5.5 + min(precip_mm / 120.0, 1.5)) * rise_scale
+    # 17g.3 — mesma lâmina (mm) em janela mais curta = intensidade (mm/h) maior = pico mais abrupto.
+    intensity_factor = _intensity_factor(duracao_h)
+    flood_rise_m = effective_rain_m * (5.5 + min(precip_mm / 120.0, 1.5)) * rise_scale * intensity_factor
 
     muni_elev = elev[muni_mask]
     # 17g.1c — offset de nível do mar / storm surge eleva a cota base
@@ -920,13 +964,14 @@ def flood_bands_geojson(
     mean_rise = float(np.mean(flood_rise_m[muni_mask]))
     acc_norm = _normalize_masked(accumulation, muni_mask)
 
-    # Superfície d'água modulada por acúmulo D8 (vales e linhas de drenagem)
+    # Superfície d'água modulada por acúmulo D8 (vales e linhas de drenagem).
+    # Nota 17g.4: acúmulo (acc_norm) já eleva a superfície aqui — o TWI abaixo combina
+    # acúmulo × declividade num único índice hidrológico consolidado. Evitar reaplicar
+    # o mesmo sinal de acúmulo via um segundo multiplicador independente, que compunha
+    # com o TWI e concentrava quase toda a mancha na faixa crítica (>80 cm).
     water_surface = base_level + mean_rise * (1.0 + 0.75 * acc_norm)
     depth = np.maximum(0.0, water_surface - elev)
     depth = depth * (0.65 + 0.55 * effective_rain_m / max(float(np.mean(effective_rain_m[muni_mask])), 1e-6))
-    depth = np.where(muni_mask, depth, 0.0)
-
-    depth *= 1.0 + 1.6 * np.log1p(acc_norm * 6.0) / np.log(7.0)
     depth = np.where(muni_mask, depth, 0.0)
 
     # Extravasamento por saturação da rede — reforça vales/acúmulo
@@ -938,10 +983,11 @@ def flood_bands_geojson(
     depth *= slope_drain
     depth = np.where(muni_mask, depth, 0.0)
 
-    # Índice de umidade topográfica (TWI) — reforça baixadas e planícies
+    # Índice de umidade topográfica (TWI) — único reforço de baixadas/planícies
+    # (combina acúmulo × declividade; substitui o antigo multiplicador redundante de acc_norm).
     twi = np.log1p(accumulation) - np.log1p(np.tan(np.radians(np.clip(slope_deg, 0.1, 60.0))))
     twi_norm = _normalize_masked(twi, muni_mask, percentile=96.0)
-    depth *= 1.0 + 0.65 * twi_norm
+    depth *= 0.7 + 0.6 * twi_norm
     depth = np.where(muni_mask, depth, 0.0)
 
     if iri_raster is not None:
@@ -1042,16 +1088,20 @@ def build_flood_timeline(
     res_y: float,
     *,
     precip_mm: float,
+    duracao_h: float = REFERENCE_DURATION_H,
 ) -> dict[str, Any]:
     """17g.1b — Evolução da mancha por hidrograma triangular (escala do depth de pico).
 
     Não é modelo hidrodinâmico unsteady — comunica subida/escoamento a partir
-    do mesmo run DEM, com fatores fixos ao longo de HYDROGRAPH_DURATION_H.
+    do mesmo run DEM, com fatores fixos ao longo da janela do hidrograma. A janela
+    escala com a duração do evento simulado (17g.3): chuva de 1h tem hidrograma curto
+    (~6h), enquanto eventos de vários dias mantêm a mancha por uma janela mais longa.
     """
     factors = list(HYDROGRAPH_FACTORS)
     n = len(factors)
     peak_index = int(factors.index(max(factors)))
-    dt = HYDROGRAPH_DURATION_H / max(n - 1, 1)
+    hydrograph_duration_h = _hydrograph_duration_for(duracao_h)
+    dt = hydrograph_duration_h / max(n - 1, 1)
     peak_max = float(np.max(depth_peak[muni_mask])) if muni_mask.any() else 0.0
 
     steps: list[dict[str, Any]] = []
@@ -1099,7 +1149,7 @@ def build_flood_timeline(
 
     return {
         "n_steps": n,
-        "duration_h": HYDROGRAPH_DURATION_H,
+        "duration_h": round(hydrograph_duration_h, 1),
         "peak_index": peak_index,
         "peak_max_depth_m": round(peak_max, 2),
         "method": "scaled_depth_hydrograph",
@@ -1135,6 +1185,7 @@ def enrich_rainfall_simulation(
     drain_removed_mm: float = 0.0,
     rede_saturada: bool = False,
     drenagem_meta: dict[str, Any] | None = None,
+    duracao_h: float = REFERENCE_DURATION_H,
 ) -> dict[str, Any]:
     """
     Retorna camadas auxiliares: manchas por profundidade (moduladas por IRI),
@@ -1196,8 +1247,21 @@ def enrich_rainfall_simulation(
             "iri_scale": 1.0,
             "source": "default",
         }
-    # 17g.2d — hidro-condicionamento antes do D8
-    elev, fill_meta = _fill_sinks(elev, muni_mask)
+    # 17g.2d — hidro-condicionamento antes do D8; 21b.5 — DEM já condicionado na fonte
+    # (MERIT-Hydro/ANADEM) dispensa o Priority-Flood interno.
+    if meta.get("hydro_dem"):
+        fill_meta = {
+            "dem_hydro_conditioned": True,
+            "cells_filled": 0,
+            "fill_volume_cell_m": 0.0,
+            "method": str(meta.get("dem_source") or "hydro_dem_source"),
+            "nota": (
+                f"DEM {meta.get('dem_source', 'hidrográfico')} já hidrologicamente "
+                "condicionado na fonte — Priority-Flood interno dispensado."
+            ),
+        }
+    else:
+        elev, fill_meta = _fill_sinks(elev, muni_mask)
     iri_raster = _iri_raster_for_municipio(db, muni.id, muni_mask, west, south, res_x, res_y)
     impermeability = _impermeability_raster_for_municipio(
         db, muni.id, muni_mask, west, south, res_x, res_y,
@@ -1227,6 +1291,7 @@ def enrich_rainfall_simulation(
         drain_removed_mm=float(drain_removed_mm or 0.0),
         rede_saturada=bool(rede_saturada),
         calib=hydro_calib,
+        duracao_h=float(duracao_h or REFERENCE_DURATION_H),
     )
     # 17g.1b — timeline (hidrograma) a partir do depth de pico
     flood_timeline: dict[str, Any] | None = None
@@ -1241,6 +1306,7 @@ def enrich_rainfall_simulation(
                 res_x,
                 res_y,
                 precip_mm=precip_mm,
+                duracao_h=float(duracao_h or REFERENCE_DURATION_H),
             )
     except Exception as exc:
         logger.warning("Timeline de inundação falhou: %s", exc)
@@ -1266,6 +1332,7 @@ def enrich_rainfall_simulation(
     landslide_features = landslide_features_from_slope(
         elev, muni_geom, muni_mask, precip_mm, west, south, res_x, res_y, db, muni.id,
         chuva_antecedente_mm=float(chuva_antecedente_mm or 0.0),
+        duracao_h=float(duracao_h or REFERENCE_DURATION_H),
     )
     all_flood_features = list(flood_fc.get("features", []))
     for ls in landslide_features:
@@ -1331,6 +1398,12 @@ def enrich_rainfall_simulation(
             "declividade_media_graus": stats.get("declividade_media_graus"),
             "pct_declividade_critica": round(crit_slope_pct, 2),
             "precipitation_mm": precip_mm,
+            "duracao_h": round(float(duracao_h or REFERENCE_DURATION_H), 2),
+            "intensidade_mm_h": round(float(precip_mm) / max(0.25, float(duracao_h or REFERENCE_DURATION_H)), 2),
+            "intensity_factor": round(_intensity_factor(duracao_h), 3),
+            "hydrograph_duration_h": (
+                flood_timeline.get("duration_h") if flood_timeline else round(_hydrograph_duration_for(duracao_h), 1)
+            ),
             "max_depth_m": round(float(np.max(depth_raster[muni_mask])), 2) if muni_mask.any() else 0,
             "mean_impermeability": round(float(np.mean(impermeability[muni_mask])), 3) if muni_mask.any() else None,
             "impermeability_offset": float(impermeability_offset) if impermeability_offset else 0.0,

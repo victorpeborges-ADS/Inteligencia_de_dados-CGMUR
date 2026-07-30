@@ -56,7 +56,7 @@ def test_extreme_rainfall_recife_api(client: TestClient):
     meta = body.get("simulation_meta") or {}
     assert meta.get("dem_available") is True
     assert meta.get("method") == "dem_pluvial_d8_twi"
-    assert meta.get("model_version") == "2.7"
+    assert meta.get("model_version") == "2.8"
     assert meta.get("dem_resolution_m") is not None
     assert meta.get("contour_interval_m") is not None
     assert meta.get("flow_accumulation_applied") is True

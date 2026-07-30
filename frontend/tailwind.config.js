@@ -14,17 +14,18 @@ module.exports = {
         border: "var(--sinidu-border)",
         foreground: "var(--sinidu-fg)",
         accent: {
-          emerald: "#10b981",  // vegetation/cooling
-          sky: "#0ea5e9",      // flooding/water
-          amber: "#f59e0b",    // warnings
-          rose: "#f43f5e",     // landslides/hazards
-          indigo: "#6366f1"    // urban network/AI
-        }
+          emerald: "#10b981",
+          sky: "#0ea5e9",
+          amber: "#f59e0b",
+          rose: "#f43f5e",
+          teal: "#0d9488",
+          indigo: "#6366f1",
+        },
       },
       fontFamily: {
-        sans: ["Inter", "sans-serif"],
+        sans: ['"Source Sans 3"', "Segoe UI", "system-ui", "sans-serif"],
       },
     },
   },
   plugins: [],
-}
+};

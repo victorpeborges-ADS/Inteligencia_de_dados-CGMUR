@@ -22,7 +22,10 @@ import httpx
 from sqlalchemy.orm import Session
 
 from app.models import Municipio
-from app.services.pluvio_series_service import upsert_pluvio_rows
+from app.services.pluvio_series_service import (
+    materialize_cemaden_daily_from_snapshots,
+    upsert_pluvio_rows,
+)
 from app.timeutil import utc_now
 
 logger = logging.getLogger(__name__)
@@ -285,17 +288,26 @@ def collect_cemaden_pluvio_municipality(
     if used:
         sources.append(f"csv:{len(used)}")
 
+    daily_n = 0
+    try:
+        daily_n = materialize_cemaden_daily_from_snapshots(db, code)
+        if daily_n:
+            sources.append(f"diario_materializado:{daily_n}")
+    except Exception as exc:
+        logger.warning("Materialização diária CEMADEN %s: %s", code, exc)
+
     return {
         "codigo_ibge": code,
-        "skipped": total == 0,
+        "skipped": total == 0 and daily_n == 0,
         "records": total,
+        "daily_materialized": daily_n,
         "arquivos": used,
         "sources": sources,
-        "data_quality": "oficial" if total else None,
+        "data_quality": "oficial" if (total or daily_n) else None,
         "fonte": "cemaden",
         "hint": (
             None
-            if total
+            if (total or daily_n)
             else (
                 "Sem dados. API getJson2 falhou e não há CSV em "
                 f"{directory or DEFAULT_DIR}."

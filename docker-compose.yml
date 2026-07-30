@@ -58,6 +58,13 @@ services:
       - TILES3D_DIR=/data/3dtiles
       - CITYMODEL_DIR=/data/citymodels
       - MAPBIOMAS_STATS_DIR=/data/mapbiomas
+      - INMET_BDMEP_DIR=/data/inmet_bdmep
+      - MERGE_CPTEC_DIR=/data/merge_cptec
+      - CEMADEN_PLUVIO_DIR=/data/cemaden_pluvio
+      - ANA_FLUVIO_DIR=/data/ana_hidroweb
+      # 20h.4 / 20h.5 — overrides oficiais (também cobertos pelo bind ./backend:/app)
+      - IDF_DIR=/app/data/idf
+      - OFFICIAL_FLOOD_DIR=/app/data/manchas_oficiais
       - REFINE_PILOT_DEM=true
       - BOOT_PRIORITY_IBGE_CODES=2611606,2800308
       - SEED_DEMO_MUNICIPALITIES=false
@@ -116,6 +123,10 @@ services:
       - ./data/citymodels:/data/citymodels
       - ./mapbiomas:/data/mapbiomas
       - ./scripts/s2id_nacional/downloads:/data/s2id_nacional/downloads
+      - ./scripts/inmet_bdmep/downloads:/data/inmet_bdmep
+      - ./scripts/merge_cptec/downloads:/data/merge_cptec
+      - ./scripts/cemaden_pluvio/downloads:/data/cemaden_pluvio
+      - ./scripts/ana_hidroweb/downloads:/data/ana_hidroweb
       - ibge_mesh_cache:/data/ibge
       - backups_data:/data/backups
     healthcheck:

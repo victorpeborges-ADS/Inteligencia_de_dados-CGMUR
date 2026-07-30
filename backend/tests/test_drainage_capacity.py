@@ -31,4 +31,4 @@ def test_density_proxy_tiers():
 def test_hydro_version_bumped():
     from app.services.hydro_simulator import HYDRO_MODEL_VERSION
 
-    assert HYDRO_MODEL_VERSION == "2.7"
+    assert HYDRO_MODEL_VERSION == "2.8"

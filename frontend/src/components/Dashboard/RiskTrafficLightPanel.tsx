@@ -546,11 +546,40 @@ export default function RiskTrafficLightPanel({
               CAPAG {panel.perfil.capag.nota ?? '—'}
             </span>
             <span className="rounded border border-zinc-700 bg-zinc-900/60 px-2 py-1 text-zinc-300">
-              Plano Diretor {panel.perfil.plano_diretor.status}
-            </span>
-            <span className="rounded border border-zinc-700 bg-zinc-900/60 px-2 py-1 text-zinc-300">
               Defesa Civil {panel.perfil.defesa_civil.sinal}
             </span>
+          </div>
+          <div
+            className={`mt-2 rounded-md border px-2.5 py-2 ${
+              panel.perfil.plano_diretor.considerado
+                ? 'border-teal-500/35 bg-teal-950/25'
+                : 'border-amber-500/30 bg-amber-950/20'
+            }`}
+          >
+            <p className="text-[9px] font-extrabold uppercase tracking-wider text-teal-300/90">
+              Plano Diretor municipal
+              {panel.perfil.plano_diretor.considerado ? ' · considerado' : ' · lacuna'}
+            </p>
+            {panel.perfil.plano_diretor.titulo && (
+              <p className="mt-0.5 text-[11px] font-semibold text-zinc-100">
+                {panel.perfil.plano_diretor.url ? (
+                  <a
+                    href={panel.perfil.plano_diretor.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="underline decoration-teal-500/50 underline-offset-2 hover:text-teal-200"
+                  >
+                    {panel.perfil.plano_diretor.titulo}
+                  </a>
+                ) : (
+                  panel.perfil.plano_diretor.titulo
+                )}
+              </p>
+            )}
+            <p className="mt-1 text-[10px] leading-snug text-zinc-300">
+              {panel.perfil.plano_diretor.mensagem ??
+                'Priorização e medidas observam a legislação urbanística do município.'}
+            </p>
           </div>
           {panel.perfil.restricoes.length > 0 && (
             <ul className="mt-2 list-inside list-disc text-[10px] text-zinc-400">
@@ -566,7 +595,7 @@ export default function RiskTrafficLightPanel({
         <div className="mt-3 border-t border-zinc-800/80 pt-3">
           <p className="mb-1.5 flex items-center gap-1 text-[10px] font-extrabold uppercase tracking-wider text-zinc-400">
             <Wrench size={11} />
-            Agir — medidas com fonte de recurso (porte + CAPAG)
+            Agir — medidas com fonte de recurso (porte + CAPAG + Plano Diretor)
           </p>
           <div className="flex flex-col gap-1.5">
             {panel.medidas_recomendadas!.map((m: RiskPanelMedida) => (

@@ -17,8 +17,14 @@ from ml.constants import (
     MUNICIPALITY_SLUGS,
     SLUG_BY_IBGE,
 )
-from ml.model_policy import SYNTHETIC_MODEL_KIND, is_production_model, public_auc
-from ml.paths import model_path, terrain_parquet
+from ml.model_policy import (
+    SYNTHETIC_MODEL_KIND,
+    bairro_production_model_ready,
+    is_bairro_production_model,
+    is_production_model,
+    public_auc,
+)
+from ml.paths import bairro_model_path, model_path, terrain_parquet
 
 logger = logging.getLogger(__name__)
 
@@ -69,6 +75,7 @@ def _resolve_precip_7d(precip_72h: float, precip_7d: float | None) -> float:
 class FloodRiskPredictor:
     def __init__(self):
         self._cache: dict[str, dict[str, Any]] = {}
+        self._bairro_cache: dict[str, dict[str, Any]] = {}
 
     def _load(self, codigo_ibge: str) -> dict[str, Any]:
         if codigo_ibge in self._cache:
@@ -84,6 +91,31 @@ class FloodRiskPredictor:
             payload = pickle.load(fh)
         self._cache[codigo_ibge] = payload
         return payload
+
+    def _load_bairro_model(self, codigo_ibge: str) -> dict[str, Any] | None:
+        """Carrega artefato grain=bairro se pronto para produção (21f.2)."""
+        if codigo_ibge in self._bairro_cache:
+            return self._bairro_cache[codigo_ibge]
+        if not bairro_production_model_ready(codigo_ibge):
+            return None
+        path = bairro_model_path(codigo_ibge)
+        if not path.exists():
+            return None
+        try:
+            with path.open("rb") as fh:
+                payload = pickle.load(fh)
+            meta = payload.get("meta") or {}
+            if not is_bairro_production_model(meta):
+                return None
+            self._bairro_cache[codigo_ibge] = payload
+            return payload
+        except Exception as exc:
+            logger.info("Falha ao carregar modelo bairro %s: %s", codigo_ibge, exc)
+            return None
+
+    def clear_cache(self) -> None:
+        self._cache.clear()
+        self._bairro_cache.clear()
 
     def predict(
         self,
@@ -157,6 +189,11 @@ class FloodRiskPredictor:
         except Exception as exc:
             logger.debug("terrain municipal cache: %s", exc)
 
+        # 21d.8 — proxies físicos SCS + rede (alinhados à simulação)
+        from ml.physics_proxy import PHYSICS_PROXY_NOTE, apply_physics_proxies_to_row
+
+        row.update(apply_physics_proxies_to_row(row))
+
         vec = np.array([[float(row.get(c, FEATURE_DEFAULTS.get(c, 0.0))) for c in cols]])
 
         from ml.horizon import build_horizon_forecasts, predict_proba_with_uncertainty
@@ -194,6 +231,15 @@ class FloodRiskPredictor:
 
         bairros = self._critical_neighborhoods(db, codigo_ibge, probability, row)
         geojson = self._flood_patch_geojson(db, codigo_ibge, bairros, probability)
+        ranking_mode = (
+            "modelo_bairro"
+            if bairros and all(b.get("score_source") == "modelo_bairro" for b in bairros)
+            else (
+                "modelo_bairro_parcial"
+                if any(b.get("score_source") == "modelo_bairro" for b in bairros)
+                else (bairros[0].get("score_source") if bairros else "blend_susc_iri")
+            )
+        )
 
         from app.services.flood_impact_service import build_flood_impact
 
@@ -235,6 +281,7 @@ class FloodRiskPredictor:
             "horizons": horizons,
             "uncertainty": uncertainty,
             "critical_neighborhoods": bairros,
+            "neighborhood_ranking_mode": ranking_mode,
             "flood_geojson": geojson,
             "model_version": meta.get("model_version", MODEL_VERSION),
             "model_kind": kind,
@@ -259,8 +306,9 @@ class FloodRiskPredictor:
                     "calibrada. O Monitor operacional usa curva heurística de chuva até existir "
                     "modelo full treinado com rótulos observados (Fase 21)."
                     if synthetic
-                    else "Modelo estatístico com lastro observacional (model_kind=full)."
+                    else "Modelo estatístico com lastro observacional (model_kind=full). "
                 )
+                + " " + PHYSICS_PROXY_NOTE
             ),
         }
 
@@ -273,16 +321,17 @@ class FloodRiskPredictor:
     ) -> list[dict[str, Any]]:
         from app.models import Bairro, Municipio
         from ml.baseline import TERRAIN_PRESETS
+        from ml.features import _bairro_terrain_row, _load_municipal_terrain
 
         muni = db.query(Municipio).filter(Municipio.codigo_ibge == codigo_ibge).first()
         if not muni:
             return []
 
         terrain_path = terrain_parquet(codigo_ibge)
-        if terrain_path.exists():
-            terrain_df = pd.read_parquet(terrain_path)
-        else:
-            # Evita OpenTopography na inferência — usa IRI + preset municipal
+        bairro_payload = self._load_bairro_model(codigo_ibge)
+
+        # --- Fallback sem parquet de terreno ---
+        if not terrain_path.exists():
             floods = AnalyticalEngine.calculate_flood_risk(db, muni.id)
             preset = TERRAIN_PRESETS.get(codigo_ibge, TERRAIN_PRESETS["2611606"])
             rows = []
@@ -297,16 +346,60 @@ class FloodRiskPredictor:
                     "risk_probability": round(bairro_prob, 3),
                     "iri": round(iri, 3),
                     "impermeabilizacao_pct": preset["impermeabilizacao_pct"],
+                    "score_source": "blend_iri",
                 })
             rows.sort(key=lambda item: item["risk_probability"], reverse=True)
             return rows[:8]
 
+        terrain_df = pd.read_parquet(terrain_path)
         floods = {item["id"]: item for item in AnalyticalEngine.calculate_flood_risk(db, muni.id)}
+        municipal_terrain = _load_municipal_terrain(codigo_ibge)
+
+        # --- 21f.2: predizer com modelo por bairro ---
+        if bairro_payload is not None:
+            model = bairro_payload["model"]
+            meta = bairro_payload.get("meta") or {}
+            cols = list(meta.get("feature_columns") or FEATURE_COLUMNS)
+            rows = []
+            for _, b in terrain_df.iterrows():
+                flood = floods.get(int(b["bairro_id"]), {})
+                iri = float(flood.get("indice_risco_inundacao", 0.5))
+                susc = float(b["suscetibilidade_local"]) if "suscetibilidade_local" in terrain_df.columns else iri
+                local = _bairro_terrain_row(b, municipal_terrain)
+                row = {**FEATURE_DEFAULTS, **feature_row, **local}
+                from ml.physics_proxy import apply_physics_proxies_to_row
+
+                row.update(apply_physics_proxies_to_row(row))
+                vec = np.array([[float(row.get(c, FEATURE_DEFAULTS.get(c, 0.0))) for c in cols]])
+                try:
+                    proba = model.predict_proba(vec)[0]
+                    bairro_prob = float(proba[1]) if len(proba) > 1 else float(proba[0])
+                except Exception as exc:
+                    logger.debug("predict bairro %s: %s — blend", b.get("bairro_nome"), exc)
+                    bairro_prob = min(0.99, municipal_prob * 0.50 + susc * 0.35 + iri * 0.15)
+                    source = "blend_susc_iri"
+                else:
+                    bairro_prob = min(0.99, max(0.0, bairro_prob))
+                    source = "modelo_bairro"
+                rows.append({
+                    "bairro_id": int(b["bairro_id"]),
+                    "bairro_nome": b["bairro_nome"],
+                    "risk_probability": round(bairro_prob, 3),
+                    "iri": round(iri, 3),
+                    "suscetibilidade_local": round(susc, 3),
+                    "impermeabilizacao_pct": float(b["impermeabilizacao_pct"]),
+                    "score_source": source,
+                    "curve_number": round(float(local.get("curve_number", 0)), 1),
+                    "capacidade_drenagem_mm_h": round(float(local.get("capacidade_drenagem_mm_h", 0)), 1),
+                })
+            rows.sort(key=lambda item: item["risk_probability"], reverse=True)
+            return rows[:8]
+
+        # --- Blend heurístico (artefato bairro ausente) ---
         rows = []
         for _, b in terrain_df.iterrows():
             flood = floods.get(int(b["bairro_id"]), {})
             iri = float(flood.get("indice_risco_inundacao", 0.5))
-            # 21d.5 — preferir suscetibilidade HAND/local ao blend IRI puro
             if "suscetibilidade_local" in terrain_df.columns:
                 susc = float(b.get("suscetibilidade_local") or 0.4)
             else:
@@ -319,6 +412,7 @@ class FloodRiskPredictor:
                 "iri": round(iri, 3),
                 "suscetibilidade_local": round(susc, 3),
                 "impermeabilizacao_pct": float(b["impermeabilizacao_pct"]),
+                "score_source": "blend_susc_iri",
             })
 
         rows.sort(key=lambda item: item["risk_probability"], reverse=True)

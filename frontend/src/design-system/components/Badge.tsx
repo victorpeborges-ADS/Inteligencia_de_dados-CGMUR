@@ -9,7 +9,7 @@ const TONE_CLASS: Record<BadgeTone, string> = {
   danger: 'border-rose-500/40 bg-rose-500/10 text-rose-300',
   info: 'border-sky-500/40 bg-sky-500/10 text-sky-300',
   official: 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300',
-  derived: 'border-indigo-500/40 bg-indigo-500/15 text-indigo-300',
+  derived: 'border-sky-500/35 bg-sky-500/10 text-sky-200',
   estimated: 'border-amber-500/40 bg-amber-500/10 text-amber-300',
   gap: 'border-rose-500/40 bg-rose-500/10 text-rose-300',
 };

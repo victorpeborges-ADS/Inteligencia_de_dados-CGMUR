@@ -18,7 +18,7 @@ type ConnectionStatus = 'idle' | 'testing' | 'connected' | 'error';
 const DEFAULT_GREETING = (ctx?: MunicipalAssistantContext | null): ChatMessage => ({
   role: 'assistant',
   content: ctx
-    ? `Olá! Sou o **Agente Sinidu · Modo Normativo** para **${ctx.municipio.nome}/${ctx.municipio.uf}**. Tenho acesso a perfil IBGE, CAPAG, score territorial, diagnóstico executivo e documentos normativos. Para alertas e simulações em tempo real, use o modo **Operacional** (botão flutuante). Como posso apoiar a gestão hoje?`
+    ? `Olá! Sou o **Agente Sinidu · Modo Normativo** para **${ctx.municipio.nome}/${ctx.municipio.uf}**. Tenho acesso a perfil IBGE, CAPAG, **Plano Diretor**, score territorial, diagnóstico executivo e documentos normativos. Priorizações e recomendações consideram a legislação urbanística do município. Para alertas e simulações em tempo real, use o modo **Operacional** (botão flutuante). Como posso apoiar a gestão hoje?`
     : 'Olá! Sou o **Agente Sinidu · Modo Normativo**, especializado em gestão de risco urbano e climático. Selecione um município para respostas contextualizadas.',
 });
 

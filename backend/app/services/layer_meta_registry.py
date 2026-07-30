@@ -22,6 +22,7 @@ LAYER_FONTE_IDS: dict[str, list[str]] = {
     "lst_observada": [],
     "vulnerabilidade": ["mapbiomas", "geosgb", "s2id"],
     "inundacao": ["s2id", "cemaden_georiscos"],
+    "manchas_oficiais": ["s2id"],
     "alertas": ["cemaden_georiscos"],
     "desastres": ["s2id", "ibge_singedlab_rs"],
     "saneamento_drenagem": ["snis_sinisa"],
@@ -61,11 +62,18 @@ LAYER_DESCRICOES: dict[str, str] = {
     ),
     "vulnerabilidade": "Índice de Vulnerabilidade Climática (IVC) composto: demografia IBGE, cobertura MapBiomas e histórico S2ID.",
     "inundacao": "Risco de inundação territorial (IRI) a partir de hidrografia, impermeabilização e eventos S2ID.",
+    "manchas_oficiais": (
+        "Camada de validação (20h.5) com manchas/estudos oficiais de inundação (Defesa Civil/CPRM/plano diretor "
+        "de drenagem) quando depositados localmente — usada para checar a mancha simulada além do hit-rate S2ID."
+    ),
     "alertas": "Alertas hidrológicos e de deslizamento em tempo quase real — CEMADEN / GeoRiscos.",
     "desastres": "Histórico oficial de desastres naturais registrados no S2ID/SEDEC e exposição SINGED Lab quando disponível.",
-    "saneamento_drenagem": "Indicadores de saneamento (SNIS/SINISA) combinados com risco de drenagem territorial Sinidu+Clima.",
-    "adaptacao_climatica": "Capacidade de adaptação climática municipal — AdaptaBrasil/INPE e proxies MapBiomas.",
-    "prioridade_planejamento": "Priorização de intervenções urbanas com base em planos locais e score Sinidu+Clima.",
+            "saneamento_drenagem": "Indicadores de saneamento (SNIS/SINISA) combinados com risco de drenagem territorial Sinidu+Clima, alinhados ao ordenamento do Plano Diretor.",
+            "adaptacao_climatica": "Capacidade de adaptação climática municipal — AdaptaBrasil/INPE e proxies MapBiomas, no marco do Plano Diretor.",
+            "prioridade_planejamento": (
+                "Priorização de intervenções urbanas alinhada ao Plano Diretor municipal "
+                "e ao score Sinidu+Clima (IVC + IRI + adaptação)."
+            ),
     "risco_consolidado": (
         "Mapa síntese 'onde está o risco agora': Score Sinidu (IVC+IRI+adaptação) por bairro "
         "cruzado com alerta vivo CEMADEN — semáforo VERDE–VERMELHO."
@@ -89,6 +97,7 @@ LAYER_GRUPOS: dict[str, str] = {
     "lst_observada": "Clima e riscos",
     "vulnerabilidade": "Clima e riscos",
     "inundacao": "Clima e riscos",
+    "manchas_oficiais": "Clima e riscos",
     "alertas": "Clima e riscos",
     "desastres": "Clima e riscos",
     "saneamento_drenagem": "Planejamento",

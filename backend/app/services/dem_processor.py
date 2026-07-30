@@ -152,10 +152,30 @@ def local_dem_source_paths(codigo_ibge: str) -> list[Path]:
     return [
         dem_dir(code) / "local_dem.tif",
         dem_dir(code) / "lidar.tif",
+        dem_dir(code) / "merit.tif",
+        dem_dir(code) / "anadem.tif",
         LOCAL_DEM_DIR / f"{code}.tif",
         LOCAL_DEM_DIR / f"{code}_lidar.tif",
         LOCAL_DEM_DIR / f"{code}_dsm.tif",
+        LOCAL_DEM_DIR / f"{code}_merit.tif",
+        LOCAL_DEM_DIR / f"{code}_anadem.tif",
+        LOCAL_DEM_DIR / f"{code}_merit_hydro.tif",
     ]
+
+
+def hydro_dem_label(filename: str) -> str | None:
+    """21b.5 — identifica DEM hidrologicamente condicionado (MERIT-Hydro/ANADEM) pelo nome do arquivo.
+
+    Esses produtos já vêm com depressões/sumidouros tratados na fonte, então o
+    Priority-Flood interno do simulador hidrológico pode ser dispensado (ver
+    ``hydro_simulator._fill_sinks``).
+    """
+    name = (filename or "").lower()
+    if "merit" in name:
+        return "MERIT-Hydro"
+    if "anadem" in name:
+        return "ANADEM"
+    return None
 
 
 def find_local_dem(codigo_ibge: str) -> Path | None:
@@ -554,6 +574,7 @@ def process_municipality_dem(
 
     api_key = api_key or os.getenv("OPENTOPOGRAPHY_API_KEY")
     dem_source = "SRTM 30m"
+    hydro_dem_flag = False
     local_path = find_local_dem(codigo_ibge)
     result: tuple[np.ndarray, float, float, float, float] | None = None
 
@@ -561,7 +582,11 @@ def process_municipality_dem(
         result = _load_local_dem_geotiff(local_path, west, south, east, north)
         if result is not None:
             name = local_path.name.lower()
-            if "lidar" in name or local_path.parent.name == str(codigo_ibge).zfill(7)[:7]:
+            hydro_label = hydro_dem_label(name)
+            if hydro_label:
+                dem_source = hydro_label
+                hydro_dem_flag = True
+            elif "lidar" in name or local_path.parent.name == str(codigo_ibge).zfill(7)[:7]:
                 dem_source = "LiDAR/DSM local"
             else:
                 dem_source = "DEM local"
@@ -671,6 +696,7 @@ def process_municipality_dem(
         "vertical_accuracy_m": vertical_acc,
         "data_reference": "2024",
         "default_exaggeration": 2.5,
+        "hydro_dem": hydro_dem_flag,
     }
     if local_path:
         meta["local_dem_path"] = str(local_path)

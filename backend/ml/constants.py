@@ -54,6 +54,14 @@ FEATURE_COLUMNS = [
     "sazonalidade_sin",
     "sazonalidade_cos",
     "tendencia_impermeabilizacao_pp_a",
+    # Fase 21d.8 — proxies físicos (SCS + rede) ligados à simulação
+    "lamina_proxy_mm",
+    "escoamento_excesso_mm",
+    "rede_saturada_flag",
+    "area_alagada_proxy_pct",
+    # Fase 21d.9 — cota de rio (ANA); 0 se série ausente
+    "cota_rio_disponivel",
+    "cota_rio_anomalia",
 ]
 
 # Defaults quando o artefato antigo não tem a feature no meta.terrain
@@ -76,6 +84,12 @@ FEATURE_DEFAULTS: dict[str, float] = {
     "sazonalidade_sin": 0.0,
     "sazonalidade_cos": 1.0,
     "tendencia_impermeabilizacao_pp_a": 0.0,
+    "lamina_proxy_mm": 0.0,
+    "escoamento_excesso_mm": 0.0,
+    "rede_saturada_flag": 0.0,
+    "area_alagada_proxy_pct": 0.0,
+    "cota_rio_disponivel": 0.0,
+    "cota_rio_anomalia": 0.0,
 }
 
 # Hold-out temporal (21e.1): treinar até este ano; validar anos seguintes
@@ -86,10 +100,26 @@ HOLDOUT_TEST_START_YEAR = 2022
 LABEL_LAG_BEFORE_DAYS = 3
 LABEL_LAG_AFTER_DAYS = 1
 
-MODEL_VERSION = "1.4"
+MODEL_VERSION = "1.5"
+BAIRRO_MODEL_VERSION = "1.1"
 
 # 21f.1 — algoritmo padrão de produção (HistGradientBoosting via sklearn)
 ML_ALGORITHM = "hist_gradient_boosting"
+
+# 21f.2 — model_kind do artefato por bairro
+BAIRRO_PRODUCTION_MODEL_KINDS = frozenset({"full_bairro", "full_bairro_no_holdout"})
+
+# Colunas de terreno que vêm do parquet por bairro (o resto é precip/municipal)
+BAIRRO_TERRAIN_FEATURE_KEYS = (
+    "impermeabilizacao_pct",
+    "cobertura_vegetal_pct",
+    "declividade_media",
+    "water_proximity",
+    "curve_number",
+    "capacidade_drenagem_mm_h",
+    "saturacao_drenagem_40mm",
+    "suscetibilidade_hand",  # preenchido com suscetibilidade_local
+)
 
 RF_PARAMS = {
     "n_estimators": 100,

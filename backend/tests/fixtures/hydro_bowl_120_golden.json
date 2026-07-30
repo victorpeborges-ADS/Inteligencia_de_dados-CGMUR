@@ -1,0 +1,11 @@
+{
+  "bands": {
+    "critica": 1,
+    "superficial": 8
+  },
+  "depth_finite_cells": 4096,
+  "flood_patches": 9,
+  "max_depth_m": 17.6188,
+  "model_version": "2.8",
+  "precip_mm": 120.0
+}

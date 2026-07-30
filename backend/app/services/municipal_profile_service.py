@@ -68,6 +68,26 @@ def build_municipal_profile(
     maturity_data = maturity if maturity is not None else compute_maturity(db, code)
     pd_fonte = next((f for f in maturity_data.get("fontes") or [] if f.get("id") == "plano_diretor"), None)
     pd_status = (pd_fonte or {}).get("status") or ("OFICIAL" if pd_sources else "LACUNA")
+    pd_titulos = [s.get("titulo") for s in pd_sources if isinstance(s, dict) and s.get("titulo")]
+    pd_urls = [s.get("url") for s in pd_sources if isinstance(s, dict) and s.get("url")]
+    pd_titulo = pd_titulos[0] if pd_titulos else None
+    pd_url = pd_urls[0] if pd_urls else None
+
+    if pd_status == "OFICIAL" and pd_titulo:
+        pd_mensagem = (
+            f"Diagnósticos, priorização e recomendações deste município consideram o "
+            f"{pd_titulo} (legislação urbanística oficial)."
+        )
+    elif pd_status == "OFICIAL":
+        pd_mensagem = (
+            "Diagnósticos e recomendações consideram o Plano Diretor / legislação "
+            "urbanística oficial cadastrada para este município."
+        )
+    else:
+        pd_mensagem = (
+            "Plano Diretor sem fonte oficial catalogada neste município — "
+            "intervenções devem ser alinhadas à legislação urbanística local."
+        )
 
     defesa = {
         "sinal": "presente" if exec_dc and exec_dc > 0 else ("ausente" if exec_dc == 0 else "desconhecido"),
@@ -89,6 +109,11 @@ def build_municipal_profile(
         restricoes.append(
             "Plano Diretor sem fonte cadastrada — alinhar intervenções à legislação urbanística local."
         )
+    else:
+        restricoes.insert(
+            0,
+            "Priorização e medidas devem observar o Plano Diretor municipal e a legislação urbanística vigente.",
+        )
     if defesa["sinal"] != "presente":
         restricoes.append(
             "Sem evidência de gasto em Defesa Civil no SICONFI — reforçar articulação e protocolo municipal."
@@ -109,8 +134,12 @@ def build_municipal_profile(
         },
         "plano_diretor": {
             "status": pd_status,
+            "considerado": pd_status == "OFICIAL",
             "fontes_cadastradas": len(pd_sources),
-            "titulos": [s.get("titulo") for s in pd_sources[:3] if isinstance(s, dict)],
+            "titulo": pd_titulo,
+            "url": pd_url,
+            "titulos": pd_titulos[:3],
+            "mensagem": pd_mensagem,
         },
         "defesa_civil": defesa,
         "restricoes": restricoes,

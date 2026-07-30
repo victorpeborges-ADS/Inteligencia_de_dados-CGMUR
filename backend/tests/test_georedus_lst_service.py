@@ -1,5 +1,7 @@
 """Testes do serviço LST observada (GeoReDUS / TiTiler)."""
 
+from unittest.mock import patch
+
 from app.services.georedus_lst_service import (
     LST_DEFAULT_MAX_C,
     LST_DEFAULT_MIN_C,
@@ -40,3 +42,31 @@ def test_get_lst_observada_config_custom_rescale():
     assert cfg["rescale_min_c"] == 25
     assert cfg["rescale_max_c"] == 50
     assert "rescale=25" in cfg["tile_url_template"]
+
+
+def test_parse_lst_point_payload_round():
+    from app.services.georedus_lst_service import _parse_lst_point_payload
+
+    assert _parse_lst_point_payload({"values": [["b1", [41.26]]]}) == 41.3
+    assert _parse_lst_point_payload({"values": []}) is None
+
+
+@patch("app.api.map.fetch_lst_point", return_value=43.7)
+def test_external_raster_point_handler(mock_fetch):
+    from unittest.mock import MagicMock
+
+    from app.api.map import external_raster_point
+
+    body = external_raster_point(
+        "lst_observada",
+        request=MagicMock(),
+        lon=-34.8811,
+        lat=-8.0539,
+        codigo_ibge=None,
+        db=MagicMock(),
+    )
+    assert body["temperatura_c"] == 43.7
+    assert body["disponivel"] is True
+    assert body["unit"] == "°C"
+    assert "GeoReDUS" in body["fonte"]
+    mock_fetch.assert_called_once_with(-34.8811, -8.0539)

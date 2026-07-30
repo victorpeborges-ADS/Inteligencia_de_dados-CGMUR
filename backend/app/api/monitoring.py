@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from app.config import settings
 from app.db import get_db
 from app.models import ContingencyPlan, MonitoringAlert, Municipio, WeatherForecastCache
+from app.schemas import EventoAlagamentoCampoCreate
 from app.services.contingency_planner import plan_to_dict
 from app.security.municipio_access import assert_codigo_ibge_access, filter_municipio_query, get_accessible_municipio
 from app.services.audit_service import resolve_actor, log_audit
@@ -65,6 +66,59 @@ def trigger_cemaden_pluvio_sync(
         raise HTTPException(status_code=500, detail=f"Sync pluvio CEMADEN falhou: {exc}") from exc
 
 
+@router.post("/sync/inmet-bdmep")
+def trigger_inmet_bdmep_sync(
+    codigo_ibge: str | None = Query(default=None, description="Só este IBGE; omitir = 6 pilotos"),
+    db: Session = Depends(get_db),
+):
+    """Ingere CSVs BDMEP/INMET depositados → serie_pluviometrica_observada (21b.3)."""
+    from app.data_connectors.inmet_bdmep_collector import (
+        collect_inmet_bdmep_municipality,
+        collect_inmet_bdmep_pilots,
+    )
+
+    try:
+        if codigo_ibge:
+            return collect_inmet_bdmep_municipality(db, codigo_ibge)
+        return collect_inmet_bdmep_pilots(db)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Sync INMET/BDMEP falhou: {exc}") from exc
+
+
+@router.post("/sync/merge-cptec")
+def trigger_merge_cptec_sync(
+    codigo_ibge: str | None = Query(default=None, description="Só este IBGE; omitir = 6 pilotos"),
+    start: str | None = Query(default=None, description="YYYY-MM-DD (default: end-29d)"),
+    end: str | None = Query(default=None, description="YYYY-MM-DD (default: ontem)"),
+    download: bool = Query(default=True, description="Baixar GRIB2 do FTP CPTEC se faltar no cache"),
+    db: Session = Depends(get_db),
+):
+    """Amostra MERGE/CPTEC no centróide → serie_pluviometrica_observada (21b.4)."""
+    import datetime as dt
+
+    from app.data_connectors.merge_cptec_collector import (
+        collect_merge_municipality,
+        collect_merge_pilots,
+    )
+
+    def _parse(d: str | None) -> dt.date | None:
+        if not d:
+            return None
+        return dt.date.fromisoformat(d)
+
+    try:
+        start_d, end_d = _parse(start), _parse(end)
+        if codigo_ibge:
+            return collect_merge_municipality(
+                db, codigo_ibge, start=start_d, end=end_d, download=download
+            )
+        return collect_merge_pilots(db, start=start_d, end=end_d, download=download)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=f"Data inválida: {exc}") from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Sync MERGE/CPTEC falhou: {exc}") from exc
+
+
 @router.post("/sync/s2id-nacional")
 def trigger_s2id_nacional_sync(
     years: str | None = Query(default=None, description="Anos CSV separados por vírgula, ex: 2020,2021,2022"),
@@ -102,6 +156,77 @@ def trigger_ana_probe(db: Session = Depends(get_db)):
         return collect_pluvio_series_for_municipality(db, "2611606", dry_run=True)
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Probe ANA falhou: {exc}") from exc
+
+
+@router.post("/sync/ana-fluvio")
+def trigger_ana_fluvio_sync(
+    codigo_ibge: str | None = Query(default=None, description="Só este IBGE; omitir = 6 pilotos"),
+    dry_run: bool = Query(default=True, description="Sem CSV/token real, só sonda API"),
+    db: Session = Depends(get_db),
+):
+    """Ingere série fluviométrica ANA (CSV depositado ou probe autenticado) — 21c.3/21d.9."""
+    from app.data_connectors.ana_hidroweb_collector import collect_fluvio_series_for_municipality
+    from app.data_connectors.constants import TARGET_IBGE_CODES
+
+    try:
+        codigos = [codigo_ibge] if codigo_ibge else list(TARGET_IBGE_CODES[:6])
+        results = [
+            collect_fluvio_series_for_municipality(db, code, dry_run=dry_run)
+            for code in codigos
+        ]
+        return {
+            "resultados": results,
+            "ingested_total": sum(int(r.get("ingested") or 0) for r in results),
+        }
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Sync ANA fluvio falhou: {exc}") from exc
+
+
+@router.post("/eventos-observados")
+def create_observed_flood_event(
+    body: EventoAlagamentoCampoCreate,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    """Registro em campo pela Defesa Civil municipal (21c.4)."""
+    from app.services.evento_alagamento_service import create_field_event
+
+    assert_codigo_ibge_access(db, body.codigo_ibge, request=request)
+    try:
+        return create_field_event(
+            db,
+            codigo_ibge=body.codigo_ibge,
+            tipo=body.tipo,
+            inicio_em=body.inicio_em,
+            fim_em=body.fim_em,
+            severidade=body.severidade,
+            fenomeno=body.fenomeno,
+            populacao_afetada=body.populacao_afetada,
+            precip_acumulada_mm=body.precip_acumulada_mm,
+            referencia=body.referencia,
+            lat=body.lat,
+            lng=body.lng,
+            geojson=body.geojson,
+            actor=resolve_actor(request),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Falha ao registrar evento: {exc}") from exc
+
+
+@router.get("/eventos-observados")
+def list_observed_flood_events(
+    request: Request,
+    codigo_ibge: str = Query(...),
+    limit: int = Query(default=50, ge=1, le=200),
+    db: Session = Depends(get_db),
+):
+    """Lista eventos de alagamento observados (S2ID + campo)."""
+    from app.services.evento_alagamento_service import list_observed_events
+
+    assert_codigo_ibge_access(db, codigo_ibge, request=request)
+    return list_observed_events(db, codigo_ibge, limit=limit)
 
 
 def _muni_centroid(m: Municipio) -> tuple[float | None, float | None]:

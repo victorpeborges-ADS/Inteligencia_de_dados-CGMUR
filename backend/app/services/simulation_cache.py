@@ -29,12 +29,14 @@ def _rainfall_key(
     chuva_antecedente_mm: float = 0.0,
     drain_removed_mm: float = 0.0,
     aplicar_drenagem: bool = True,
+    duracao_h: float = 1.0,
 ) -> str:
     ibge = str(codigo_ibge).strip().zfill(7)[:7]
     stamp = calibration_cache_stamp(ibge)
     drain_flag = "1" if aplicar_drenagem else "0"
     return (
         f"sinidu:sim:rain:{ibge}:{precip_mm:.1f}"
+        f":dur{float(duracao_h or 1.0):.2f}"
         f":slr{float(nivel_mar_m or 0):.2f}"
         f":ant{float(chuva_antecedente_mm or 0):.0f}"
         f":drn{float(drain_removed_mm or 0):.1f}:{drain_flag}"
@@ -42,11 +44,12 @@ def _rainfall_key(
     )
 
 
-def _compare_key(codigo_ibge: str, baseline_mm: float, scenario_mm: float) -> str:
+def _compare_key(codigo_ibge: str, baseline_mm: float, scenario_mm: float, *, duracao_h: float = 1.0) -> str:
     ibge = str(codigo_ibge).strip().zfill(7)[:7]
     stamp = calibration_cache_stamp(ibge)
     return (
         f"sinidu:sim:raincmp:{ibge}:{baseline_mm:.1f}:{scenario_mm:.1f}"
+        f":dur{float(duracao_h or 1.0):.2f}"
         f":v{HYDRO_MODEL_VERSION}:{stamp}"
     )
 
@@ -63,6 +66,7 @@ def run_rainfall_cached(
     drain_removed_mm: float = 0.0,
     rede_saturada: bool = False,
     drenagem_meta: dict | None = None,
+    duracao_h: float = 1.0,
 ) -> dict[str, Any]:
     aplicar = bool((drenagem_meta or {}).get("aplicado", drain_removed_mm > 0))
     key = _rainfall_key(
@@ -72,6 +76,7 @@ def run_rainfall_cached(
         chuva_antecedente_mm=chuva_antecedente_mm,
         drain_removed_mm=drain_removed_mm,
         aplicar_drenagem=aplicar,
+        duracao_h=duracao_h,
     )
     if SIMULATION_CACHE_ENABLED:
         cached = cache_get_json(key)
@@ -90,6 +95,7 @@ def run_rainfall_cached(
         drain_removed_mm=drain_removed_mm,
         rede_saturada=rede_saturada,
         drenagem_meta=drenagem_meta,
+        duracao_h=duracao_h,
     )
     payload = {**result, "from_cache": False}
     if SIMULATION_CACHE_ENABLED:
@@ -124,8 +130,10 @@ def compare_rainfall_cached(
     codigo_ibge: str,
     baseline_mm: float,
     scenario_mm: float,
+    *,
+    duracao_h: float = 1.0,
 ) -> dict[str, Any]:
-    cmp_key = _compare_key(codigo_ibge, baseline_mm, scenario_mm)
+    cmp_key = _compare_key(codigo_ibge, baseline_mm, scenario_mm, duracao_h=duracao_h)
     if SIMULATION_CACHE_ENABLED:
         cached = cache_get_json(cmp_key)
         if cached and isinstance(cached, dict):
@@ -140,7 +148,7 @@ def compare_rainfall_cached(
     def _run(mm: float) -> dict[str, Any]:
         session = SessionLocal()
         try:
-            return run_rainfall_cached(session, muni_id, codigo_ibge, mm)
+            return run_rainfall_cached(session, muni_id, codigo_ibge, mm, duracao_h=duracao_h)
         finally:
             session.close()
 

@@ -209,8 +209,9 @@ def test_build_risk_panel_consolidates_status(
     assert panel["ciclo"] == "agir"
     assert panel["versao"] == "21f.5"
     assert "ml_preditivo" in panel["componentes"]
-    assert panel["modelo_risco"]["versao"] == "21f.5"
+    assert panel["modelo_risco"]["versao"] == "21f.5+21f.2"
     assert "ml_preditivo" in panel["modelo_risco"]["regra_status"]
+    assert "ranking_bairros" in panel["modelo_risco"]
 
 
 

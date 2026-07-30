@@ -24,6 +24,12 @@ def test_manual_scales_persist_and_stamp_changes(tmp_path, monkeypatch):
     from app.services import hydro_calibration_service as svc
 
     monkeypatch.setattr(svc, "CALIB_DIR", tmp_path)
+    # Isola também o cache Redis — sem isso, o teste grava a escala manual (1.25/1.1)
+    # no Redis compartilhado com o ambiente de dev/docker, contaminando simulações reais.
+    fake_cache: dict[str, object] = {}
+    monkeypatch.setattr(svc, "cache_get_json", lambda key: fake_cache.get(key))
+    monkeypatch.setattr(svc, "cache_set_json", lambda key, value, ttl=None: fake_cache.__setitem__(key, value))
+
     before = calibration_cache_stamp("2611606", "PE")
     out = apply_manual_scales(
         "2611606",

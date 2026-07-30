@@ -33,9 +33,37 @@ def test_feature_columns_include_21d():
         "sazonalidade_sin",
         "sazonalidade_cos",
         "tendencia_impermeabilizacao_pp_a",
+        "lamina_proxy_mm",
+        "escoamento_excesso_mm",
+        "rede_saturada_flag",
+        "area_alagada_proxy_pct",
     ):
         assert col in FEATURE_COLUMNS
         assert col in FEATURE_DEFAULTS
+
+
+def test_physics_proxies_21d8_heavy_rain_saturates():
+    from ml.physics_proxy import compute_flood_physics_proxies
+
+    dry = compute_flood_physics_proxies(
+        5.0, curve_number=90.0, capacidade_drenagem_mm_h=20.0, duracao_chuva_h=6.0
+    )
+    assert dry["rede_saturada_flag"] == 0.0
+    assert dry["escoamento_excesso_mm"] == 0.0
+
+    wet = compute_flood_physics_proxies(
+        120.0,
+        curve_number=92.0,
+        capacidade_drenagem_mm_h=10.0,
+        impermeabilizacao_pct=85.0,
+        suscetibilidade_hand=0.8,
+        pct_hand_lt_5m=40.0,
+        duracao_chuva_h=3.0,
+    )
+    assert wet["lamina_proxy_mm"] > 0
+    assert wet["escoamento_excesso_mm"] > 0
+    assert wet["rede_saturada_flag"] == 1.0
+    assert wet["area_alagada_proxy_pct"] > dry["area_alagada_proxy_pct"]
 
 
 def test_suscetibilidade_hand_higher_when_low_hand():

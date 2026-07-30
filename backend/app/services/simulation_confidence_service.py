@@ -279,6 +279,32 @@ def stamp_simulation_geojson_quality(
     return geometry
 
 
+def _validate_against_official_flood_map(
+    muni: Municipio,
+    flood_geometry: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    """Compara a mancha simulada com estudo/mancha oficial local (20h.5), se houver."""
+    try:
+        from app.services.official_flood_map_service import (
+            evaluate_against_official_polygons,
+            load_official_flood_geojson,
+        )
+    except Exception:
+        return None
+
+    official_geojson = load_official_flood_geojson(muni.codigo_ibge)
+    if not official_geojson:
+        return None
+
+    evaluation = evaluate_against_official_polygons(flood_geometry, official_geojson)
+    evaluation["fonte"] = "Mancha/estudo oficial depositada localmente (Defesa Civil/CPRM/plano diretor)"
+    evaluation["limitacao"] = (
+        "Comparação poligonal simples (IoU) — não substitui laudo técnico; depende da "
+        "qualidade/atualidade do arquivo depositado em backend/data/manchas_oficiais."
+    )
+    return evaluation
+
+
 def enrich_simulation_confidence(
     db: Session,
     muni: Municipio,
@@ -287,7 +313,7 @@ def enrich_simulation_confidence(
     flood_geometry: dict[str, Any] | None = None,
     affected_bairros: list[str] | None = None,
 ) -> dict[str, Any]:
-    """Anexa `selo_confianca` e `validacao_s2id` ao simulation_meta."""
+    """Anexa `selo_confianca`, `validacao_s2id` e `validacao_mancha_oficial` ao simulation_meta."""
     meta = dict(simulation_meta or {})
     seal = build_confidence_seal(meta)
     validation = validate_against_s2id(
@@ -305,6 +331,10 @@ def enrich_simulation_confidence(
     seal = {**seal, "nivel_confianca": nivel}
     meta["selo_confianca"] = seal
     meta["validacao_s2id"] = validation
+
+    mancha_oficial = _validate_against_official_flood_map(muni, flood_geometry)
+    if mancha_oficial is not None:
+        meta["validacao_mancha_oficial"] = mancha_oficial
     # Mancha no mapa: sempre Derivado (triagem), não "Oficial"
     stamp_simulation_geojson_quality(
         flood_geometry,

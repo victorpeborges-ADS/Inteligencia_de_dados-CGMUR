@@ -9,7 +9,13 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from ml.paths import model_meta_path, model_path
+from ml.constants import BAIRRO_PRODUCTION_MODEL_KINDS
+from ml.paths import (
+    bairro_model_meta_path,
+    bairro_model_path,
+    model_meta_path,
+    model_path,
+)
 
 # full = hold-out 21e OK; full_no_holdout = rótulos insuficientes para split temporal
 PRODUCTION_MODEL_KINDS = frozenset({"full", "full_no_holdout"})
@@ -18,6 +24,16 @@ SYNTHETIC_MODEL_KIND = "baseline_synthetic"
 
 def load_model_meta(codigo_ibge: str) -> dict[str, Any]:
     path = model_meta_path(str(codigo_ibge).zfill(7)[:7])
+    if not path.exists():
+        return {}
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+def load_bairro_model_meta(codigo_ibge: str) -> dict[str, Any]:
+    path = bairro_model_meta_path(str(codigo_ibge).zfill(7)[:7])
     if not path.exists():
         return {}
     try:
@@ -37,6 +53,10 @@ def is_production_model(meta: dict[str, Any] | None) -> bool:
     return model_kind_of(meta) in PRODUCTION_MODEL_KINDS
 
 
+def is_bairro_production_model(meta: dict[str, Any] | None) -> bool:
+    return model_kind_of(meta) in BAIRRO_PRODUCTION_MODEL_KINDS
+
+
 def production_model_ready(codigo_ibge: str) -> bool:
     """True apenas se existe artefato local com model_kind=full."""
     code = str(codigo_ibge).zfill(7)[:7]
@@ -45,9 +65,17 @@ def production_model_ready(codigo_ibge: str) -> bool:
     return is_production_model(load_model_meta(code))
 
 
+def bairro_production_model_ready(codigo_ibge: str) -> bool:
+    """True se existe modelo por bairro pronto para ranking (21f.2)."""
+    code = str(codigo_ibge).zfill(7)[:7]
+    if not bairro_model_path(code).exists():
+        return False
+    return is_bairro_production_model(load_bairro_model_meta(code))
+
+
 def public_auc(meta: dict[str, Any] | None) -> float | None:
     """AUC só é exposto para modelos de produção (nunca sintético)."""
-    if not is_production_model(meta):
+    if not is_production_model(meta) and not is_bairro_production_model(meta):
         return None
     auc = (meta or {}).get("auc_roc_cv")
     if auc is None:

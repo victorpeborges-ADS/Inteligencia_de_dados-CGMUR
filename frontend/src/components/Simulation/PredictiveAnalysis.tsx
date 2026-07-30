@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { api, FloodRiskPrediction } from '@/utils/api';
 import { Brain, Loader2, AlertTriangle } from 'lucide-react';
 
@@ -10,6 +10,10 @@ interface PredictiveAnalysisProps {
   municipioLoaded?: boolean;
   onPredict: (geojson: unknown) => void;
   onClear: () => void;
+  /** Quando embutido na aba Chuva: sincroniza com o volume do cenário físico. */
+  embedded?: boolean;
+  precipEventMm?: number;
+  antecedentMm?: number;
 }
 
 function riskColor(level: string) {
@@ -26,22 +30,43 @@ function gaugeColor(prob: number) {
   return '#34d399';
 }
 
+function deriveHorizons(eventMm: number, antecedentMm: number) {
+  const p24 = Math.max(0, Math.round(eventMm));
+  const p48 = Math.max(p24, Math.round(eventMm * 1.35 + antecedentMm * 0.15));
+  const p72 = Math.max(p48, Math.round(eventMm * 1.55 + antecedentMm * 0.25));
+  const p7d = Math.max(p72, Math.round(antecedentMm + eventMm));
+  return { p24, p48, p72, p7d };
+}
+
 export default function PredictiveAnalysis({
   codigoIbge,
   municipioNome,
   municipioLoaded,
   onPredict,
   onClear,
+  embedded = false,
+  precipEventMm = 80,
+  antecedentMm = 0,
 }: PredictiveAnalysisProps) {
-  const [precip24, setPrecip24] = useState(80);
-  const [precip48, setPrecip48] = useState(120);
-  const [precip72, setPrecip72] = useState(150);
-  const [precip7d, setPrecip7d] = useState(280);
+  const derived = deriveHorizons(precipEventMm, antecedentMm);
+  const [precip24, setPrecip24] = useState(derived.p24);
+  const [precip48, setPrecip48] = useState(derived.p48);
+  const [precip72, setPrecip72] = useState(derived.p72);
+  const [precip7d, setPrecip7d] = useState(derived.p7d);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<FloodRiskPrediction | null>(null);
 
   const ready = Boolean(codigoIbge && municipioLoaded !== false);
+
+  useEffect(() => {
+    if (!embedded) return;
+    const next = deriveHorizons(precipEventMm, antecedentMm);
+    setPrecip24(next.p24);
+    setPrecip48(next.p48);
+    setPrecip72(next.p72);
+    setPrecip7d(next.p7d);
+  }, [embedded, precipEventMm, antecedentMm]);
 
   const handlePredict = async () => {
     if (!codigoIbge || !ready) return;
@@ -80,14 +105,16 @@ export default function PredictiveAnalysis({
   const isSynthetic = result?.model_kind === 'baseline_synthetic' || result?.production_ready === false;
 
   return (
-    <div className="flex flex-col gap-4">
+    <div className={`flex flex-col gap-3 ${embedded ? '' : 'gap-4'}`}>
       <div>
         <h4 className="flex items-center gap-1.5 text-sm font-extrabold text-zinc-200">
-          <Brain size={16} className="text-violet-400" /> Análise Preditiva de Alagamento
+          <Brain size={16} className="text-violet-400" />
+          {embedded ? 'Score multi-horizonte (mesmo evento)' : 'Análise Preditiva de Alagamento'}
         </h4>
         <p className="mt-1 text-[11px] text-zinc-400">
-          Inferência experimental com precipitação + terreno para {municipioNome || 'o município selecionado'}.
-          O Monitor operacional só usa modelo com lastro observacional (`full`).
+          {embedded
+            ? `Horizontes 24h–7d derivados do volume do cenário (${precip24} mm no evento) + solo antecedente. Complementa a mancha DEM — não a substitui.`
+            : `Inferência experimental com precipitação + terreno para ${municipioNome || 'o município selecionado'}.`}
         </p>
       </div>
 
@@ -99,45 +126,61 @@ export default function PredictiveAnalysis({
 
       {ready && (
         <p className="rounded-lg border border-amber-500/25 bg-amber-950/15 px-3 py-2 text-[10px] text-amber-100/90">
-          Artefatos atuais são em geral <strong>baseline sintético</strong> — score experimental, não probabilidade
-          calibrada. O Monitor usa curva heurística de chuva até existir modelo `full` (Fase 21).
+          Artefatos atuais são em geral <strong>baseline sintético</strong> — score experimental.
+          O Monitor operacional só usa modelo com lastro observacional (`full`).
         </p>
       )}
 
-      <div className="grid grid-cols-1 gap-3">
-        {[
-          { label: 'Precipitação 24h', value: precip24, set: setPrecip24, max: 200 },
-          { label: 'Precipitação 48h', value: precip48, set: setPrecip48, max: 300 },
-          { label: 'Precipitação 72h', value: precip72, set: setPrecip72, max: 400 },
-          { label: 'Precipitação 7d (antecedente)', value: precip7d, set: setPrecip7d, max: 800 },
-        ].map((slider) => (
-          <div key={slider.label}>
-            <div className="mb-1 flex justify-between text-xs text-zinc-300">
-              <span>{slider.label}</span>
-              <span className="font-bold text-violet-300">{slider.value} mm</span>
+      {embedded ? (
+        <div className="grid grid-cols-2 gap-2 text-[10px] sm:grid-cols-4">
+          {[
+            { label: '24h', value: precip24 },
+            { label: '48h', value: precip48 },
+            { label: '72h', value: precip72 },
+            { label: '7d', value: precip7d },
+          ].map((h) => (
+            <div key={h.label} className="rounded-lg border border-zinc-800 bg-zinc-950/50 px-2 py-1.5">
+              <p className="text-[9px] uppercase tracking-wider text-zinc-500">{h.label}</p>
+              <p className="font-bold text-violet-200">{h.value} mm</p>
             </div>
-            <input
-              type="range"
-              min={0}
-              max={slider.max}
-              step={5}
-              value={slider.value}
-              disabled={!ready}
-              onChange={(e) => slider.set(Number(e.target.value))}
-              className="h-1 w-full cursor-pointer appearance-none rounded-lg bg-zinc-800 accent-violet-500 disabled:opacity-40"
-            />
-          </div>
-        ))}
-      </div>
+          ))}
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 gap-3">
+          {[
+            { label: 'Precipitação 24h', value: precip24, set: setPrecip24, max: 350 },
+            { label: 'Precipitação 48h', value: precip48, set: setPrecip48, max: 450 },
+            { label: 'Precipitação 72h', value: precip72, set: setPrecip72, max: 550 },
+            { label: 'Precipitação 7d (antecedente)', value: precip7d, set: setPrecip7d, max: 900 },
+          ].map((slider) => (
+            <div key={slider.label}>
+              <div className="mb-1 flex justify-between text-xs text-zinc-300">
+                <span>{slider.label}</span>
+                <span className="font-bold text-violet-300">{slider.value} mm</span>
+              </div>
+              <input
+                type="range"
+                min={0}
+                max={slider.max}
+                step={5}
+                value={slider.value}
+                disabled={!ready}
+                onChange={(e) => slider.set(Number(e.target.value))}
+                className="h-1 w-full cursor-pointer appearance-none rounded-lg bg-zinc-800 accent-violet-500 disabled:opacity-40"
+              />
+            </div>
+          ))}
+        </div>
+      )}
 
       <button
         type="button"
         onClick={handlePredict}
         disabled={loading || !ready}
-        className="flex items-center justify-center gap-2 rounded-xl bg-violet-600 py-3 text-xs font-bold uppercase tracking-wider text-white hover:bg-violet-500 disabled:opacity-50"
+        className="flex items-center justify-center gap-2 rounded-xl bg-violet-600 py-2.5 text-xs font-bold uppercase tracking-wider text-white hover:bg-violet-500 disabled:opacity-50"
       >
         {loading ? <Loader2 size={14} className="animate-spin" /> : <Brain size={14} />}
-        {loading ? 'Calculando…' : 'Executar predição ML'}
+        {loading ? 'Calculando…' : embedded ? 'Calcular score do evento' : 'Executar predição ML'}
       </button>
 
       {error && (
@@ -176,36 +219,6 @@ export default function PredictiveAnalysis({
               <span className="mt-1 inline-block rounded bg-teal-500/15 px-1.5 py-0.5 text-[8px] font-bold uppercase text-teal-200">
                 {isSynthetic ? 'Sintético · Estimado' : 'ML full · Derivado'}
               </span>
-              {isSynthetic && (
-                <span className="mt-1 ml-1 inline-block rounded bg-amber-500/15 px-1.5 py-0.5 text-[8px] font-bold uppercase text-amber-300">
-                  Não é probabilidade calibrada
-                </span>
-              )}
-              {result.model_auc_roc != null && (
-                <span className="mt-1 ml-1 inline-block rounded bg-emerald-500/15 px-1.5 py-0.5 text-[8px] font-bold uppercase text-emerald-300">
-                  AUC {result.model_auc_roc.toFixed(2)}
-                </span>
-              )}
-            </div>
-          </div>
-          <div className="mt-2 grid grid-cols-2 gap-2 text-[10px]">
-            <div className="rounded-lg border border-zinc-700/60 bg-zinc-950/40 px-2 py-1.5">
-              <p className="text-[9px] uppercase tracking-wider text-zinc-500">Limiar 24h</p>
-              <p className="font-bold text-zinc-200">{result.threshold_mm_24h} mm</p>
-            </div>
-            <div className="rounded-lg border border-zinc-700/60 bg-zinc-950/40 px-2 py-1.5">
-              <p className="text-[9px] uppercase tracking-wider text-zinc-500">vs. cenário</p>
-              <p
-                className={`font-bold ${
-                  (result.mm_acima_limiar ?? 0) > 0 ? 'text-rose-300' : 'text-emerald-300'
-                }`}
-              >
-                {result.mm_acima_limiar == null
-                  ? '—'
-                  : result.mm_acima_limiar > 0
-                    ? `+${result.mm_acima_limiar} mm`
-                    : `${result.mm_acima_limiar} mm`}
-              </p>
             </div>
           </div>
           {result.horizons && result.horizons.length > 0 && (
@@ -223,11 +236,6 @@ export default function PredictiveAnalysis({
                     <p className="text-sm font-black text-violet-200">
                       {Math.round(h.risk_probability * 100)}%
                     </p>
-                    {h.ci_low != null && h.ci_high != null && (
-                      <p className="text-[8px] font-mono text-zinc-600">
-                        {Math.round(h.ci_low * 100)}–{Math.round(h.ci_high * 100)}
-                      </p>
-                    )}
                   </div>
                 ))}
               </div>
@@ -236,102 +244,13 @@ export default function PredictiveAnalysis({
           {result.impact?.disponivel && (
             <div className="mt-2 rounded-lg border border-amber-500/25 bg-amber-950/15 p-2.5">
               <p className="mb-1 text-[9px] font-bold uppercase tracking-wider text-amber-200/90">
-                Impacto estimado
+                Impacto estimado (ML)
               </p>
-              <p className="text-[10px] leading-snug text-zinc-300">
-                {result.impact.narrativa ||
-                  `${result.impact.n_bairros_prioritarios ?? 0} bairros prioritários`}
+              <p className="text-[11px] text-zinc-200">
+                {(result.impact.populacao_exposta_estimada ?? 0).toLocaleString('pt-BR')} pessoas ·{' '}
+                {result.impact.n_bairros_prioritarios ?? 0} bairros prioritários
               </p>
-              <div className="mt-1.5 flex flex-wrap gap-2 text-[9px] text-zinc-500">
-                {result.impact.populacao_exposta_estimada != null && (
-                  <span>
-                    Pop. exposta ~{' '}
-                    <strong className="text-amber-200">
-                      {result.impact.populacao_exposta_estimada.toLocaleString('pt-BR')}
-                    </strong>
-                    {result.impact.pct_populacao_exposta != null
-                      ? ` (${result.impact.pct_populacao_exposta}%)`
-                      : ''}
-                  </span>
-                )}
-                {result.impact.capag_nota && (
-                  <span>
-                    CAPAG <strong className="text-zinc-300">{result.impact.capag_nota}</strong>
-                  </span>
-                )}
-                {result.impact.porte && (
-                  <span>
-                    Porte <strong className="text-zinc-300">{result.impact.porte}</strong>
-                  </span>
-                )}
-              </div>
-              {result.impact.medidas_cabiveis && result.impact.medidas_cabiveis.length > 0 && (
-                <ul className="mt-2 space-y-1 border-t border-zinc-800/80 pt-2">
-                  {result.impact.medidas_cabiveis.slice(0, 3).map((m) => (
-                    <li key={m.id || m.titulo} className="text-[10px] text-zinc-400">
-                      <span className="font-semibold text-zinc-200">{m.titulo}</span>
-                      {m.custo ? (
-                        <span className="ml-1 text-[9px] text-zinc-500">· {m.custo}</span>
-                      ) : null}
-                    </li>
-                  ))}
-                </ul>
-              )}
             </div>
-          )}
-          {result.explanation?.disponivel && result.explanation.domains?.length > 0 && (
-            <div className="mt-2">
-              <p className="mb-1 text-[9px] font-bold uppercase tracking-wider text-zinc-500">
-                Contribuição por domínio
-              </p>
-              {result.explanation.narrativa && (
-                <p className="mb-1.5 text-[10px] leading-snug text-zinc-400">
-                  {result.explanation.narrativa}
-                </p>
-              )}
-              <ul className="space-y-1">
-                {result.explanation.domains.slice(0, 5).map((d) => (
-                  <li key={d.id} className="text-[10px] text-zinc-400">
-                    <div className="mb-0.5 flex justify-between gap-2">
-                      <span className="text-zinc-300">{d.label}</span>
-                      <span className="font-mono text-violet-200">{d.contribution_pct.toFixed(0)}%</span>
-                    </div>
-                    <div className="h-1 overflow-hidden rounded-full bg-zinc-800">
-                      <div
-                        className="h-full rounded-full bg-violet-500/70"
-                        style={{ width: `${Math.min(100, Math.max(2, d.contribution_pct))}%` }}
-                      />
-                    </div>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
-          {result.top_features && result.top_features.length > 0 && (
-            <div className="mt-2">
-              <p className="mb-1 text-[9px] font-bold uppercase tracking-wider text-zinc-500">
-                Variáveis mais influentes
-              </p>
-              <ul className="space-y-0.5">
-                {result.top_features.map((f) => (
-                  <li key={f.feature} className="flex justify-between text-[10px] text-zinc-400">
-                    <span className="font-mono text-violet-200/90">{f.feature}</span>
-                    <span>{(f.importance * 100).toFixed(0)}%</span>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
-          <p className="mt-2 text-[9px] leading-relaxed text-zinc-500">{result.disclaimer}</p>
-          {result.critical_neighborhoods?.length > 0 && (
-            <ul className="mt-3 space-y-1">
-              {result.critical_neighborhoods.slice(0, 5).map((b) => (
-                <li key={b.bairro_id} className="flex justify-between text-[10px] text-zinc-300">
-                  <span>{b.bairro_nome}</span>
-                  <span className="font-mono text-violet-300">{(b.risk_probability * 100).toFixed(0)}%</span>
-                </li>
-              ))}
-            </ul>
           )}
         </div>
       )}

@@ -166,8 +166,14 @@ class ChuvaExtremaSimRequest(BaseModel):
     duracao_min: Optional[int] = Field(
         default=60,
         ge=15,
-        le=360,
-        description="Duração do evento de projeto (min) para curva IDF",
+        le=10080,
+        description=(
+            "Duração do evento de projeto (min) — usada na curva IDF (quando "
+            "periodo_retorno_anos informado) e na física da simulação: mesma lâmina "
+            "(mm) em janelas mais curtas gera intensidade (mm/h) maior e mancha mais "
+            "abrupta; em janelas longas (até 10080 min = 7 dias) a chuva é mais "
+            "distribuída/infiltrada. Aceita de 15 min a 7 dias."
+        ),
     )
     nivel_mar_m: Optional[float] = Field(
         default=None,
@@ -233,6 +239,12 @@ class ShadowInsolationRequest(BaseModel):
 class ChuvaExtremaCompareRequest(BaseModel):
     baseline_mm: float = Field(default=80.0, description="Cenário de referência (mm)")
     scenario_mm: float = Field(..., description="Cenário alternativo (mm)")
+    duracao_min: Optional[int] = Field(
+        default=60,
+        ge=15,
+        le=10080,
+        description="Duração do evento (min) aplicada a ambos os cenários — 15 min a 7 dias.",
+    )
     codigo_ibge: Optional[str] = Field(default=None, description="Código IBGE do município selecionado")
 
 
@@ -749,3 +761,39 @@ class FloodRiskPredictionResponse(BaseModel):
     features_used: Optional[dict] = None
     model_auc_roc: Optional[float] = None
     disclaimer: str
+
+
+# 21c.4 — Canal de registro em campo (Defesa Civil)
+class EventoAlagamentoCampoCreate(BaseModel):
+    codigo_ibge: str
+    tipo: str = Field(default="Alagamento Urbano", description="Inundação | Alagamento Urbano | Enxurrada")
+    inicio_em: datetime
+    fim_em: Optional[datetime] = None
+    severidade: Optional[str] = Field(default="media", description="baixa | media | alta | critica")
+    fenomeno: Optional[str] = Field(default="pluvial", description="pluvial | fluvial | misto")
+    populacao_afetada: Optional[int] = None
+    precip_acumulada_mm: Optional[float] = None
+    referencia: Optional[str] = None
+    lat: Optional[float] = Field(default=None, description="Usado quando geojson não é enviado")
+    lng: Optional[float] = None
+    geojson: Optional[Dict[str, Any]] = Field(default=None, description="Feature/geometria GeoJSON do ponto/polígono")
+
+
+class EventoAlagamentoObservadoOut(BaseModel):
+    id: int
+    codigo_ibge: str
+    tipo: str
+    inicio_em: Optional[str] = None
+    fim_em: Optional[str] = None
+    severidade: Optional[str] = None
+    fenomeno: Optional[str] = None
+    fonte: str
+    data_quality: str
+    geometry: Optional[dict] = None
+    referencia: Optional[str] = None
+
+
+class EventosObservadosListResponse(BaseModel):
+    codigo_ibge: str
+    total: int
+    eventos: List[Dict[str, Any]]

@@ -21,10 +21,17 @@ import {
   type SocioSubcamadaId,
 } from '@/config/socioeconomicoSubcamadas';
 import {
+  DEPENDENCIA_COLORS,
+  DEPENDENCIA_LABELS,
   EDUCACAO_ETAPAS,
+  EQUIPAMENTO_DEPS_DEFAULT,
+  EQUIPAMENTO_TIPOS,
+  EQUIPAMENTO_TIPOS_DEFAULT,
   MAX_EDUCACAO_RAIO_M,
   MIN_EDUCACAO_RAIO_M,
+  type DependenciaId,
   type EducacaoEtapaId,
+  type EquipamentoTipoId,
 } from '@/config/educacaoInep';
 import TemporalYearPanel from './TemporalYearPanel';
 import {
@@ -89,6 +96,12 @@ type LayerPanelProps = {
   setEducacaoRaioM?: (value: number) => void;
   showEducacaoBuffer?: boolean;
   setShowEducacaoBuffer?: (value: boolean) => void;
+  equipamentoTiposAtivos?: EquipamentoTipoId[];
+  toggleEquipamentoTipo?: (id: EquipamentoTipoId) => void;
+  setEquipamentoTiposAtivos?: (ids: EquipamentoTipoId[]) => void;
+  equipamentoDepsAtivas?: DependenciaId[];
+  toggleEquipamentoDep?: (id: DependenciaId) => void;
+  setEquipamentoDepsAtivas?: (ids: DependenciaId[]) => void;
   temporalActiveTemas?: TemporalTemaOption[];
   layerAnoByTema?: Partial<Record<TemporalTemaId, number>>;
   setLayerAnoForTema?: (temaId: TemporalTemaId, ano: number | null) => void;
@@ -125,6 +138,12 @@ export default function LayerPanel({
   setEducacaoRaioM,
   showEducacaoBuffer = true,
   setShowEducacaoBuffer,
+  equipamentoTiposAtivos = EQUIPAMENTO_TIPOS_DEFAULT,
+  toggleEquipamentoTipo,
+  setEquipamentoTiposAtivos,
+  equipamentoDepsAtivas = EQUIPAMENTO_DEPS_DEFAULT,
+  toggleEquipamentoDep,
+  setEquipamentoDepsAtivas,
   temporalActiveTemas = [],
   layerAnoByTema = {},
   setLayerAnoForTema,
@@ -379,6 +398,92 @@ export default function LayerPanel({
           </div>
         )}
 
+        {activeLayers.includes('infraestrutura') && toggleEquipamentoTipo && toggleEquipamentoDep && (
+          <div className="rounded-lg border border-teal-500/25 bg-teal-950/15 p-2">
+            <div className="mb-1.5 flex items-center justify-between gap-2">
+              <p className="text-[9px] font-bold uppercase tracking-wider text-teal-200">
+                Equipamentos — tipo
+              </p>
+              {setEquipamentoTiposAtivos && (
+                <button
+                  type="button"
+                  onClick={() => setEquipamentoTiposAtivos([...EQUIPAMENTO_TIPOS_DEFAULT])}
+                  className="text-[8px] font-semibold text-teal-300/80 hover:text-teal-100"
+                >
+                  Todas (sem vias)
+                </button>
+              )}
+            </div>
+            <div className="flex flex-wrap gap-1">
+              {EQUIPAMENTO_TIPOS.map((tipo) => {
+                const isActive = equipamentoTiposAtivos.includes(tipo.id);
+                return (
+                  <button
+                    key={tipo.id}
+                    type="button"
+                    title={`${isActive ? 'Ocultar' : 'Mostrar'} ${tipo.label}`}
+                    onClick={() => toggleEquipamentoTipo(tipo.id)}
+                    className={`inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[9px] font-semibold transition ${
+                      isActive
+                        ? 'border-teal-400/50 bg-teal-500/20 text-teal-50'
+                        : 'border-zinc-700 bg-zinc-950/60 text-zinc-500 line-through opacity-60'
+                    }`}
+                  >
+                    <span
+                      className="inline-flex h-3.5 min-w-[14px] items-center justify-center rounded-sm px-0.5 text-[8px] font-extrabold text-white"
+                      style={{ backgroundColor: tipo.color }}
+                    >
+                      {tipo.short}
+                    </span>
+                    {tipo.label}
+                  </button>
+                );
+              })}
+            </div>
+            <div className="mb-1.5 mt-2.5 flex items-center justify-between gap-2">
+              <p className="text-[9px] font-bold uppercase tracking-wider text-teal-200">
+                Dependência
+              </p>
+              {setEquipamentoDepsAtivas && (
+                <button
+                  type="button"
+                  onClick={() => setEquipamentoDepsAtivas([...EQUIPAMENTO_DEPS_DEFAULT])}
+                  className="text-[8px] font-semibold text-teal-300/80 hover:text-teal-100"
+                >
+                  Todas
+                </button>
+              )}
+            </div>
+            <div className="flex flex-wrap gap-1">
+              {(Object.keys(DEPENDENCIA_LABELS) as DependenciaId[]).map((dep) => {
+                const isActive = equipamentoDepsAtivas.includes(dep);
+                return (
+                  <button
+                    key={dep}
+                    type="button"
+                    title={`${isActive ? 'Ocultar' : 'Mostrar'} ${DEPENDENCIA_LABELS[dep]}`}
+                    onClick={() => toggleEquipamentoDep(dep)}
+                    className={`inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[9px] font-semibold transition ${
+                      isActive
+                        ? 'border-teal-400/50 bg-teal-500/20 text-teal-50'
+                        : 'border-zinc-700 bg-zinc-950/60 text-zinc-500 line-through opacity-60'
+                    }`}
+                  >
+                    <span
+                      className="h-2.5 w-2.5 rounded-sm border border-white/30"
+                      style={{ backgroundColor: DEPENDENCIA_COLORS[dep] }}
+                    />
+                    {DEPENDENCIA_LABELS[dep]}
+                  </button>
+                );
+              })}
+            </div>
+            <p className="mt-2 text-[8px] leading-snug text-zinc-500">
+              Ex.: só creches municipais → ative Creche + Municipal e desative o restante.
+            </p>
+          </div>
+        )}
+
         {temporalActiveTemas.length > 0 && setLayerAnoForTema && (
           <TemporalYearPanel
             activeTemas={temporalActiveTemas}
@@ -458,6 +563,13 @@ export default function LayerPanel({
 
               {!isGroupCollapsed && (
                 <div className="flex flex-col gap-1 px-1 pb-1.5">
+                  {group === 'Planejamento' && (
+                    <p className="mx-1 mb-0.5 rounded border border-teal-500/25 bg-teal-950/20 px-2 py-1.5 text-[9px] leading-snug text-teal-100/90">
+                      Priorização e recomendações destas camadas consideram o{' '}
+                      <span className="font-semibold text-teal-200">Plano Diretor</span> do
+                      município selecionado (legislação urbanística oficial).
+                    </p>
+                  )}
                   {groupLayers.map((opt) => {
                     const isActive = activeLayers.includes(opt.id);
                     const isDisabled = opt.disponivel === false;

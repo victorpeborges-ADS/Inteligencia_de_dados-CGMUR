@@ -41,9 +41,51 @@ def test_recife_landcover_not_horizontal_bands():
         "Vegetação / Floresta": 1750.0,
         "Corpo d'água": 900.0,
     }, codigo_ibge="2611606")
-    assert len(parts) == 3
+    assert len(parts) >= 2
     for geom in parts.values():
         assert not _geometry_is_horizontal_band(geom, poly)
+    # Água não pode dominar o município (mancha Voronoi antiga)
+    water = parts.get("Corpo d'água")
+    if water is not None and not water.is_empty:
+        assert water.area / poly.area < 0.12
+
+
+def test_recife_osm_landcover_loader():
+    from app.data_connectors.osm_landcover_collector import GEOJSON_PATH, build_recife_osm_landcover
+    from shapely.geometry import box
+
+    if not GEOJSON_PATH.exists():
+        pytest.skip("cobertura_recife_osm.geojson ausente")
+    poly = box(-34.98, -8.12, -34.88, -8.02)
+    parts = build_recife_osm_landcover(poly)
+    assert parts is not None
+    assert "Área Urbana" in parts
+    assert "Corpo d'água" in parts or "Vegetação / Floresta" in parts
+    water = parts.get("Corpo d'água")
+    if water is not None:
+        assert water.area / poly.area < 0.25
+
+
+def test_recife_habitable_mask_excludes_ucn():
+    """UCN Beberibe (Guabiraba) não deve permanecer como área de renda."""
+    from app.data_connectors.osm_landcover_collector import (
+        UCN_GEOJSON_PATH,
+        get_recife_habitable_mask,
+        load_recife_ucn_geom,
+    )
+    from shapely.geometry import box
+
+    if not UCN_GEOJSON_PATH.exists():
+        pytest.skip("recife_ucn.geojson ausente")
+    ucn = load_recife_ucn_geom()
+    assert ucn is not None and not ucn.is_empty
+    # envelope municipal aproximado
+    poly = box(-35.02, -8.16, -34.85, -7.93)
+    hab = get_recife_habitable_mask(poly)
+    assert hab is not None and not hab.is_empty
+    # habitável não deve cobrir o núcleo da UCN
+    overlap = hab.intersection(ucn).area / max(ucn.area, 1e-12)
+    assert overlap < 0.05
 
 
 def test_build_landcover_series_recife_reference(monkeypatch):

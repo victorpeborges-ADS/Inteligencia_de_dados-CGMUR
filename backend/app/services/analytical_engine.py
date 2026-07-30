@@ -1,5 +1,6 @@
 import json
 import logging
+from collections import OrderedDict
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from app.models import Municipio, Bairro, SetorCensitario, CoberturaVegetalMapBiomas, HistoricoDesastreS2ID, AlertaCemaden, InfraestruturaUrbana, MunicipioSaude, MunicipioSeguranca, MunicipioFiscal, EstabelecimentoSaude
@@ -10,6 +11,16 @@ from typing import List, Dict, Any
 logger = logging.getLogger(__name__)
 
 class AnalyticalEngine:
+    # Nota (jul/2026): _covered_area_deg é chamado uma vez por bairro/setor (centenas de
+    # vezes por request) sempre com a MESMA lista de cover_geoms (ex.: todos os polígonos
+    # "Área Urbana" do MapBiomas do município). Sem memoização, o unary_union + make_valid
+    # dessa lista era refeito do zero em cada iteração — em Recife isso sozinho custava
+    # ~84s no painel de risco. A chave usa id()+len() da lista (mesmo objeto Python
+    # reaproveitado dentro do laço do caller) com um LRU pequeno, evitando qualquer
+    # crescimento de memória sem limite entre requests.
+    _cover_union_cache: "OrderedDict[tuple[int, int], Any]" = OrderedDict()
+    _COVER_CACHE_MAXSIZE = 32
+
     @staticmethod
     def _shape_from_db_geometry(db: Session, geom) -> Any:
         return shape(json.loads(db.scalar(geom.ST_AsGeoJSON())))
@@ -46,18 +57,33 @@ class AnalyticalEngine:
                 return None
 
     @staticmethod
-    def _covered_area_deg(db: Session, base_geom, cover_geoms) -> float:
-        base_shape = AnalyticalEngine._repair_shape(
-            AnalyticalEngine._shape_from_db_geometry(db, base_geom),
-        )
+    def _merged_cover_shape(db: Session, cover_geoms) -> Any | None:
+        if not cover_geoms:
+            return None
+        cache = AnalyticalEngine._cover_union_cache
+        key = (id(cover_geoms), len(cover_geoms))
+        cached = cache.get(key)
+        if cached is not None:
+            cache.move_to_end(key)
+            return cached
+
         cover_shapes = [
             AnalyticalEngine._shape_from_db_geometry(db, row.geom)
             for row in cover_geoms
         ]
-        if not cover_shapes:
-            return 0.0
+        merged = AnalyticalEngine._safe_unary_union(cover_shapes) if cover_shapes else None
+        cache[key] = merged
+        cache.move_to_end(key)
+        while len(cache) > AnalyticalEngine._COVER_CACHE_MAXSIZE:
+            cache.popitem(last=False)
+        return merged
 
-        merged = AnalyticalEngine._safe_unary_union(cover_shapes)
+    @staticmethod
+    def _covered_area_deg(db: Session, base_geom, cover_geoms) -> float:
+        base_shape = AnalyticalEngine._repair_shape(
+            AnalyticalEngine._shape_from_db_geometry(db, base_geom),
+        )
+        merged = AnalyticalEngine._merged_cover_shape(db, cover_geoms)
         if merged is None:
             return 0.0
         try:
@@ -326,21 +352,26 @@ class AnalyticalEngine:
         geom,
         muni_shape,
         water_rows: list,
+        *,
+        flood_events: list | None = None,
+        urban_cover: list | None = None,
     ) -> dict[str, float]:
-        flood_events = db.query(HistoricoDesastreS2ID).filter(
-            HistoricoDesastreS2ID.municipio_id == municipio_id,
-            HistoricoDesastreS2ID.tipo_desastre.in_(["Inundação", "Alagamento Urbano"]),
-        ).all()
+        if flood_events is None:
+            flood_events = db.query(HistoricoDesastreS2ID).filter(
+                HistoricoDesastreS2ID.municipio_id == municipio_id,
+                HistoricoDesastreS2ID.tipo_desastre.in_(["Inundação", "Alagamento Urbano"]),
+            ).all()
         flood_disasters = sum(
             1 for ev in flood_events if AnalyticalEngine._intersects_shape(db, geom, ev.geom)
         )
         s2id_score = min(flood_disasters / 3.0, 1.0)
 
         area_deg = db.scalar(func.ST_Area(geom))
-        urban_cover = db.query(CoberturaVegetalMapBiomas).filter(
-            CoberturaVegetalMapBiomas.municipio_id == municipio_id,
-            CoberturaVegetalMapBiomas.classe_uso == "Área Urbana",
-        ).all()
+        if urban_cover is None:
+            urban_cover = db.query(CoberturaVegetalMapBiomas).filter(
+                CoberturaVegetalMapBiomas.municipio_id == municipio_id,
+                CoberturaVegetalMapBiomas.classe_uso == "Área Urbana",
+            ).all()
         urban_area_deg = AnalyticalEngine._covered_area_deg(db, geom, urban_cover)
         urban_pct = float(urban_area_deg) / float(area_deg) if urban_area_deg and area_deg else 0.5
         impermeabilizacao_score = min(urban_pct, 1.0)
@@ -366,10 +397,26 @@ class AnalyticalEngine:
             CoberturaVegetalMapBiomas.municipio_id == municipio_id,
             CoberturaVegetalMapBiomas.classe_uso == "Corpo d'água",
         ).all()
+        flood_events = db.query(HistoricoDesastreS2ID).filter(
+            HistoricoDesastreS2ID.municipio_id == municipio_id,
+            HistoricoDesastreS2ID.tipo_desastre.in_(["Inundação", "Alagamento Urbano"]),
+        ).all()
+        urban_cover = db.query(CoberturaVegetalMapBiomas).filter(
+            CoberturaVegetalMapBiomas.municipio_id == municipio_id,
+            CoberturaVegetalMapBiomas.classe_uso == "Área Urbana",
+        ).all()
         setores = db.query(SetorCensitario).filter(SetorCensitario.municipio_id == municipio_id).all()
         results: list[dict[str, Any]] = []
         for s in setores:
-            metrics = AnalyticalEngine._iri_for_unit(db, municipio_id, s.geom, muni_shape, water_rows)
+            metrics = AnalyticalEngine._iri_for_unit(
+                db,
+                municipio_id,
+                s.geom,
+                muni_shape,
+                water_rows,
+                flood_events=flood_events,
+                urban_cover=urban_cover,
+            )
             results.append({
                 "id": s.id,
                 "codigo_setor": s.codigo_setor,
@@ -512,19 +559,89 @@ class AnalyticalEngine:
         results = []
         muni = db.query(Municipio).filter(Municipio.id == municipio_id).first()
         muni_shape = AnalyticalEngine._shape_from_db_geometry(db, muni.geom) if muni else None
+        if muni_shape is None:
+            return []
+
         water_rows = db.query(CoberturaVegetalMapBiomas).filter(
             CoberturaVegetalMapBiomas.municipio_id == municipio_id,
             CoberturaVegetalMapBiomas.classe_uso == "Corpo d'água",
         ).all()
+        flood_events = db.query(HistoricoDesastreS2ID).filter(
+            HistoricoDesastreS2ID.municipio_id == municipio_id,
+            HistoricoDesastreS2ID.tipo_desastre.in_(["Inundação", "Alagamento Urbano"]),
+        ).all()
+        urban_cover = db.query(CoberturaVegetalMapBiomas).filter(
+            CoberturaVegetalMapBiomas.municipio_id == municipio_id,
+            CoberturaVegetalMapBiomas.classe_uso == "Área Urbana",
+        ).all()
+
+        # Pré-processa geometrias uma vez (evita unary_union/parse por bairro).
+        flood_pts = []
+        for ev in flood_events:
+            try:
+                flood_pts.append(
+                    AnalyticalEngine._repair_shape(
+                        AnalyticalEngine._shape_from_db_geometry(db, ev.geom)
+                    )
+                )
+            except Exception:
+                continue
+        urban_merged = AnalyticalEngine._safe_unary_union(
+            [
+                AnalyticalEngine._shape_from_db_geometry(db, row.geom)
+                for row in urban_cover
+            ]
+        )
+        water_merged = AnalyticalEngine._safe_unary_union(
+            [
+                AnalyticalEngine._shape_from_db_geometry(db, row.geom)
+                for row in water_rows
+            ]
+        )
+
+        minx, miny, maxx, maxy = muni_shape.bounds
+        max_ref = max(((maxx - minx) ** 2 + (maxy - miny) ** 2) ** 0.5 * 0.4, 0.004)
 
         for b in bairros:
-            if muni_shape is None:
+            try:
+                unit = AnalyticalEngine._repair_shape(
+                    AnalyticalEngine._shape_from_db_geometry(db, b.geom)
+                )
+            except Exception:
                 continue
-            metrics = AnalyticalEngine._iri_for_unit(db, municipio_id, b.geom, muni_shape, water_rows)
+            if unit is None or unit.is_empty:
+                continue
+
+            flood_disasters = sum(1 for pt in flood_pts if pt is not None and unit.intersects(pt))
+            s2id_score = min(flood_disasters / 3.0, 1.0)
+
+            area = float(unit.area) or 1e-12
+            if urban_merged is not None and not urban_merged.is_empty:
+                try:
+                    urban_pct = min(1.0, float(unit.intersection(urban_merged).area) / area)
+                except Exception:
+                    urban_pct = 0.5
+            else:
+                urban_pct = 0.5
+            impermeabilizacao_score = urban_pct
+
+            if water_merged is None or water_merged.is_empty:
+                water_score = 0.25
+            elif unit.intersects(water_merged):
+                water_score = 1.0
+            else:
+                dist = unit.centroid.distance(water_merged)
+                water_score = round(max(0.2, min(1.0, 1.0 - dist / max_ref)), 2)
+
+            iri = (s2id_score * 0.4) + (impermeabilizacao_score * 0.4) + (water_score * 0.2)
+            iri = round(max(0.0, min(1.0, iri)), 2)
             results.append({
                 "id": b.id,
                 "bairro_nome": b.nome,
-                **metrics,
+                "s2id_historico_score": round(s2id_score, 2),
+                "impermeabilizacao_score": round(impermeabilizacao_score, 2),
+                "hidrografia_proximidade_score": water_score,
+                "indice_risco_inundacao": iri,
             })
 
         return results
@@ -787,6 +904,7 @@ class AnalyticalEngine:
         drain_removed_mm: float = 0.0,
         rede_saturada: bool = False,
         drenagem_meta: dict | None = None,
+        duracao_h: float = 1.0,
     ) -> Dict[str, Any]:
         """
         Simula chuva extrema com DEM SRTM, IRI por bairro, deslizamento por declividade×chuva
@@ -809,6 +927,7 @@ class AnalyticalEngine:
             drain_removed_mm=drain_removed_mm,
             rede_saturada=rede_saturada,
             drenagem_meta=drenagem_meta,
+            duracao_h=duracao_h,
         )
         flood_bands = terrain.get("flood_bands")
         intensity = 1.2 + (precipitacao_mm / 100.0)
@@ -902,12 +1021,44 @@ class AnalyticalEngine:
 
             logging.getLogger(__name__).warning("Exposição edifícios falhou: %s", exc)
 
+        affected_area_km2 = round(final_hazards.area * 12300.0, 2)
+
+        # Impactos operacionais: escoamento, mobilidade, âncora histórica
+        try:
+            from app.services.rainfall_event_anchors import (
+                estimate_operational_impacts,
+                match_anchor,
+            )
+
+            dmeta = drenagem_meta or {}
+            sim_meta["impacto_operacional"] = estimate_operational_impacts(
+                precip_mm=float(precipitacao_mm),
+                max_depth_m=float(sim_meta.get("max_depth_m") or 0.0),
+                affected_area_km2=float(affected_area_km2),
+                affected_population=int(affected_pop or 0),
+                landslide_zones=int(sim_meta.get("landslide_zones") or 0),
+                drainage_cap_mm_h=float(
+                    dmeta.get("capacidade_mm_h") or dmeta.get("capacidade") or 18.0
+                ),
+                drain_removed_mm=float(drain_removed_mm or dmeta.get("removido_mm") or 0.0),
+                drenagem_aplicada=bool(dmeta.get("aplicado", True)),
+                hydrograph_duration_h=float(sim_meta.get("hydrograph_duration_h") or 6.0),
+                duracao_h=float(duracao_h or 1.0),
+            )
+            anchor = match_anchor(muni.codigo_ibge, float(precipitacao_mm), duracao_h=float(duracao_h or 1.0))
+            if anchor:
+                sim_meta["ancora_historica"] = anchor
+        except Exception as exc:
+            import logging
+
+            logging.getLogger(__name__).warning("Impacto operacional / âncora falhou: %s", exc)
+
         return {
             "scenario_type": "ExtremeRainfall",
             "input_value": precipitacao_mm,
             "metric_impact": "População em áreas de alto risco de desastre",
             "impact_value": affected_pop,
-            "affected_area_km2": round(final_hazards.area * 12300.0, 2),
+            "affected_area_km2": affected_area_km2,
             "affected_population": affected_pop,
             "affected_bairros": affected_bairros,
             "geometry": fc,

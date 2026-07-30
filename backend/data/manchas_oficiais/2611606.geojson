@@ -1,0 +1,30 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {
+        "codigo_ibge": "2611606",
+        "nome": "Mancha piloto (fixture) — área central Recife",
+        "fonte": "fixture_piloto_20h5",
+        "qualidade": "Estimado",
+        "categoria": "estudo_piloto",
+        "descricao": "Polígono de exemplo para desenvolvimento/testes da camada de validação 20h.5. Não é uma mancha oficial real de Defesa Civil/CPRM — substituir por estudo depositado quando disponível.",
+        "periodo_retorno_anos": null,
+        "data_referencia": null
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [-34.885, -8.055],
+            [-34.875, -8.055],
+            [-34.875, -8.045],
+            [-34.885, -8.045],
+            [-34.885, -8.055]
+          ]
+        ]
+      }
+    }
+  ]
+}

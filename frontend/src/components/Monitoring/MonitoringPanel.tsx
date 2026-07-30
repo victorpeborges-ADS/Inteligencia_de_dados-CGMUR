@@ -35,6 +35,7 @@ import {
   Megaphone,
 } from 'lucide-react';
 import PublicAlertDispatchModal from './PublicAlertDispatchModal';
+import FieldFloodEventForm from './FieldFloodEventForm';
 
 const MonitoringMiniMap = dynamic(() => import('./MonitoringMiniMap'), { ssr: false });
 
@@ -381,6 +382,12 @@ export default function MonitoringPanel({ codigoIbge, municipioNome, onActivateC
           onToast?.('Alerta disseminado', 'Registro auditável criado para Defesa Civil / canais selecionados.');
           void load();
         }}
+      />
+
+      <FieldFloodEventForm
+        codigoIbge={codigoIbge}
+        onToast={onToast}
+        onCreated={() => void load()}
       />
 
       {data?.risk_probability != null && (
