@@ -1,0 +1,1207 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SINIDU.3D — Política Pública para Cidades Inteligentes</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --bg: #09090b;
+      --bg-elevated: #18181b;
+      --card: #18181b;
+      --border: #27272a;
+      --text: #fafafa;
+      --muted: #a1a1aa;
+      --dim: #71717a;
+      --accent: #6366f1;
+      --accent-glow: rgba(99, 102, 241, 0.35);
+      --emerald: #10b981;
+      --sky: #0ea5e9;
+      --rose: #f43f5e;
+      --amber: #f59e0b;
+      --section-pad: clamp(2rem, 6vw, 5rem);
+    }
+
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    html {
+      scroll-behavior: smooth;
+      scroll-snap-type: y proximity;
+    }
+
+    body {
+      font-family: "Inter", system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.5;
+      overflow-x: hidden;
+    }
+
+    ::selection { background: rgba(129,140,248,0.35); }
+
+    /* ── Chrome UI ── */
+    .chrome {
+      position: fixed;
+      inset: 0 0 auto 0;
+      z-index: 100;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 1rem 1.5rem;
+      background: linear-gradient(180deg, rgba(9,9,11,0.92) 0%, transparent 100%);
+      pointer-events: none;
+    }
+    .chrome > * { pointer-events: auto; }
+    .logo-mini {
+      font-weight: 700;
+      font-size: 0.8rem;
+      letter-spacing: 0.12em;
+      color: var(--muted);
+    }
+    .chrome-actions { display: flex; gap: 0.5rem; }
+    .btn-ghost {
+      background: rgba(255,255,255,0.06);
+      border: 1px solid var(--border);
+      color: var(--text);
+      font-size: 0.7rem;
+      font-weight: 600;
+      padding: 0.45rem 0.85rem;
+      border-radius: 999px;
+      cursor: pointer;
+      backdrop-filter: blur(12px);
+      transition: background 0.2s, border-color 0.2s;
+    }
+    .btn-ghost:hover { background: rgba(255,255,255,0.1); border-color: rgba(255,255,255,0.15); }
+
+    .progress-rail {
+      position: fixed;
+      right: 1.25rem;
+      top: 50%;
+      transform: translateY(-50%);
+      z-index: 90;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .progress-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: rgba(255,255,255,0.15);
+      cursor: pointer;
+      transition: all 0.35s cubic-bezier(0.22, 1, 0.36, 1);
+    }
+    .progress-dot.active {
+      background: var(--accent);
+      transform: scale(1.5);
+      box-shadow: 0 0 12px var(--accent-glow);
+    }
+
+    /* ── Sections ── */
+    .section {
+      min-height: 100vh;
+      min-height: 100dvh;
+      scroll-snap-align: start;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      padding: calc(var(--section-pad) + 2rem) var(--section-pad) var(--section-pad);
+      position: relative;
+      overflow: hidden;
+    }
+
+    .section::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background: radial-gradient(ellipse 70% 50% at 50% -20%, rgba(99,102,241,0.12), transparent 60%);
+      pointer-events: none;
+    }
+
+    .reveal {
+      opacity: 0;
+      transform: translateY(32px);
+      transition: opacity 0.9s cubic-bezier(0.22, 1, 0.36, 1), transform 0.9s cubic-bezier(0.22, 1, 0.36, 1);
+    }
+    .reveal.visible { opacity: 1; transform: translateY(0); }
+    .reveal-delay-1 { transition-delay: 0.1s; }
+    .reveal-delay-2 { transition-delay: 0.2s; }
+    .reveal-delay-3 { transition-delay: 0.35s; }
+
+    .eyebrow {
+      font-size: 0.7rem;
+      font-weight: 600;
+      letter-spacing: 0.2em;
+      text-transform: uppercase;
+      color: var(--accent);
+      margin-bottom: 0.75rem;
+    }
+
+    h1.hero-title {
+      font-family: "Instrument Serif", Georgia, serif;
+      font-size: clamp(3rem, 9vw, 6.5rem);
+      font-weight: 400;
+      line-height: 0.95;
+      letter-spacing: -0.02em;
+      background: linear-gradient(180deg, #fff 0%, #a1a1aa 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+
+    h2.section-title {
+      font-family: "Instrument Serif", Georgia, serif;
+      font-size: clamp(2rem, 5vw, 3.5rem);
+      font-weight: 400;
+      line-height: 1.1;
+      margin-bottom: 1rem;
+    }
+
+    .lead {
+      font-size: clamp(1rem, 2vw, 1.25rem);
+      color: var(--muted);
+      max-width: 36rem;
+      line-height: 1.65;
+    }
+
+    .split {
+      display: grid;
+      grid-template-columns: 1fr 1.2fr;
+      gap: clamp(2rem, 5vw, 4rem);
+      align-items: center;
+      width: 100%;
+      max-width: 1280px;
+      margin: 0 auto;
+    }
+
+    .split.reverse { grid-template-columns: 1.2fr 1fr; }
+    .center-block { max-width: 900px; margin: 0 auto; width: 100%; text-align: center; }
+    .center-block .lead { margin: 0 auto; }
+
+    /* ── Mockup frames ── */
+    .frame {
+      border-radius: 16px;
+      border: 1px solid var(--border);
+      background: var(--bg-elevated);
+      box-shadow:
+        0 0 0 1px rgba(255,255,255,0.03) inset,
+        0 40px 80px -20px rgba(0,0,0,0.7),
+        0 0 120px -40px var(--accent-glow);
+      overflow: hidden;
+      transform: perspective(1200px) rotateX(2deg);
+      transition: transform 0.6s cubic-bezier(0.22, 1, 0.36, 1);
+    }
+    .frame:hover { transform: perspective(1200px) rotateX(0deg) scale(1.01); }
+
+    .frame-bar {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 12px 16px;
+      background: rgba(0,0,0,0.4);
+      border-bottom: 1px solid var(--border);
+    }
+    .dot { width: 10px; height: 10px; border-radius: 50%; }
+    .dot-r { background: #ef4444; }
+    .dot-y { background: #eab308; }
+    .dot-g { background: #22c55e; }
+    .frame-url {
+      flex: 1;
+      text-align: center;
+      font-size: 0.65rem;
+      color: var(--dim);
+      font-family: ui-monospace, monospace;
+    }
+
+    .frame-body { padding: 16px; }
+    .frame-body--flush { padding: 0; line-height: 0; }
+
+    .screen-shot {
+      width: 100%;
+      height: auto;
+      display: block;
+      border-radius: 0 0 16px 16px;
+    }
+    .screen-shot--crop {
+      max-height: min(72vh, 640px);
+      object-fit: cover;
+      object-position: top center;
+    }
+
+    /* Hero mockup */
+    .hero-mock {
+      margin-top: 2.5rem;
+      max-width: 1100px;
+      margin-left: auto;
+      margin-right: auto;
+      width: 100%;
+    }
+
+    /* Flow diagrams */
+    .flow-col {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 0;
+      max-width: 320px;
+      margin: 0 auto;
+      width: 100%;
+    }
+    .flow-item {
+      width: 100%;
+      text-align: center;
+      padding: 0.65rem 1.25rem;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      font-size: 0.85rem;
+      font-weight: 500;
+      color: #d4d4d8;
+    }
+    .flow-item.highlight {
+      border-color: rgba(129,140,248,0.5);
+      background: rgba(129,140,248,0.1);
+      color: #fff;
+      font-weight: 600;
+      box-shadow: 0 0 30px -10px var(--accent-glow);
+    }
+    .flow-arrow {
+      width: 2px;
+      height: 20px;
+      background: linear-gradient(180deg, var(--border), rgba(129,140,248,0.5));
+      position: relative;
+    }
+    .flow-arrow::after {
+      content: "";
+      position: absolute;
+      bottom: -4px;
+      left: 50%;
+      transform: translateX(-50%);
+      border: 5px solid transparent;
+      border-top-color: rgba(129,140,248,0.6);
+    }
+
+    /* Horizontal flow */
+    .h-flow {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: center;
+      align-items: center;
+      gap: 0.5rem;
+      margin-top: 2rem;
+    }
+    .h-step {
+      padding: 0.6rem 1rem;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      font-size: 0.8rem;
+      font-weight: 500;
+      white-space: nowrap;
+    }
+    .h-step.on {
+      border-color: rgba(129,140,248,0.5);
+      background: rgba(129,140,248,0.12);
+      color: #fff;
+    }
+    .h-arrow { color: var(--dim); font-size: 0.9rem; }
+
+    /* Module cards */
+    .cards-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+      gap: 1rem;
+      max-width: 1100px;
+      margin: 2rem auto 0;
+      width: 100%;
+    }
+    .module-card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 1.5rem;
+      transition: border-color 0.3s, transform 0.3s, box-shadow 0.3s;
+    }
+    .module-card:hover {
+      border-color: rgba(129,140,248,0.35);
+      transform: translateY(-4px);
+      box-shadow: 0 20px 40px -20px rgba(0,0,0,0.5);
+    }
+    .module-icon {
+      width: 36px;
+      height: 36px;
+      border-radius: 10px;
+      background: rgba(129,140,248,0.15);
+      display: grid;
+      place-items: center;
+      margin-bottom: 1rem;
+      font-size: 1rem;
+    }
+    .module-card h3 { font-size: 1rem; font-weight: 600; margin-bottom: 0.35rem; }
+    .module-card p { font-size: 0.8rem; color: var(--muted); line-height: 1.5; }
+    .module-card .module-do {
+      margin-top: 0.65rem;
+      padding-top: 0.65rem;
+      border-top: 1px solid var(--border);
+      font-size: 0.72rem;
+      color: var(--dim);
+      line-height: 1.45;
+    }
+    .module-card .module-do strong { color: #d4d4d8; font-weight: 600; }
+
+    /* Group label */
+    .group-label {
+      display: flex;
+      align-items: center;
+      gap: 0.6rem;
+      max-width: 1100px;
+      margin: 1.75rem auto 0.5rem;
+      font-size: 0.72rem;
+      font-weight: 700;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: var(--emerald);
+    }
+    .group-label::after {
+      content: "";
+      flex: 1;
+      height: 1px;
+      background: linear-gradient(90deg, rgba(16,185,129,0.4), transparent);
+    }
+    .group-label.indigo { color: #a5b4fc; }
+    .group-label.indigo::after { background: linear-gradient(90deg, rgba(129,140,248,0.4), transparent); }
+
+    /* Definition callout */
+    .def-box {
+      display: flex;
+      gap: 0.85rem;
+      align-items: flex-start;
+      padding: 1rem 1.15rem;
+      background: rgba(255,255,255,0.03);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      margin: 1.25rem 0;
+    }
+    .def-tag {
+      flex: 0 0 auto;
+      font-size: 0.6rem;
+      font-weight: 700;
+      letter-spacing: 0.1em;
+      color: var(--accent);
+      border: 1px solid rgba(99,102,241,0.4);
+      border-radius: 6px;
+      padding: 0.25rem 0.5rem;
+      margin-top: 0.15rem;
+    }
+    .def-box p { font-size: 0.85rem; color: var(--muted); line-height: 1.55; }
+
+    /* Comparison list (X → tool) */
+    .cmp-list { list-style: none; margin-top: 0.5rem; }
+    .cmp-list li {
+      display: flex;
+      align-items: center;
+      gap: 0.6rem;
+      padding: 0.5rem 0;
+      border-bottom: 1px solid rgba(39,39,42,0.6);
+      font-size: 0.85rem;
+    }
+    .cmp-x {
+      flex: 0 0 auto;
+      width: 18px; height: 18px;
+      border-radius: 50%;
+      border: 1px solid var(--rose);
+      color: var(--rose);
+      display: grid; place-items: center;
+      font-size: 0.6rem;
+    }
+    .cmp-what { color: #d4d4d8; min-width: 42%; }
+    .cmp-tool { color: var(--dim); font-size: 0.78rem; }
+    .cmp-final {
+      display: flex; align-items: center; gap: 0.6rem;
+      margin-top: 0.9rem;
+      padding: 0.85rem 1rem;
+      background: rgba(16,185,129,0.1);
+      border: 1px solid rgba(16,185,129,0.3);
+      border-radius: 12px;
+      font-size: 0.85rem;
+      color: #d1fae5;
+      font-weight: 500;
+    }
+    .cmp-check {
+      flex: 0 0 auto;
+      width: 22px; height: 22px;
+      border-radius: 50%;
+      background: rgba(16,185,129,0.2);
+      color: var(--emerald);
+      display: grid; place-items: center;
+      font-size: 0.75rem;
+    }
+
+    /* Ecosystem diagram */
+    .eco {
+      display: grid;
+      grid-template-columns: 1fr auto 1fr auto 1fr;
+      align-items: center;
+      gap: 1rem;
+      max-width: 1100px;
+      margin: 2rem auto 0;
+      width: 100%;
+    }
+    .eco-node {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 1.25rem 1rem;
+      text-align: center;
+    }
+    .eco-node.core {
+      border-color: rgba(16,185,129,0.5);
+      background: rgba(16,185,129,0.08);
+      box-shadow: 0 0 40px -15px rgba(16,185,129,0.4);
+    }
+    .eco-node h4 { font-size: 0.9rem; font-weight: 700; margin-bottom: 0.25rem; }
+    .eco-node.core h4 { color: #6ee7b7; }
+    .eco-node p { font-size: 0.7rem; color: var(--dim); }
+    .eco-mcp {
+      font-size: 0.6rem;
+      font-weight: 700;
+      color: var(--muted);
+      text-align: center;
+      letter-spacing: 0.08em;
+    }
+    .eco-mcp span {
+      display: inline-grid; place-items: center;
+      width: 34px; height: 34px; border-radius: 50%;
+      border: 1px solid var(--border);
+      background: var(--bg-elevated);
+      margin-bottom: 0.25rem;
+    }
+    .eco-sources {
+      display: flex; flex-wrap: wrap; gap: 0.4rem;
+      justify-content: center;
+      margin-top: 0.75rem;
+    }
+    .eco-source {
+      font-size: 0.62rem;
+      padding: 0.25rem 0.55rem;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      color: var(--muted);
+    }
+    .eco-bottom {
+      display: flex; align-items: center; justify-content: center;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+      margin-top: 1.5rem;
+    }
+    .eco-chip {
+      padding: 0.55rem 1rem;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      font-size: 0.78rem;
+      font-weight: 500;
+      color: #d4d4d8;
+    }
+
+    /* Sources grid */
+    .sources-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+      gap: 0.75rem;
+      max-width: 900px;
+      margin: 2rem auto 0;
+    }
+    .source-pill {
+      text-align: center;
+      padding: 1rem 0.75rem;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      font-size: 0.8rem;
+      font-weight: 600;
+      transition: border-color 0.25s;
+    }
+    .source-pill:hover { border-color: rgba(129,140,248,0.4); }
+
+    /* Timeline */
+    .timeline {
+      position: relative;
+      max-width: 760px;
+      margin: 2.5rem auto 0;
+      padding-left: 2rem;
+    }
+    .timeline::before {
+      content: "";
+      position: absolute;
+      left: 7px;
+      top: 0;
+      bottom: 0;
+      width: 2px;
+      background: linear-gradient(180deg, var(--accent), var(--emerald), var(--sky));
+      opacity: 0.5;
+    }
+    .tl-item {
+      position: relative;
+      padding: 0 0 1.75rem 1.5rem;
+      opacity: 0;
+      transform: translateX(-12px);
+      transition: all 0.6s cubic-bezier(0.22, 1, 0.36, 1);
+    }
+    .tl-item.visible { opacity: 1; transform: translateX(0); }
+    .tl-item::before {
+      content: "";
+      position: absolute;
+      left: -1.65rem;
+      top: 0.35rem;
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      background: var(--bg);
+      border: 2px solid var(--accent);
+      box-shadow: 0 0 12px var(--accent-glow);
+    }
+    .tl-item.future::before { border-color: var(--emerald); box-shadow: 0 0 12px rgba(52,211,153,0.35); }
+    .tl-title {
+      font-weight: 600;
+      font-size: 1rem;
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 1rem;
+    }
+    .tl-title .tl-date {
+      flex: 0 0 auto;
+      font-size: 0.72rem;
+      font-weight: 700;
+      color: var(--accent);
+      letter-spacing: 0.05em;
+      white-space: nowrap;
+    }
+    .tl-desc { font-size: 0.8rem; color: var(--muted); margin-top: 0.2rem; }
+
+    /* Three columns */
+    .tri-col {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 1.25rem;
+      max-width: 1150px;
+      margin: 2rem auto 0;
+    }
+    .tri-card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 1.75rem;
+    }
+    .tri-card h3 {
+      font-size: 1.1rem;
+      margin-bottom: 1rem;
+      padding-bottom: 0.75rem;
+      border-bottom: 1px solid var(--border);
+      display: flex; align-items: center; gap: 0.5rem;
+    }
+    .tri-card ul { list-style: none; }
+    .tri-card li {
+      font-size: 0.82rem;
+      color: var(--muted);
+      padding: 0.5rem 0;
+      padding-left: 1rem;
+      position: relative;
+      line-height: 1.45;
+    }
+    .tri-card li::before {
+      content: "·";
+      position: absolute;
+      left: 0;
+      color: var(--accent);
+      font-weight: 700;
+    }
+    .tri-card li strong { color: #d4d4d8; font-weight: 600; }
+    .trail-badge {
+      display: inline-block;
+      font-size: 0.6rem;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      color: var(--emerald);
+      background: rgba(16,185,129,0.12);
+      border: 1px solid rgba(16,185,129,0.3);
+      border-radius: 999px;
+      padding: 0.1rem 0.5rem;
+      margin-right: 0.35rem;
+    }
+
+    /* Flows tri (three vertical flows) */
+    .flows-tri {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 1.5rem;
+      max-width: 1200px;
+      margin: 2rem auto 0;
+      width: 100%;
+      align-items: start;
+    }
+    .flow-head {
+      text-align: center;
+      font-size: 0.8rem;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      color: var(--emerald);
+      background: rgba(16,185,129,0.1);
+      border: 1px solid rgba(16,185,129,0.3);
+      border-radius: 999px;
+      padding: 0.5rem 1rem;
+      margin-bottom: 1rem;
+    }
+    .flow-tight .flow-item { font-size: 0.75rem; padding: 0.55rem 0.85rem; }
+    .flow-tight .flow-arrow { height: 14px; }
+
+    /* Stats */
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+      gap: 1rem;
+      max-width: 1000px;
+      margin: 2rem auto 0;
+    }
+    .stat {
+      text-align: center;
+      padding: 1.5rem 1rem;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+    }
+    .stat-num {
+      font-size: 2rem;
+      font-weight: 700;
+      background: linear-gradient(135deg, #fff, var(--accent));
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+    .stat-label { font-size: 0.75rem; color: var(--muted); margin-top: 0.35rem; }
+
+    .action-list { list-style: none; margin-top: 1rem; }
+    .action-list li {
+      padding: 0.55rem 0;
+      padding-left: 1.25rem;
+      position: relative;
+      color: #d4d4d8;
+      font-size: 0.95rem;
+      line-height: 1.5;
+    }
+    .action-list li::before {
+      content: "→";
+      position: absolute;
+      left: 0;
+      color: var(--accent);
+      font-weight: 600;
+    }
+
+    .vision-quote {
+      font-family: "Instrument Serif", Georgia, serif;
+      font-size: clamp(1.5rem, 3.5vw, 2.25rem);
+      line-height: 1.45;
+      max-width: 800px;
+      margin: 0 auto;
+      font-style: italic;
+      color: #e4e4e7;
+    }
+
+    .closing { text-align: center; }
+    .closing h2 {
+      font-family: "Instrument Serif", Georgia, serif;
+      font-size: 4rem;
+      font-weight: 400;
+    }
+
+    .scroll-hint {
+      position: absolute;
+      bottom: 2rem;
+      left: 50%;
+      transform: translateX(-50%);
+      font-size: 0.65rem;
+      color: var(--dim);
+      letter-spacing: 0.15em;
+      text-transform: uppercase;
+      animation: bounce 2s ease infinite;
+    }
+    @keyframes bounce {
+      0%, 100% { transform: translateX(-50%) translateY(0); }
+      50% { transform: translateX(-50%) translateY(6px); }
+    }
+
+    @media (max-width: 900px) {
+      .split, .split.reverse { grid-template-columns: 1fr; }
+      .eco { grid-template-columns: 1fr; }
+      .eco-mcp { transform: rotate(90deg); }
+      .tri-col, .flows-tri { grid-template-columns: 1fr; }
+      .progress-rail { display: none; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      .reveal, .tl-item { transition: none; opacity: 1; transform: none; }
+      html { scroll-behavior: auto; }
+    }
+  </style>
+</head>
+<body>
+
+  <header class="chrome">
+    <span class="logo-mini">SINIDU.3D</span>
+    <div class="chrome-actions">
+      <button class="btn-ghost" id="btn-fs" type="button">Tela cheia</button>
+    </div>
+  </header>
+
+  <nav class="progress-rail" id="rail" aria-hidden="true"></nav>
+
+  <!-- 1 · CAPA -->
+  <section class="section" id="s1" data-index="0">
+    <div class="reveal visible" style="text-align:center; max-width:900px; margin:0 auto; width:100%">
+      <p class="eyebrow">Política Pública · Cidades Inteligentes</p>
+      <h1 class="hero-title">SINIDU.3D</h1>
+      <p class="lead" style="margin:1.25rem auto 0">
+        Um Sistema de Informações Geográficas 3D para o planejamento urbano permanente —
+        integrando justiça social, ambiente seguro e desenvolvimento econômico.
+      </p>
+    </div>
+    <div class="hero-mock reveal reveal-delay-2">
+      <div class="frame">
+        <div class="frame-bar">
+          <span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span>
+          <span class="frame-url">SINIDU.3D · MCID · Sistema Nacional de Informações para o Desenvolvimento Urbano</span>
+        </div>
+        <div class="frame-body frame-body--flush">
+          <img class="screen-shot screen-shot--crop" src="apresentacao-assets/sinidu3d-capa.jpg" alt="Cidade inteligente — visão SINIDU.3D" loading="eager" />
+        </div>
+      </div>
+    </div>
+    <span class="scroll-hint">Role para continuar</span>
+  </section>
+
+  <!-- 2 · O QUE É -->
+  <section class="section" id="s2" data-index="1">
+    <div class="split">
+      <div class="reveal">
+        <p class="eyebrow">Definição</p>
+        <h2 class="section-title">O que é o SINIDU.3D</h2>
+        <div class="def-box">
+          <span class="def-tag">DEF</span>
+          <p>Solução de software para o Sistema Nacional de Informações para o Desenvolvimento Urbano,
+          que integra três dimensões de análise para o planejamento urbano sustentável:
+          <strong style="color:#d4d4d8">justiça social, ambiente seguro e desenvolvimento econômico</strong>.</p>
+        </div>
+        <p class="lead" style="font-size:0.95rem">
+          Não é mais um SIG genérico ou temático — é um SIG 3D com propósito de
+          planejamento permanente e integração de temas transversais à cidade.
+        </p>
+      </div>
+      <div class="reveal reveal-delay-2">
+        <ul class="cmp-list">
+          <li><span class="cmp-x">✕</span><span class="cmp-what">SIG genérico</span><span class="cmp-tool">QGIS, ArcGIS, TerraView</span></li>
+          <li><span class="cmp-x">✕</span><span class="cmp-what">SIG temático</span><span class="cmp-tool">TRANUS, PTV Visum, HEC-RAS</span></li>
+          <li><span class="cmp-x">✕</span><span class="cmp-what">Software para CTM</span><span class="cmp-tool">MapAju, GeoFloripa, GeoBahia</span></li>
+          <li><span class="cmp-x">✕</span><span class="cmp-what">Repositório de dados</span><span class="cmp-tool">Banco em nuvem, GeoServer</span></li>
+          <li><span class="cmp-x">✕</span><span class="cmp-what">Monitoramento em tempo real</span><span class="cmp-tool">CORio, COP-Recife</span></li>
+        </ul>
+        <div class="cmp-final">
+          <span class="cmp-check">✓</span>
+          <span>SIG 3D, com propósito de <strong>planejamento permanente</strong> e integração de temas transversais à cidade.</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 3 · CICLO DE POLÍTICAS PÚBLICAS -->
+  <section class="section" id="s3" data-index="2">
+    <div class="center-block reveal">
+      <p class="eyebrow">Contexto</p>
+      <h2 class="section-title">SINIDU.3D e o ciclo de políticas públicas</h2>
+      <p class="lead" style="margin-top:0.75rem">
+        Modelo contínuo e interligado usado pelo Estado para resolver problemas sociais:
+        planejamento (diagnóstico e desenho), implementação, monitoramento e avaliação.
+      </p>
+    </div>
+    <div class="cards-grid reveal reveal-delay-1" style="grid-template-columns:repeat(2,1fr); max-width:820px">
+      <div class="module-card">
+        <div class="module-icon">①</div>
+        <h3>Ex-ante</h3>
+        <p>Identificação de problemas, diagnóstico, avaliação de impactos e análise de viabilidade — antes da intervenção.</p>
+      </div>
+      <div class="module-card">
+        <div class="module-icon">②</div>
+        <h3>Ex-post</h3>
+        <p>Análise de resultados, eficácia, atendimento de metas e prestação de contas — depois da intervenção.</p>
+      </div>
+    </div>
+    <p class="lead" style="margin:1.5rem auto 0; text-align:center; font-size:0.9rem">
+      O SINIDU.3D dá suporte às quatro etapas com evidências territoriais integradas.
+    </p>
+  </section>
+
+  <!-- 4 · ECOSSISTEMA SINIDU -->
+  <section class="section" id="s4" data-index="3">
+    <div class="center-block reveal">
+      <p class="eyebrow">Arquitetura</p>
+      <h2 class="section-title">Ecossistema SINIDU</h2>
+      <p class="lead" style="margin-top:0.75rem">
+        O SINIDU.3D conecta gêmeos digitais e o Data Lake nacional via protocolo MCP,
+        alimentado por sensores e centrais de operação municipais.
+      </p>
+    </div>
+    <div class="eco reveal reveal-delay-1">
+      <div class="eco-node">
+        <h4>Gêmeos Digitais</h4>
+        <p>Representação 3D viva do território</p>
+      </div>
+      <div class="eco-mcp"><span>MCP</span>protocolo</div>
+      <div class="eco-node core">
+        <h4>SINIDU.3D</h4>
+        <p>SIG 3D · planejamento permanente</p>
+      </div>
+      <div class="eco-mcp"><span>MCP</span>protocolo</div>
+      <div class="eco-node">
+        <h4>Data Lake</h4>
+        <div class="eco-sources">
+          <span class="eco-source">SINISA</span>
+          <span class="eco-source">SIMU</span>
+          <span class="eco-source">AdaptaBrasil</span>
+          <span class="eco-source">INDE</span>
+          <span class="eco-source">[…]</span>
+        </div>
+      </div>
+    </div>
+    <div class="eco-bottom reveal reveal-delay-2">
+      <span class="eco-chip">📡 Sensores IoT</span>
+      <span class="h-arrow">→</span>
+      <span class="eco-chip">🏢 CCOs</span>
+      <span class="h-arrow">→</span>
+      <span class="eco-chip">🗺️ sisCTM</span>
+      <span class="h-arrow" style="margin:0 0.5rem">·</span>
+      <span class="eco-chip" style="border-color:rgba(129,140,248,0.4)">🧭 BD-CTM</span>
+    </div>
+  </section>
+
+  <!-- 5 · POLÍTICAS PÚBLICAS DO ECOSSISTEMA -->
+  <section class="section" id="s5" data-index="4">
+    <div class="center-block reveal">
+      <p class="eyebrow">Integração</p>
+      <h2 class="section-title">Parte das políticas públicas do ecossistema</h2>
+      <p class="lead" style="margin-top:0.75rem">
+        O SINIDU.3D se articula com iniciativas de planejamento e de gestão municipal.
+      </p>
+    </div>
+
+    <div class="group-label">Planejamento urbano eficaz e efetivo</div>
+    <div class="cards-grid reveal reveal-delay-1" style="grid-template-columns:repeat(4,1fr)">
+      <div class="module-card"><div class="module-icon">🚐</div><h3>Aerofotogrametria</h3><p>Laser scan com mapeamento móvel.</p></div>
+      <div class="module-card"><div class="module-icon">🗄️</div><h3>BD-CTM</h3><p>Base de dados do cadastro territorial multifinalitário.</p></div>
+      <div class="module-card"><div class="module-icon">🧊</div><h3>SINIDU.3D</h3><p>SIG 3D para planejamento permanente.</p></div>
+      <div class="module-card"><div class="module-icon">🎓</div><h3>Capacitações</h3><p>Formação técnica das equipes municipais.</p></div>
+    </div>
+
+    <div class="group-label indigo">Gestão municipal eficiente</div>
+    <div class="cards-grid reveal reveal-delay-2" style="grid-template-columns:repeat(4,1fr)">
+      <div class="module-card"><div class="module-icon">💡</div><h3>Parque luminotécnico</h3><p>Modernização da iluminação pública.</p></div>
+      <div class="module-card"><div class="module-icon">🖥️</div><h3>CCOs</h3><p>Implementação de centrais de controle operacional.</p></div>
+      <div class="module-card"><div class="module-icon">🗺️</div><h3>sisCTM</h3><p>Sistema do cadastro territorial multifinalitário.</p></div>
+      <div class="module-card"><div class="module-icon">📶</div><h3>Sensores</h3><p>Instalação de sensores urbanos (IoT).</p></div>
+    </div>
+  </section>
+
+  <!-- 6 · DIMENSIONAMENTO -->
+  <section class="section" id="s6" data-index="5">
+    <div class="center-block reveal">
+      <p class="eyebrow">Planejamento da política</p>
+      <h2 class="section-title">Dimensionamento</h2>
+    </div>
+    <div class="timeline reveal reveal-delay-1">
+      <div class="tl-item">
+        <div class="tl-title">1.1 · Diagnóstico do problema</div>
+        <div class="tl-desc">Planejamento integrado dificultado pela ausência de dados territoriais locais (CTM), baixa capacidade técnica e restrição orçamentária. <strong style="color:#6ee7b7">Objetivo:</strong> desenvolver um SIG para o planejamento urbano integrado e sustentável.</div>
+      </div>
+      <div class="tl-item">
+        <div class="tl-title">1.2 · Desenho da política</div>
+        <div class="tl-desc"><strong style="color:#d4d4d8">Público-alvo:</strong> entes subnacionais, sociedade civil e administração pública federal. <strong style="color:#d4d4d8">Metas:</strong> SIG em 3D, código aberto, padrão OGC, com prioridade para simulações climáticas até dez/2027.</div>
+      </div>
+      <div class="tl-item">
+        <div class="tl-title">1.3 · Estratégia de implementação</div>
+        <div class="tl-desc">Acordo de Cooperação Técnica com o MTCI, para participação no projeto CITinova II.</div>
+      </div>
+      <div class="tl-item future">
+        <div class="tl-title">1.4 · Monitoramento, avaliação e controle</div>
+        <div class="tl-desc">Desenvolvimento de aplicação interna para estudo de requisitos, avaliação de riscos e demonstração de funcionalidades: <strong style="color:#6ee7b7">SINIDU-Interno</strong>.</div>
+      </div>
+      <div class="tl-item future">
+        <div class="tl-title">1.5 · Retorno econômico e social</div>
+        <div class="tl-desc">Estimativa em elaboração.</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 7 · TRILHAS DE USO -->
+  <section class="section" id="s7" data-index="6">
+    <div class="center-block reveal">
+      <p class="eyebrow">Jornadas</p>
+      <h2 class="section-title">Trilhas de uso do SINIDU.3D</h2>
+      <p class="lead" style="margin-top:0.75rem">Jornadas para diferentes públicos e finalidades.</p>
+    </div>
+    <div class="tri-col reveal reveal-delay-1">
+      <div class="tri-card">
+        <h3>🏛️ Entes subnacionais</h3>
+        <ul>
+          <li><span class="trail-badge">01</span><strong>Geração e revisão de planos municipais</strong> — sem instrumento de planejamento.</li>
+          <li><span class="trail-badge">02</span><strong>Planejamento ex-ante de intervenções</strong> — com algum instrumento, mas sem evidências e metas de impacto.</li>
+          <li><span class="trail-badge">03</span><strong>Simulação de projetos BIM em gêmeo digital</strong> — com histórico, mas sem visão integrada 3D.</li>
+        </ul>
+      </div>
+      <div class="tri-card">
+        <h3>👥 Sociedade civil</h3>
+        <ul>
+          <li><span class="trail-badge">04</span><strong>Transparência cidadã e controle social</strong> — evidência sobre riscos ambientais, sociais e patrimônio.</li>
+          <li><span class="trail-badge">05</span><strong>Participação social ativa</strong> — consulta pública sobre projetos com interferência urbana.</li>
+          <li><span class="trail-badge">06</span><strong>Estudo de viabilidade (M5D)</strong> — fomento e estruturação de projetos de infraestrutura.</li>
+        </ul>
+      </div>
+      <div class="tri-card">
+        <h3>🏦 Adm. pública federal</h3>
+        <ul>
+          <li><span class="trail-badge">07</span><strong>Validação de projetos federais</strong> — avaliação e seleção de projetos com recursos OGU.</li>
+          <li><span class="trail-badge">08</span><strong>Controle interno e externo</strong> — avaliação de resultado de políticas com recursos OGU.</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <!-- 8 · FLUXOS DAS TRILHAS -->
+  <section class="section" id="s8" data-index="7">
+    <div class="center-block reveal">
+      <p class="eyebrow">Fluxos de uso</p>
+      <h2 class="section-title">Trilhas 01, 02 e 03</h2>
+    </div>
+    <div class="flows-tri reveal reveal-delay-1">
+      <div class="flow-col flow-tight">
+        <div class="flow-head">Trilha 01</div>
+        <div class="flow-item">Diagnóstico geral ou temático</div>
+        <div class="flow-arrow"></div>
+        <div class="flow-item">Indicação de problemas públicos</div>
+        <div class="flow-arrow"></div>
+        <div class="flow-item">Avaliação de planos e instrumentos em vigor</div>
+        <div class="flow-arrow"></div>
+        <div class="flow-item">Avaliação comparada de casos análogos</div>
+        <div class="flow-arrow"></div>
+        <div class="flow-item">Avaliação (assistida) de riscos</div>
+        <div class="flow-arrow"></div>
+        <div class="flow-item highlight">Minuta de planos preventivos e contingenciais</div>
+      </div>
+      <div class="flow-col flow-tight">
+        <div class="flow-head">Trilha 02</div>
+        <div class="flow-item">Relação de problemas públicos</div>
+        <div class="flow-arrow"></div>
+        <div class="flow-item">Seleção de problemas para intervenção</div>
+        <div class="flow-arrow"></div>
+        <div class="flow-item">Avaliação de soluções em casos semelhantes</div>
+        <div class="flow-arrow"></div>
+        <div class="flow-item">Intervenções no território com base em evidências</div>
+        <div class="flow-arrow"></div>
+        <div class="flow-item">Custos, recursos e benefício-custo (ABC)</div>
+        <div class="flow-arrow"></div>
+        <div class="flow-item highlight">Análise de linhas de financiamento</div>
+      </div>
+      <div class="flow-col flow-tight">
+        <div class="flow-head">Trilha 03</div>
+        <div class="flow-item">Entrada de problema público</div>
+        <div class="flow-arrow"></div>
+        <div class="flow-item">Importação de projeto BIM</div>
+        <div class="flow-arrow"></div>
+        <div class="flow-item">Diagnóstico de interferências e impacto ambiental</div>
+        <div class="flow-arrow"></div>
+        <div class="flow-item">Custos, recursos e benefício-custo (ABC)</div>
+        <div class="flow-arrow"></div>
+        <div class="flow-item">Consulta pública multi-tenant</div>
+        <div class="flow-arrow"></div>
+        <div class="flow-item highlight">Relatório e ajustes de projeto</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 9 · SINIDU INTERNO -->
+  <section class="section" id="s9" data-index="8">
+    <div class="split">
+      <div class="reveal">
+        <p class="eyebrow">Prova de conceito</p>
+        <h2 class="section-title">SINIDU Interno</h2>
+        <p class="lead" style="margin-top:1rem">Estratégia de monitoramento — aplicação interna para:</p>
+        <ul class="action-list">
+          <li>estudar requisitos de funcionalidades e UX</li>
+          <li>avaliar riscos antes das versões públicas</li>
+          <li>demonstrar as Trilhas 01 e 02 em casos concretos</li>
+          <li>integrar bases reais (IBGE, MapBiomas, S2ID, CAPAG…)</li>
+          <li>preparar o caminho para simulações 3D e gêmeos digitais</li>
+        </ul>
+      </div>
+      <div class="reveal reveal-delay-2">
+        <div class="frame">
+          <div class="frame-bar">
+            <span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span>
+            <span class="frame-url">Sinidu+Clima INTERNO · Plataforma de Inteligência Territorial</span>
+          </div>
+          <div class="frame-body frame-body--flush">
+            <img class="screen-shot screen-shot--crop" src="apresentacao-assets/sinidu3d-plataforma.jpg" alt="Plataforma Sinidu+Clima Interno — mapa de Recife com camadas territoriais" loading="lazy" />
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 10 · CRONOGRAMA -->
+  <section class="section" id="s10" data-index="9">
+    <div class="center-block reveal">
+      <p class="eyebrow">Roadmap</p>
+      <h2 class="section-title">Cronograma</h2>
+    </div>
+    <div class="timeline reveal reveal-delay-1">
+      <div class="tl-item">
+        <div class="tl-title">Criação do Sinidu Interno <span class="tl-date">JUN/2026</span></div>
+        <div class="tl-desc">Aplicação interna de estudo de requisitos e demonstração.</div>
+      </div>
+      <div class="tl-item">
+        <div class="tl-title">Reprodução das Trilhas 01 e 02 <span class="tl-date">SET/2026</span></div>
+        <div class="tl-desc">Aplicação a um caso concreto.</div>
+      </div>
+      <div class="tl-item">
+        <div class="tl-title">Requisitos de funcionalidades e UX <span class="tl-date">NOV/2026</span></div>
+        <div class="tl-desc">Jornada do usuário, integração de dados e controle de qualidade.</div>
+      </div>
+      <div class="tl-item future">
+        <div class="tl-title">Prova de Conceito — Gêmeos Digitais e Simulações 3D <span class="tl-date">DEZ/2026</span></div>
+        <div class="tl-desc">Em parceria com a RNP.</div>
+      </div>
+      <div class="tl-item future">
+        <div class="tl-title">Requisitos de simulações 3D e gêmeos digitais <span class="tl-date">MAR/2027</span></div>
+        <div class="tl-desc">Definição dos requisitos mínimos.</div>
+      </div>
+      <div class="tl-item future">
+        <div class="tl-title">Prova de Conceito de Interoperabilidade <span class="tl-date">JUN/2027</span></div>
+        <div class="tl-desc">Em parceria com a RNP.</div>
+      </div>
+      <div class="tl-item future">
+        <div class="tl-title">Requisitos das futuras versões do SINIDU.3D <span class="tl-date">SET/2027</span></div>
+        <div class="tl-desc">Planejamento da evolução da plataforma.</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 11 · CONCLUSÃO -->
+  <section class="section closing" id="s11" data-index="10">
+    <div class="reveal visible" style="position:relative; z-index:2">
+      <div class="logo-mini" style="font-size:1rem; margin-bottom:2rem; color:var(--accent)">SINIDU.3D</div>
+      <h2>Cidades Inteligentes</h2>
+      <p class="lead" style="margin:1.5rem auto 0; text-align:center">
+        SINIDU.3D: política pública para cidades inteligentes —<br />
+        do planejamento permanente à simulação 3D do território.
+      </p>
+      <p style="margin-top:2rem; font-size:0.75rem; color:var(--dim)">
+        ← → ou Espaço · navegação · F tela cheia
+      </p>
+    </div>
+    <div class="hero-mock reveal reveal-delay-2" style="margin-top:2.5rem; opacity:0.85; max-width:820px">
+      <div class="frame" style="transform:none">
+        <div class="frame-body frame-body--flush">
+          <img class="screen-shot screen-shot--crop" src="apresentacao-assets/sinidu3d-capa.jpg" alt="Cidade inteligente" loading="lazy" />
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <script>
+    const sections = [...document.querySelectorAll('.section')];
+    const rail = document.getElementById('rail');
+
+    sections.forEach((s, i) => {
+      const d = document.createElement('button');
+      d.className = 'progress-dot' + (i === 0 ? ' active' : '');
+      d.type = 'button';
+      d.setAttribute('aria-label', `Seção ${i + 1}`);
+      d.addEventListener('click', () => s.scrollIntoView({ behavior: 'smooth' }));
+      rail.appendChild(d);
+    });
+
+    const dots = [...rail.querySelectorAll('.progress-dot')];
+
+    const revealObs = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((e) => {
+          if (e.isIntersecting) e.target.classList.add('visible');
+        });
+      },
+      { threshold: 0.15, rootMargin: '0px 0px -8% 0px' }
+    );
+    document.querySelectorAll('.reveal, .tl-item').forEach((el) => revealObs.observe(el));
+
+    const sectionObs = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((e) => {
+          if (!e.isIntersecting) return;
+          const idx = +e.target.dataset.index;
+          dots.forEach((d, i) => d.classList.toggle('active', i === idx));
+        });
+      },
+      { threshold: 0.45 }
+    );
+    sections.forEach((s) => sectionObs.observe(s));
+
+    let currentIdx = 0;
+    function goTo(idx) {
+      if (idx < 0 || idx >= sections.length) return;
+      currentIdx = idx;
+      sections[idx].scrollIntoView({ behavior: 'smooth' });
+    }
+
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'ArrowDown' || e.key === 'ArrowRight' || e.key === ' ') {
+        e.preventDefault();
+        const visible = sections.findIndex((s) => {
+          const r = s.getBoundingClientRect();
+          return r.top >= -100 && r.top < window.innerHeight * 0.5;
+        });
+        goTo(Math.min(visible + 1, sections.length - 1));
+      }
+      if (e.key === 'ArrowUp' || e.key === 'ArrowLeft') {
+        e.preventDefault();
+        const visible = sections.findIndex((s) => {
+          const r = s.getBoundingClientRect();
+          return r.top >= -100 && r.top < window.innerHeight * 0.5;
+        });
+        goTo(Math.max(visible - 1, 0));
+      }
+      if (e.key === 'Home') { e.preventDefault(); goTo(0); }
+      if (e.key === 'End') { e.preventDefault(); goTo(sections.length - 1); }
+      if (e.key === 'f' || e.key === 'F') {
+        if (!document.fullscreenElement) document.documentElement.requestFullscreen?.();
+        else document.exitFullscreen?.();
+      }
+    });
+
+    document.getElementById('btn-fs').addEventListener('click', () => {
+      if (!document.fullscreenElement) document.documentElement.requestFullscreen?.();
+      else document.exitFullscreen?.();
+    });
+
+    // Parallax sutil no hero mockup
+    const heroMock = document.querySelector('.hero-mock');
+    if (heroMock) {
+      window.addEventListener('scroll', () => {
+        const y = window.scrollY;
+        if (y < window.innerHeight) {
+          heroMock.style.transform = `translateY(${y * 0.08}px)`;
+        }
+      }, { passive: true });
+    }
+  </script>
+</body>
+</html>

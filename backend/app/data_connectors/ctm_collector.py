@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 from collections import defaultdict
+from pathlib import Path
 from typing import Any
 import requests
 from geoalchemy2.shape import from_shape
@@ -106,6 +107,92 @@ def fetch_geojson_url(url: str) -> dict[str, Any]:
     return data
 
 
+def fetch_ibge_setores_agreg_geojson(source: CtmSource) -> dict[str, Any]:
+    """Agrega setores censitários IBGE 2022 em polígonos de bairro."""
+    from app.data_connectors.official_bairros_collector import (
+        _dissolve_setores_to_bairros,
+        fetch_ibge_setores_geojson,
+    )
+
+    setores = fetch_ibge_setores_geojson(source.codigo_ibge, source.uf)
+    return _dissolve_setores_to_bairros(setores)
+
+
+def fetch_ibge_setores_individuais_geojson(source: CtmSource) -> dict[str, Any]:
+    """Usa cada setor censitário IBGE 2022 como polígono de bairro (malha densa operacional)."""
+    from app.data_connectors.official_bairros_collector import (
+        BAIRRO_NAME_KEYS,
+        _prop,
+        fetch_ibge_setores_geojson,
+    )
+
+    setores = fetch_ibge_setores_geojson(source.codigo_ibge, source.uf)
+    features: list[dict[str, Any]] = []
+    for feat in setores.get("features") or []:
+        if not feat.get("geometry"):
+            continue
+        props = feat.get("properties") or {}
+        cd_setor = _prop(props, ("CD_SETOR",)) or ""
+        nome_mun = _prop(props, ("NM_MUN", "nm_mun"))
+        nome_bairro = _prop(props, source.name_fields) or _prop(props, BAIRRO_NAME_KEYS)
+        if nome_bairro and nome_bairro != nome_mun:
+            nome = nome_bairro
+        else:
+            suffix = str(cd_setor)[-7:] if cd_setor else "?"
+            nome = f"Setor {suffix}"
+        features.append(
+            {
+                "type": "Feature",
+                "properties": {
+                    "NM_BAIRRO": nome,
+                    "CD_BAIRRO": cd_setor or None,
+                    "nome": nome,
+                },
+                "geometry": feat["geometry"],
+            }
+        )
+    return {"type": "FeatureCollection", "features": features}
+
+
+def fetch_geojson_file(path: str) -> dict[str, Any]:
+    """Lê FeatureCollection de arquivo local (caminho relativo ao diretório backend/)."""
+    backend_root = Path(__file__).resolve().parents[2]
+    file_path = Path(path)
+    if not file_path.is_absolute():
+        file_path = backend_root / file_path
+    if not file_path.is_file():
+        raise FileNotFoundError(f"GeoJSON CTM não encontrado: {file_path}")
+    data = json.loads(file_path.read_text(encoding="utf-8"))
+    if data.get("type") != "FeatureCollection":
+        raise RuntimeError("Arquivo local não contém FeatureCollection GeoJSON.")
+    return data
+
+
+def fetch_geoserver_wfs_geojson(source: CtmSource) -> dict[str, Any]:
+    """Baixa FeatureCollection via GeoServer WFS 2.0 (outputFormat GeoJSON, EPSG:4326)."""
+    type_name = (source.where or "").strip()
+    if not type_name or type_name == "1=1":
+        raise ValueError("typeName da camada GeoServer é obrigatório (campo where/type_name).")
+
+    base = source.url.strip().rstrip("/")
+    params = {
+        "service": "WFS",
+        "version": "2.0.0",
+        "request": "GetFeature",
+        "typeName": type_name,
+        "outputFormat": "application/json",
+        "srsName": "EPSG:4326",
+    }
+    if source.cql_filter:
+        params["CQL_FILTER"] = source.cql_filter
+    resp = requests.get(base, params=params, timeout=120)
+    resp.raise_for_status()
+    data = resp.json()
+    if data.get("type") != "FeatureCollection":
+        raise RuntimeError("GeoServer WFS não retornou FeatureCollection GeoJSON.")
+    return data
+
+
 def _safe_shape(feat: dict[str, Any]) -> Any | None:
     try:
         geom = shape(feat["geometry"])
@@ -167,11 +254,25 @@ def dissolve_by_name(
     return {"type": "FeatureCollection", "features": out_features}
 
 
+def _ctm_source_label(source: CtmSource) -> str:
+    if source.kind in {"ibge_setores_agreg", "ibge_setores_individuais"}:
+        return "ibge_censo2022_setores"
+    return "prefeitura_oficial"
+
+
 def fetch_ctm_geojson(source: CtmSource) -> dict[str, Any]:
     if source.kind == "arcgis":
         raw = fetch_arcgis_geojson(source)
     elif source.kind == "geojson_url":
         raw = fetch_geojson_url(source.url)
+    elif source.kind == "geojson_file":
+        raw = fetch_geojson_file(source.url)
+    elif source.kind == "geoserver_wfs":
+        raw = fetch_geoserver_wfs_geojson(source)
+    elif source.kind == "ibge_setores_agreg":
+        raw = fetch_ibge_setores_agreg_geojson(source)
+    elif source.kind == "ibge_setores_individuais":
+        return fetch_ibge_setores_individuais_geojson(source)
     else:
         raise ValueError(f"Tipo de fonte não suportado: {source.kind}")
 
@@ -194,7 +295,7 @@ def probe_ctm_source(source: CtmSource) -> dict[str, Any]:
             "feicoes": count,
             "fonte": source.kind,
             "nota": source.nota,
-            "url": source.url.split("/query")[0],
+            "url": source.url.split("/query")[0] if source.kind == "arcgis" else source.url,
         }
     except Exception as exc:
         return {
@@ -371,11 +472,26 @@ def collect_ctm_municipality(db: Session, codigo_ibge: str, *, force: bool = Fal
 
     try:
         fc = fetch_ctm_geojson(source)
+        source_label = _ctm_source_label(source)
     except Exception as exc:
-        return {"codigo_ibge": code, "error": f"Falha ao baixar CTM: {exc}", "skipped": True}
+        bcount_now = db.query(Bairro).filter(Bairro.municipio_id == muni.id).count()
+        if bcount_now >= 4:
+            return {"codigo_ibge": code, "error": f"Falha ao baixar CTM: {exc}", "skipped": True}
+        try:
+            fc = fetch_ibge_setores_individuais_geojson(source)
+            source_label = "ibge_censo2022_setores"
+            source_nota = f"{source.nota} — fallback setores IBGE ({exc})"
+        except Exception as fallback_exc:
+            return {
+                "codigo_ibge": code,
+                "error": f"Falha ao baixar CTM: {exc}; fallback setores: {fallback_exc}",
+                "skipped": True,
+            }
+    else:
+        source_nota = source.nota
 
-    result = import_ctm_mesh(db, muni, fc, source_label="prefeitura_oficial")
-    result["fonte_registry"] = source.nota
+    result = import_ctm_mesh(db, muni, fc, source_label=source_label)
+    result["fonte_registry"] = source_nota
     return result
 
 

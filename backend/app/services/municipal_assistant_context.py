@@ -5,12 +5,24 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from app.api.analytics import executive_snapshot
 from app.data_connectors.capag_collector import collect_capag_municipality
-from app.models import DiagnosticoExecutivo, Municipio, MunicipioFiscal, MunicipioIbge, RelatorioMunicipal
+from app.data_connectors.mapbiomas_collector import vegetation_coverage_percent
+from app.models import (
+    AlertaCemaden,
+    DiagnosticoExecutivo,
+    HistoricoDesastreS2ID,
+    Municipio,
+    MunicipioFiscal,
+    MunicipioIbge,
+    RelatorioMunicipal,
+)
+from app.services.contextual_agent_cache import get_cached_municipal_context, set_cached_municipal_context
+from app.services.georedus_reference_service import georedus_municipio_url, georedus_summary_for_context
 from app.services.maturity_engine import compute_maturity
+from app.services.municipio_audit_service import audit_municipio
 from app.services.report_generator import build_bairro_ranking
 
 
@@ -29,13 +41,59 @@ def _source(source_id: str, label: str, snippet: str, url: str = "", tipo: str =
     }
 
 
+def _normalize_context(ctx: dict[str, Any]) -> dict[str, Any]:
+    score = ctx.get("score_sinidu")
+    if score is not None:
+        ctx["score_sinidu"] = round(float(score))
+    return ctx
+
+
 def build_municipal_assistant_context(db: Session, muni: Municipio) -> dict[str, Any]:
+    cached = get_cached_municipal_context(muni.codigo_ibge)
+    if cached:
+        return _normalize_context(cached)
+
     ibge = db.query(MunicipioIbge).filter(MunicipioIbge.codigo_ibge == muni.codigo_ibge).first()
     fiscal = db.query(MunicipioFiscal).filter(MunicipioFiscal.codigo_ibge == muni.codigo_ibge).first()
+    audit = audit_municipio(db, muni, persist=False)
 
-    snapshot = executive_snapshot(db, muni)
+    alerts_count = (
+        db.query(func.count(AlertaCemaden.id))
+        .filter(AlertaCemaden.municipio_id == muni.id)
+        .scalar()
+    ) or 0
+    disasters_count = (
+        db.query(func.count(HistoricoDesastreS2ID.id))
+        .filter(HistoricoDesastreS2ID.municipio_id == muni.id)
+        .scalar()
+    ) or 0
+    damages_total = (
+        db.query(func.sum(HistoricoDesastreS2ID.danos_materiais))
+        .filter(HistoricoDesastreS2ID.municipio_id == muni.id)
+        .scalar()
+    ) or 0
+    veg_percent, _ = vegetation_coverage_percent(db, muni)
+
     ranking, _ = build_bairro_ranking(db, muni)
     top3 = ranking[:3]
+    media_ivc = round(sum(r["ivc"] for r in ranking) / len(ranking), 2) if ranking else None
+    media_iri = round(sum(r["iri"] for r in ranking) / len(ranking), 2) if ranking else None
+    media_adaptacao = round(1.0 - (sum(r["deficit_adaptacao"] for r in ranking) / len(ranking)), 2) if ranking else None
+
+    score_raw = audit.get("score_sinidu")
+    score_sinidu = round(float(score_raw)) if score_raw is not None else None
+
+    snapshot = {
+        "score_sinidu": score_sinidu,
+        "media_ivc": media_ivc,
+        "media_iri": media_iri,
+        "media_adaptacao": media_adaptacao,
+        "densidade_demografica": 0.0,
+        "cobertura_vegetal_percent": round(veg_percent, 2),
+        "alertas_ativos_count": int(alerts_count),
+        "historico_desastres_count": int(disasters_count),
+        "danos_materiais_total": float(damages_total or 0),
+    }
 
     try:
         maturity = compute_maturity(db, muni.codigo_ibge)
@@ -77,6 +135,8 @@ def build_municipal_assistant_context(db: Session, muni: Municipio) -> dict[str,
 
     pop = ibge.populacao if ibge and ibge.populacao else muni.populacao
     area = float(ibge.area_km2 if ibge and ibge.area_km2 else muni.area_km2 or 0)
+    if area > 0:
+        snapshot["densidade_demografica"] = round(pop / area, 2)
     idh = float(ibge.idh) if ibge and ibge.idh else None
     pib_pc = float(ibge.pib_per_capita) if ibge and ibge.pib_per_capita else None
 
@@ -219,6 +279,24 @@ def build_municipal_assistant_context(db: Session, muni: Municipio) -> dict[str,
     if report:
         summary_lines.append(f"- Relatório PDF disponível: {report.nome_arquivo}")
 
+    georedus_ctx = georedus_summary_for_context(db, muni.codigo_ibge)
+    georedus_url = georedus_ctx.get("georedus_url") or georedus_municipio_url(muni.codigo_ibge)
+    georedus_indicadores = georedus_ctx.get("georedus_indicadores") or []
+    if georedus_ctx.get("georedus_summary"):
+        summary_lines.extend(["", "REFERÊNCIA EXTERNA (lacunas locais):", georedus_ctx["georedus_summary"]])
+        sources.append(
+            _source(
+                "georedus",
+                "GeoReDUS — Catálogo nacional ReDUS",
+                (
+                    "Complemento para indicadores intramunicipais não integrados no Sinidu "
+                    f"({len(georedus_indicadores)} sugestões para este município)."
+                ),
+                georedus_url,
+                "REFERENCIA_EXTERNA",
+            )
+        )
+
     suggested = [
         f"Qual a nota CAPAG e a situação fiscal de {muni.nome}?",
         f"Quais bairros têm maior prioridade de intervenção em {muni.nome}?",
@@ -229,12 +307,14 @@ def build_municipal_assistant_context(db: Session, muni: Municipio) -> dict[str,
     ]
     if diag:
         suggested.insert(2, "Explique os principais riscos territoriais com base no diagnóstico salvo.")
+    if georedus_ctx.get("tem_lacunas"):
+        suggested.append("Quais dados ainda faltam localmente e onde consultar no GeoReDUS?")
 
-    return {
+    result = {
         "codigo_ibge": muni.codigo_ibge,
         "municipio": {"nome": muni.nome, "uf": muni.uf},
         "headline": diag.headline if diag else f"Assistente municipal — {muni.nome}/{muni.uf}",
-        "score_sinidu": snapshot.get("score_sinidu"),
+        "score_sinidu": score_sinidu,
         "nota_capag": nota_capag_raw or nota_capag,
         "maturidade": maturity["classificacao"] if maturity else None,
         "maturidade_score": round(maturity["score"]) if maturity else None,
@@ -243,7 +323,11 @@ def build_municipal_assistant_context(db: Session, muni: Municipio) -> dict[str,
         "suggested_questions": suggested[:6],
         "tem_diagnostico": diag is not None,
         "tem_relatorio": report is not None,
+        "georedus_url": georedus_url,
+        "georedus_indicadores": georedus_indicadores,
     }
+    set_cached_municipal_context(muni.codigo_ibge, result)
+    return _normalize_context(result)
 
 
 def format_context_for_prompt(ctx: dict[str, Any]) -> str:

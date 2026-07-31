@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <title>Ficha de campo — {{ muni.nome }}/{{ muni.uf }}</title>
+  <style>
+    @page { size: A4; margin: 14mm 12mm; }
+    body { font-family: DejaVu Sans, Helvetica, Arial, sans-serif; font-size: 10pt; color: #18181b; }
+    h1 { font-size: 14pt; margin: 0 0 4px; }
+    h2 { font-size: 11pt; margin: 14px 0 6px; border-bottom: 1px solid #d4d4d8; padding-bottom: 3px; }
+    .meta { color: #52525b; font-size: 8.5pt; margin-bottom: 10px; }
+    .badge {
+      display: inline-block; padding: 2px 8px; border-radius: 4px; font-weight: 700;
+      font-size: 9pt; text-transform: uppercase;
+    }
+    .VERDE { background: #dcfce7; color: #166534; }
+    .AMARELO { background: #fef9c3; color: #854d0e; }
+    .LARANJA { background: #ffedd5; color: #9a3412; }
+    .VERMELHO { background: #fee2e2; color: #991b1b; }
+    table { width: 100%; border-collapse: collapse; margin-top: 4px; }
+    th, td { border: 1px solid #e4e4e7; padding: 4px 6px; text-align: left; font-size: 9pt; }
+    th { background: #f4f4f5; }
+    .acao { background: #fafafa; padding: 8px; border-radius: 4px; margin-top: 6px; }
+    .footer { margin-top: 16px; font-size: 8pt; color: #71717a; }
+    ul { margin: 4px 0; padding-left: 16px; }
+  </style>
+</head>
+<body>
+  <h1>Ficha de campo — {{ muni.nome }}/{{ muni.uf }}</h1>
+  <p class="meta">
+    Sinidu+Clima · IBGE {{ muni.codigo_ibge }} · Gerado em {{ gerado_em }} ·
+    Uso operacional / Defesa Civil (imprimível offline)
+  </p>
+
+  <p>
+    Status:
+    <span class="badge {{ panel.status }}">{{ panel.status_label }} ({{ panel.status }})</span>
+  </p>
+  <div class="acao">{{ panel.acao_sugerida }}</div>
+
+  <h2>Componentes</h2>
+  <table>
+    <tr>
+      <th>Score</th><th>IVC</th><th>IRI</th><th>VM</th><th>Alerta vivo</th>
+    </tr>
+    <tr>
+      <td>{{ panel.componentes.score.label }} · {{ panel.componentes.score.valor }}</td>
+      <td>{{ panel.componentes.ivc.label }} · {{ panel.componentes.ivc.valor }}</td>
+      <td>{{ panel.componentes.iri.label }} · {{ panel.componentes.iri.valor }}</td>
+      <td>{{ panel.componentes.vm.label }} · {{ panel.componentes.vm.valor or '—' }}</td>
+      <td>{{ panel.componentes.alerta.label }}</td>
+    </tr>
+  </table>
+
+  <h2>Áreas críticas (top {{ bairros|length }})</h2>
+  {% if bairros %}
+  <table>
+    <tr><th>Bairro</th><th>Score</th><th>Nível</th><th>Fatores</th></tr>
+    {% for b in bairros %}
+    <tr>
+      <td>{{ b.bairro }}</td>
+      <td>{{ b.score_sinidu }}</td>
+      <td>{{ b.label }}</td>
+      <td>{{ (b.fatores_principais or [])|join(', ') }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% else %}
+  <p>Sem ranking de bairros disponível.</p>
+  {% endif %}
+
+  <h2>Hotspots recorrentes (S2ID × IRI)</h2>
+  {% if hotspots %}
+  <table>
+    <tr><th>Bairro</th><th>Eventos S2ID</th><th>IRI</th><th>Motivo</th></tr>
+    {% for h in hotspots %}
+    <tr>
+      <td>{{ h.bairro }}</td>
+      <td>{{ h.eventos_s2id }}</td>
+      <td>{{ h.iri }}</td>
+      <td>{{ h.motivo }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% else %}
+  <p>Nenhum hotspot recorrente identificado com o critério atual.</p>
+  {% endif %}
+
+  <h2>Medidas recomendadas</h2>
+  {% if medidas %}
+  <ul>
+    {% for m in medidas %}
+    <li>
+      <strong>{{ m.titulo }}</strong> — {{ m.horizonte }} · custo {{ m.custo }}
+      <br /><span style="color:#52525b">{{ m.motivo }}</span>
+      {% if m.fontes_financiamento %}
+      <br /><span style="color:#52525b">Fontes:
+        {% for f in m.fontes_financiamento[:3] %}{{ f.nome }}{% if not loop.last %}; {% endif %}{% endfor %}
+      </span>
+      {% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p>Sem medidas catalogadas para este perfil.</p>
+  {% endif %}
+
+  {% if panel.modo_baixa_maturidade and panel.modo_baixa_maturidade.ativo %}
+  <h2>Atenção — baixa maturidade de dados</h2>
+  <p>{{ panel.modo_baixa_maturidade.aviso }}</p>
+  {% endif %}
+
+  <p class="footer">
+    Documento gerado pelo Sinidu+Clima para uso em campo. Dados podem ser Estimados/Derivados —
+    conferir fontes oficiais antes de decisões críticas. Não substitui plano de contingência homologado.
+  </p>
+</body>
+</html>

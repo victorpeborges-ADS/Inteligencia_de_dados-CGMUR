@@ -1,0 +1,5 @@
+idestacao,uf,codibge,cidade,nomeestacao,ultimovalor,datahoraUltimovalor,acc1hr,acc3hr,acc6hr,acc12hr,acc24hr,acc48hr,acc72hr,acc96hr,tipoestacao,status
+8221,SE,2800308,ARACAJU,J. Barbosa,0,24/07/26 21:10,-,-,-,-,-,-,4,4,1,0
+8220,SE,2800308,ARACAJU,Porto D Antas,0,18/04/23 14:20,-,-,-,-,-,-,-,-,1,0
+8222,SE,2800308,ARACAJU,Centro,0,24/07/26 18:20,-,-,-,-,-,-,0.2,0.6,1,0
+8219,SE,2800308,ARACAJU,Industrial,0,24/07/26 20:20,-,-,-,-,-,-,1.8,1.8,1,0

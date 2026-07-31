@@ -1,0 +1,609 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Sinidu+Clima — Panorama para o Gestor</title>
+<style>
+  :root {
+    --bg: #ffffff;
+    --panel: #f7f8fa;
+    --ink: #1a1d23;
+    --ink-2: #4a5160;
+    --ink-3: #7b8494;
+    --line: #e4e7ec;
+    --accent: #2f5db0;
+    --green: #1f8a65;
+    --blue: #3685bf;
+    --amber: #c08532;
+    --gray: #8a8f99;
+    --danger: #c0392b;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0;
+    background: #eceef1;
+    color: var(--ink);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    font-size: 15px; line-height: 1.5;
+  }
+  .page {
+    max-width: 1040px; margin: 24px auto; background: var(--bg);
+    border: 1px solid var(--line); border-radius: 12px; overflow: hidden;
+  }
+  .inner { padding: 40px 48px; }
+  header.hero { border-bottom: 1px solid var(--line); }
+  h1 { font-size: 28px; margin: 0 0 6px; letter-spacing: -0.02em; }
+  .subtitle { color: var(--ink-2); margin: 0; max-width: 68ch; }
+  .eyebrow { font-size: 12px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--accent); margin: 0 0 10px; }
+  h2 { font-size: 19px; margin: 40px 0 14px; letter-spacing: -0.01em; }
+  h3 { font-size: 14px; margin: 0 0 10px; color: var(--ink-2); text-transform: uppercase; letter-spacing: 0.04em; }
+  p { margin: 0 0 12px; }
+
+  /* KPIs */
+  .kpis { display: grid; grid-template-columns: repeat(5, 1fr); gap: 12px; margin-top: 26px; }
+  .kpi { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px 14px; text-align: center; }
+  .kpi .v { font-size: 34px; font-weight: 800; letter-spacing: -0.03em; line-height: 1; }
+  .kpi.accent .v { color: var(--accent); }
+  .kpi .l { font-size: 12px; color: var(--ink-3); margin-top: 8px; }
+
+  /* two-col */
+  .two { display: grid; grid-template-columns: 1fr 1fr; gap: 32px; margin-top: 34px; align-items: start; }
+
+  /* horizontal bars */
+  .bars { display: flex; flex-direction: column; gap: 10px; }
+  .bar-row { display: grid; grid-template-columns: 130px 1fr 28px; align-items: center; gap: 10px; }
+  .bar-row .name { font-size: 12.5px; color: var(--ink-2); }
+  .bar-track { background: var(--panel); border-radius: 5px; height: 18px; overflow: hidden; border: 1px solid var(--line); }
+  .bar-fill { height: 100%; background: var(--blue); border-radius: 5px 0 0 5px; }
+  .bar-row .num { font-size: 12.5px; font-weight: 700; text-align: right; }
+
+  /* donut */
+  .donut-wrap { display: flex; align-items: center; gap: 20px; }
+  .legend { display: flex; flex-direction: column; gap: 7px; font-size: 12.5px; }
+  .legend .item { display: flex; align-items: center; gap: 8px; color: var(--ink-2); }
+  .dot { width: 11px; height: 11px; border-radius: 3px; flex: none; }
+
+  /* stacked maturity */
+  .stack { display: flex; height: 22px; border-radius: 6px; overflow: hidden; border: 1px solid var(--line); }
+  .stack > span { display: block; }
+  .stack-labels { display: flex; justify-content: space-between; font-size: 12px; color: var(--ink-3); margin-bottom: 6px; }
+  .mat-legend { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 20px; margin-top: 12px; font-size: 12.5px; }
+  .mat-legend .item { display: flex; align-items: center; gap: 8px; color: var(--ink-2); }
+
+  /* quality tiers */
+  .tiers { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-top: 22px; }
+  .tier { border: 1px solid var(--line); border-radius: 10px; padding: 14px 15px; border-top: 3px solid var(--gray); }
+  .tier.of { border-top-color: var(--green); }
+  .tier.ob { border-top-color: var(--blue); }
+  .tier.es { border-top-color: var(--amber); }
+  .tier.de { border-top-color: var(--gray); }
+  .tier .th { display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: 13.5px; margin-bottom: 6px; }
+  .tier .td { font-size: 12px; color: var(--ink-2); }
+  .tier .ex { font-size: 11px; color: var(--ink-3); margin-top: 6px; font-style: italic; }
+
+  .note { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px 18px; }
+  .note.warn { border-left: 4px solid var(--amber); }
+  .caption { font-size: 12px; color: var(--ink-3); font-style: italic; margin-top: 8px; }
+
+  /* simulations + capabilities */
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .sim { border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; background: var(--panel); }
+  .sim .t { font-weight: 700; font-size: 13.5px; margin-bottom: 3px; }
+  .sim .d { font-size: 12.5px; color: var(--ink-2); }
+  .caps { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 22px; }
+  .cap { display: flex; gap: 10px; font-size: 13px; color: var(--ink-2); }
+  .cap .n { font-weight: 800; color: var(--ink-3); min-width: 20px; }
+
+  /* tables */
+  table { width: 100%; border-collapse: collapse; font-size: 12.5px; margin-top: 4px; }
+  th { text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--ink-3); font-weight: 700; padding: 8px 10px; border-bottom: 2px solid var(--line); }
+  td { padding: 7px 10px; border-bottom: 1px solid var(--line); color: var(--ink-2); vertical-align: top; }
+  tr:nth-child(even) td { background: #fafbfc; }
+  .tag { display: inline-block; font-size: 10.5px; font-weight: 700; padding: 2px 8px; border-radius: 20px; white-space: nowrap; }
+  .tag.of { background: #e3f2ec; color: var(--green); }
+  .tag.ob { background: #e5eff7; color: var(--blue); }
+  .tag.es { background: #f7efdf; color: var(--amber); }
+  .tag.de { background: #eef0f2; color: var(--gray); }
+  .tag.tec { background: #e3f2ec; color: var(--green); }
+  .tag.inst { background: #f7efdf; color: var(--amber); }
+  .tag.conv { background: #f8e6e3; color: var(--danger); }
+
+  /* modules */
+  .mods { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .mod { border: 1px solid var(--line); border-radius: 8px; padding: 13px 15px; }
+  .mod .head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; margin-bottom: 5px; }
+  .mod .name { font-weight: 700; font-size: 13.5px; }
+  .mod .route { font-size: 11px; color: var(--ink-3); font-family: ui-monospace, Menlo, monospace; }
+  .mod .desc { font-size: 12.5px; color: var(--ink-2); }
+
+  /* methodology */
+  .idx-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  .idx { border: 1px solid var(--line); border-radius: 10px; padding: 16px 18px; }
+  .idx.full { margin-top: 14px; }
+  .idx .iname { font-weight: 700; font-size: 14px; margin-bottom: 3px; }
+  .idx .iscale { font-size: 11px; color: var(--ink-3); font-weight: 600; }
+  .idx .idesc { font-size: 12.5px; color: var(--ink-2); margin: 8px 0 10px; }
+  .formula { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12.5px; background: var(--panel); border: 1px solid var(--line); border-left: 3px solid var(--accent); border-radius: 6px; padding: 10px 12px; color: var(--ink); overflow-x: auto; white-space: pre-wrap; margin: 0 0 10px; line-height: 1.5; }
+  .subf { font-size: 12px; color: var(--ink-2); margin: 3px 0; padding-left: 2px; }
+  .subf b { color: var(--ink); font-weight: 600; }
+  .method-note { font-size: 12.5px; color: var(--ink-3); font-style: italic; max-width: 82ch; }
+  /* presentation script */
+  .scene { display: grid; grid-template-columns: 40px 1fr; gap: 14px; padding: 16px 0; border-bottom: 1px solid var(--line); }
+  .scene:last-child { border-bottom: none; }
+  .snum { width: 34px; height: 34px; border-radius: 50%; background: var(--accent); color: #fff; font-weight: 800; font-size: 15px; display: flex; align-items: center; justify-content: center; }
+  .sh { font-weight: 700; font-size: 15px; margin-bottom: 2px; }
+  .sshow { font-size: 12px; color: var(--ink-3); margin-bottom: 8px; }
+  .sbody ul { margin: 0 0 8px; padding-left: 18px; }
+  .sbody li { font-size: 13px; color: var(--ink-2); margin-bottom: 4px; }
+  .skeys { font-size: 12px; background: var(--panel); border: 1px solid var(--line); border-left: 3px solid var(--green); border-radius: 6px; padding: 8px 11px; color: var(--ink); }
+  .skeys b { color: var(--accent); }
+  .tips { background: #fbf6ea; border: 1px solid #ecdcb8; border-radius: 10px; padding: 16px 18px; margin-top: 16px; }
+  .tips ul { margin: 8px 0 0; padding-left: 18px; }
+  .tips li { font-size: 13px; color: var(--ink-2); margin-bottom: 5px; }
+  .src-line { font-size: 11.5px; color: var(--ink-3); margin-top: 6px; }
+  footer { border-top: 1px solid var(--line); padding: 20px 48px; font-size: 12px; color: var(--ink-3); display: flex; justify-content: space-between; flex-wrap: wrap; gap: 8px; }
+  hr.sep { border: none; border-top: 1px solid var(--line); margin: 40px 0 0; }
+
+  @media print {
+    body { background: #fff; }
+    .page { margin: 0; border: none; border-radius: 0; max-width: none; }
+    h2 { break-after: avoid; }
+    table, .mods, .two, .idx, .tiers, .scene, .tips { break-inside: avoid; }
+  }
+  @media (max-width: 720px) {
+    .kpis { grid-template-columns: repeat(2, 1fr); }
+    .two, .grid2, .caps, .mods, .mat-legend, .idx-grid { grid-template-columns: 1fr; }
+    .tiers { grid-template-columns: repeat(2, 1fr); }
+    .inner { padding: 28px 22px; }
+  }
+</style>
+</head>
+<body>
+<div class="page">
+  <header class="hero">
+    <div class="inner">
+      <p class="eyebrow">Plataforma Nacional de Inteligência Territorial</p>
+      <h1>Sinidu+Clima — o que a plataforma entrega hoje</h1>
+      <p class="subtitle">Panorama para o gestor municipal: cobertura de dados, camadas do mapa e
+      capacidade operacional já funcionais. Números extraídos do código-fonte em julho de 2026.</p>
+
+      <div class="kpis">
+        <div class="kpi accent"><div class="v">19</div><div class="l">Camadas no mapa</div></div>
+        <div class="kpi"><div class="v">17</div><div class="l">Fontes de dados</div></div>
+        <div class="kpi"><div class="v">10</div><div class="l">Módulos</div></div>
+        <div class="kpi"><div class="v">13</div><div class="l">Ferramentas de IA</div></div>
+        <div class="kpi"><div class="v">4</div><div class="l">Tipos de simulação</div></div>
+      </div>
+    </div>
+  </header>
+
+  <div class="inner">
+
+    <div class="two">
+      <div>
+        <h3>Camadas por grupo temático</h3>
+        <div class="bars">
+          <div class="bar-row"><span class="name">Base</span><div class="bar-track"><div class="bar-fill" style="width:50%"></div></div><span class="num">3</span></div>
+          <div class="bar-row"><span class="name">Dados urbanos</span><div class="bar-track"><div class="bar-fill" style="width:50%"></div></div><span class="num">3</span></div>
+          <div class="bar-row"><span class="name">Clima e riscos</span><div class="bar-track"><div class="bar-fill" style="width:100%"></div></div><span class="num">6</span></div>
+          <div class="bar-row"><span class="name">Planejamento</span><div class="bar-track"><div class="bar-fill" style="width:67%"></div></div><span class="num">4</span></div>
+          <div class="bar-row"><span class="name">Saúde e segurança</span><div class="bar-track"><div class="bar-fill" style="width:50%"></div></div><span class="num">3</span></div>
+        </div>
+        <p class="caption">Fonte: configuração da plataforma — 19 camadas.</p>
+      </div>
+
+      <div>
+        <h3>Procedência das 19 camadas</h3>
+        <div class="donut-wrap">
+          <svg width="130" height="130" viewBox="0 0 130 130" role="img" aria-label="Distribuição de qualidade das camadas">
+            <g transform="rotate(-90 65 65)">
+              <circle cx="65" cy="65" r="52" fill="none" stroke="#eef0f2" stroke-width="20" />
+              <circle cx="65" cy="65" r="52" fill="none" stroke="#1f8a65" stroke-width="20" pathLength="100" stroke-dasharray="31.58 68.42" stroke-dashoffset="0" />
+              <circle cx="65" cy="65" r="52" fill="none" stroke="#3685bf" stroke-width="20" pathLength="100" stroke-dasharray="5.26 94.74" stroke-dashoffset="-31.58" />
+              <circle cx="65" cy="65" r="52" fill="none" stroke="#c08532" stroke-width="20" pathLength="100" stroke-dasharray="15.79 84.21" stroke-dashoffset="-36.84" />
+              <circle cx="65" cy="65" r="52" fill="none" stroke="#8a8f99" stroke-width="20" pathLength="100" stroke-dasharray="47.37 52.63" stroke-dashoffset="-52.63" />
+            </g>
+          </svg>
+          <div class="legend">
+            <div class="item"><span class="dot" style="background:#1f8a65"></span>Oficial — 6</div>
+            <div class="item"><span class="dot" style="background:#3685bf"></span>Observado — 1</div>
+            <div class="item"><span class="dot" style="background:#c08532"></span>Estimado — 3</div>
+            <div class="item"><span class="dot" style="background:#8a8f99"></span>Derivado — 9</div>
+          </div>
+        </div>
+        <p class="caption">Cada camada exibe seu selo de qualidade — o gestor nunca vê dado sem procedência.</p>
+      </div>
+    </div>
+
+    <h2>O que significa cada selo de qualidade do dado</h2>
+    <p class="method-note">Cada camada carrega um selo que informa a natureza do dado. Assim o gestor
+    sabe exatamente o grau de confiança e a origem antes de decidir.</p>
+    <div class="tiers">
+      <div class="tier of">
+        <div class="th"><span class="dot" style="background:#1f8a65"></span>Oficial</div>
+        <div class="td">Dado publicado por órgão oficial e usado como veio da fonte, sem alterar seu valor.</div>
+        <div class="ex">Ex.: IBGE, INEP, S2ID/SEDEC, CEMADEN, INCRA, FUNAI.</div>
+      </div>
+      <div class="tier ob">
+        <div class="th"><span class="dot" style="background:#3685bf"></span>Observado</div>
+        <div class="td">Medição direta por sensor ou satélite — é medido, não modelado.</div>
+        <div class="ex">Ex.: temperatura de superfície (LST, do inglês <i>Land Surface Temperature</i>) por Landsat 8/9 (satélites de observação da Terra da NASA/USGS).</div>
+      </div>
+      <div class="tier es">
+        <div class="th"><span class="dot" style="background:#c08532"></span>Estimado</div>
+        <div class="td">Aproximação usada quando não há dado oficial local; menor confiabilidade, sempre sinalizada.</div>
+        <div class="ex">Ex.: equipamentos via OpenStreetMap, socioeconômico interpolado.</div>
+      </div>
+      <div class="tier de">
+        <div class="th"><span class="dot" style="background:#8a8f99"></span>Derivado</div>
+        <div class="td">Índice/camada calculada pelos modelos do Sinidu+Clima cruzando fontes oficiais — reprodutível pela metodologia documentada.</div>
+        <div class="ex">Ex.: IVC, IRI, VM, risco de inundação, prioridade de planejamento.</div>
+      </div>
+    </div>
+
+    <h2>Maturidade das fontes-núcleo no piloto (Recife)</h2>
+    <div class="note">
+      <div class="stack-labels"><span>5 integradas de 11</span><span>45% oficial</span></div>
+      <div class="stack">
+        <span style="width:45.5%;background:#1f8a65"></span>
+        <span style="width:18.2%;background:#c08532"></span>
+        <span style="width:27.3%;background:#3685bf"></span>
+        <span style="width:9.0%;background:#8a8f99"></span>
+      </div>
+      <div class="mat-legend">
+        <div class="item"><span class="dot" style="background:#1f8a65"></span>Integrada (5): IBGE, S2ID, MapBiomas, CEMADEN, INDE</div>
+        <div class="item"><span class="dot" style="background:#c08532"></span>Estimada (2): AdaptaBrasil, SINTER</div>
+        <div class="item"><span class="dot" style="background:#3685bf"></span>Em integração (3): GeoSGB, MUNIC, Brasil MAIS</div>
+        <div class="item"><span class="dot" style="background:#8a8f99"></span>Ausente (1): SIRENE</div>
+      </div>
+    </div>
+
+    <div class="two">
+      <div>
+        <h2 style="margin-top:34px">4 tipos de simulação</h2>
+        <div class="grid2">
+          <div class="sim"><div class="t">Chuva → Inundação</div><div class="d">"E se chover X mm?" — mancha de inundação e exposição por bairro.</div></div>
+          <div class="sim"><div class="t">Ilha de Calor (LST)</div><div class="d">Temperatura de pico simulada e comparada à LST observada por satélite.</div></div>
+          <div class="sim"><div class="t">Alagamento por ML</div><div class="d">Previsão por machine learning com limiar mm/24h e fatores de maior peso.</div></div>
+          <div class="sim"><div class="t">Terreno 3D</div><div class="d">Relevo do município (DEM) para visualização e simulação em 3 dimensões.</div></div>
+        </div>
+      </div>
+      <div>
+        <h2 style="margin-top:34px">O que dá para fazer hoje</h2>
+        <div class="caps">
+          <div class="cap"><span class="n">01</span>Diagnóstico com Score, IVC e IRI por município e bairro</div>
+          <div class="cap"><span class="n">02</span>Cruzar riscos no mapa 2D e 3D com camadas sobrepostas</div>
+          <div class="cap"><span class="n">03</span>Simular chuva, calor e alagamento (ML) com fatores explicados</div>
+          <div class="cap"><span class="n">04</span>Monitorar alertas CEMADEN em tempo quase real</div>
+          <div class="cap"><span class="n">05</span>Planejar contingência com zonas, rotas e pontos de apoio</div>
+          <div class="cap"><span class="n">06</span>Gerar plano de ação, relatórios PDF e export SEI com hash</div>
+          <div class="cap"><span class="n">07</span>Perguntar em linguagem natural ao assistente de IA</div>
+          <div class="cap"><span class="n">08</span>Comparar municípios e priorizar onde investir</div>
+          <div class="cap"><span class="n">09</span>Governar com catálogo de maturidade e auditoria de ações</div>
+        </div>
+      </div>
+    </div>
+
+    <hr class="sep" />
+
+    <h2>As 19 camadas do mapa</h2>
+    <table>
+      <thead><tr><th>Camada</th><th>Grupo</th><th>Fonte</th><th>Qualidade</th></tr></thead>
+      <tbody>
+        <tr><td>Limite Municipal</td><td>Base</td><td>IBGE / Geocidades</td><td><span class="tag of">Oficial</span></td></tr>
+        <tr><td>Malha de Bairros</td><td>Base</td><td>IBGE Censo 2022 / CTM</td><td><span class="tag of">Oficial</span></td></tr>
+        <tr><td>Territórios Especiais</td><td>Base</td><td>INCRA / FUNAI / IBGE</td><td><span class="tag of">Oficial</span></td></tr>
+        <tr><td>Equipamentos e Redes</td><td>Dados urbanos</td><td>OSM / bases locais</td><td><span class="tag es">Estimado</span></td></tr>
+        <tr><td>Educação (INEP)</td><td>Dados urbanos</td><td>INEP Censo Escolar</td><td><span class="tag of">Oficial</span></td></tr>
+        <tr><td>Socioeconômico</td><td>Dados urbanos</td><td>IBGE / CTM</td><td><span class="tag es">Estimado</span></td></tr>
+        <tr><td>Uso do Solo</td><td>Clima e riscos</td><td>MapBiomas</td><td><span class="tag de">Derivado</span></td></tr>
+        <tr><td>Temperatura de superfície (LST)</td><td>Clima e riscos</td><td>GeoReDUS / Landsat</td><td><span class="tag ob">Observado</span></td></tr>
+        <tr><td>Vulnerabilidade Climática</td><td>Clima e riscos</td><td>IBGE + MapBiomas + S2ID</td><td><span class="tag de">Derivado</span></td></tr>
+        <tr><td>Risco de Inundação</td><td>Clima e riscos</td><td>S2ID + hidrografia</td><td><span class="tag de">Derivado</span></td></tr>
+        <tr><td>Alertas Ativos</td><td>Clima e riscos</td><td>CEMADEN / GeoRiscos</td><td><span class="tag of">Oficial</span></td></tr>
+        <tr><td>Histórico de Desastres</td><td>Clima e riscos</td><td>S2ID / SEDEC</td><td><span class="tag of">Oficial</span></td></tr>
+        <tr><td>Saneamento e Drenagem</td><td>Planejamento</td><td>SNIS/SINISA</td><td><span class="tag de">Derivado</span></td></tr>
+        <tr><td>Capacidade de Adaptação</td><td>Planejamento</td><td>AdaptaBrasil / INPE</td><td><span class="tag de">Derivado</span></td></tr>
+        <tr><td>Prioridade de Planejamento</td><td>Planejamento</td><td>Planos locais + Score</td><td><span class="tag de">Derivado</span></td></tr>
+        <tr><td>Lacunas de Dados</td><td>Planejamento</td><td>Radar de Integração</td><td><span class="tag de">Derivado</span></td></tr>
+        <tr><td>Saúde × Risco</td><td>Saúde e segurança</td><td>CNES/DataSUS × risco</td><td><span class="tag de">Derivado</span></td></tr>
+        <tr><td>Segurança Pública</td><td>Saúde e segurança</td><td>SINESP / dados.gov.br</td><td><span class="tag es">Estimado</span></td></tr>
+        <tr><td>Vulnerabilidade Multidimensional</td><td>Saúde e segurança</td><td>VM Sinidu+Clima</td><td><span class="tag de">Derivado</span></td></tr>
+      </tbody>
+    </table>
+
+    <h2>As 17 fontes de dados</h2>
+    <table>
+      <thead><tr><th>Fonte</th><th>Domínio</th><th>O que traz</th><th>Integração</th></tr></thead>
+      <tbody>
+        <tr><td>IBGE (Cidades@)</td><td>Demografia</td><td>Dados demográficos, socioeconômicos e territoriais oficiais.</td><td><span class="tag tec">Técnica</span></td></tr>
+        <tr><td>S2ID / SEDEC</td><td>Desastres</td><td>Histórico oficial de desastres naturais e danos materiais.</td><td><span class="tag tec">Técnica</span></td></tr>
+        <tr><td>MapBiomas</td><td>Uso do solo</td><td>Uso e cobertura do solo — impermeabilização e vegetação.</td><td><span class="tag tec">Técnica</span></td></tr>
+        <tr><td>CEMADEN / GeoRiscos</td><td>Alertas</td><td>Alertas hidrológicos e de deslizamento em tempo quase real.</td><td><span class="tag tec">Técnica</span></td></tr>
+        <tr><td>INDE</td><td>Geoespacial</td><td>Infraestrutura de dados espaciais municipais.</td><td><span class="tag tec">Técnica</span></td></tr>
+        <tr><td>INEP Censo Escolar</td><td>Educação</td><td>Matrículas e infraestrutura das escolas por município.</td><td><span class="tag tec">Técnica</span></td></tr>
+        <tr><td>INCRA Quilombos</td><td>Territórios</td><td>Territórios quilombolas certificados pelo INCRA.</td><td><span class="tag tec">Técnica</span></td></tr>
+        <tr><td>FUNAI Terras Indígenas</td><td>Territórios</td><td>Terras indígenas homologadas e demarcadas.</td><td><span class="tag tec">Técnica</span></td></tr>
+        <tr><td>IBGE Aglomerados</td><td>Territórios</td><td>Comunidades urbanas e aglomerados subnormais do Censo.</td><td><span class="tag tec">Técnica</span></td></tr>
+        <tr><td>AdaptaBrasil / INPE</td><td>Adaptação</td><td>Indicadores de adaptação climática do INPE.</td><td><span class="tag tec">Técnica</span></td></tr>
+        <tr><td>Brasil MAIS</td><td>Monitoramento</td><td>Monitoramento territorial e indicadores MCID.</td><td><span class="tag tec">Técnica</span></td></tr>
+        <tr><td>SNIS / SINISA</td><td>Saneamento</td><td>Saneamento básico, drenagem e gestão de resíduos.</td><td><span class="tag inst">Institucional</span></td></tr>
+        <tr><td>SINTER / Receita Federal</td><td>Cadastro</td><td>Cadastro territorial e imóveis urbanos.</td><td><span class="tag inst">Institucional</span></td></tr>
+        <tr><td>MUNIC / IBGE</td><td>Institucional</td><td>Gestão municipal e capacidade administrativa.</td><td><span class="tag inst">Institucional</span></td></tr>
+        <tr><td>SIRENE / MCTI</td><td>Emissões</td><td>Inventário nacional de emissões antrópicas.</td><td><span class="tag inst">Institucional</span></td></tr>
+        <tr><td>IBGE SINGED Lab (RS 2024)</td><td>Exposição</td><td>População e domicílios em áreas afetadas (enchentes RS).</td><td><span class="tag inst">Manual</span></td></tr>
+        <tr><td>GeoSGB / CPRM</td><td>Geologia</td><td>Litologia, aptidão geológica e susceptibilidade do solo.</td><td><span class="tag conv">Convênio</span></td></tr>
+      </tbody>
+    </table>
+    <p class="caption">Integração: verde = técnica (automatizável) · amarelo = institucional/manual · vermelho = depende de convênio.</p>
+
+    <h2>Os 10 módulos — o que o gestor faz em cada um</h2>
+    <div class="mods">
+      <div class="mod"><div class="head"><span class="name">Painel Executivo</span><span class="route">/painel</span></div><div class="desc">Diagnóstico do município: Score Sinidu, IVC, IRI, bairros críticos e narrativa automática.</div></div>
+      <div class="mod"><div class="head"><span class="name">Municípios</span><span class="route">/municipios</span></div><div class="desc">Carregar um novo município e rodar o ETL territorial, acompanhando o progresso.</div></div>
+      <div class="mod"><div class="head"><span class="name">Catálogo de Dados</span><span class="route">/catalogo</span></div><div class="desc">Ver maturidade informacional e as lacunas de cada fonte oficial.</div></div>
+      <div class="mod"><div class="head"><span class="name">Simulações</span><span class="route">/simulacoes</span></div><div class="desc">Rodar cenários de chuva, calor, alagamento por ML e relevo 3D.</div></div>
+      <div class="mod"><div class="head"><span class="name">Monitor</span><span class="route">/monitor</span></div><div class="desc">Acompanhar alertas CEMADEN em tempo quase real com risco calculado.</div></div>
+      <div class="mod"><div class="head"><span class="name">Contingência</span><span class="route">/contingencia</span></div><div class="desc">Montar plano pré-preenchido pelo alerta, com zonas, rotas e pontos de apoio no mapa.</div></div>
+      <div class="mod"><div class="head"><span class="name">Assistente (IA)</span><span class="route">/assistente</span></div><div class="desc">Perguntar em linguagem natural — 13 ferramentas consultam dados do município.</div></div>
+      <div class="mod"><div class="head"><span class="name">Casos de Sucesso</span><span class="route">/casos</span></div><div class="desc">Consultar referências e benchmarking (GeoReDUS) para embasar decisões.</div></div>
+      <div class="mod"><div class="head"><span class="name">Auditoria</span><span class="route">/auditoria</span></div><div class="desc">Rastrear ações: quem gerou PDF, quem ativou contingência, quando.</div></div>
+      <div class="mod"><div class="head"><span class="name">Sistema</span><span class="route">/sistema</span></div><div class="desc">Status operacional, homologação, DEM e modelos de ML.</div></div>
+    </div>
+
+    <hr class="sep" />
+
+    <h2>Metodologia — índices e simulações</h2>
+    <p class="method-note">Todos os índices são normalizados entre 0 e 1 (o Score, de 0 a 100). As
+    simulações são modelos paramétricos/exploratórios calibrados com os dados do Sinidu+Clima —
+    servem para triagem e priorização territorial; não substituem estudos hidrológicos, geológicos ou
+    microclimáticos oficiais.</p>
+
+    <h3 style="margin-top:22px">Índices territoriais</h3>
+    <div class="idx-grid">
+
+      <div class="idx">
+        <div class="iname">Score Sinidu+Clima <span class="iscale">· 0 a 100</span></div>
+        <div class="idesc">Prioridade de intervenção territorial consolidada por município e por bairro.</div>
+        <div class="formula">Score = 45% × IVC médio
+      + 35% × IRI médio
+      + 20% × (1 − capacidade de adaptação média)</div>
+        <div class="subf"><b>66–100</b> prioridade crítica · <b>33–65</b> elevada · <b>0–32</b> moderada</div>
+      </div>
+
+      <div class="idx">
+        <div class="iname">IVC — Vulnerabilidade Climática <span class="iscale">· 0 a 1</span></div>
+        <div class="idesc">Exposição e sensibilidade do território, atenuadas pela capacidade de adaptação.</div>
+        <div class="formula">IVC = média(exposição, sensibilidade)
+      × (1 − 0,3 × capacidade)</div>
+        <div class="subf"><b>Exposição</b> = 0,40 × histórico S2ID + 0,60 × alertas CEMADEN (por nível)</div>
+        <div class="subf"><b>Sensibilidade</b> = 0,50 × densidade + 0,50 × inverso da renda</div>
+        <div class="subf"><b>Capacidade</b> = 0,60 × cobertura vegetal + 0,40 × infraestrutura de saúde</div>
+      </div>
+
+      <div class="idx">
+        <div class="iname">IRI — Risco de Inundação <span class="iscale">· 0 a 1</span></div>
+        <div class="idesc">Propensão a inundação por histórico, impermeabilização e hidrografia.</div>
+        <div class="formula">IRI = 0,40 × histórico S2ID (inundação)
+      + 0,40 × impermeabilização
+      + 0,20 × proximidade de corpos d'água</div>
+        <div class="subf"><b>S2ID</b> = mín(nº de inundações / 3 ; 1)</div>
+        <div class="subf"><b>Impermeabilização</b> = mín(% de área urbana ; 1) — MapBiomas</div>
+        <div class="subf"><b>Proximidade da água</b> = escore contínuo 0,2–1,0 pela distância ao rio</div>
+      </div>
+
+      <div class="idx">
+        <div class="iname">VM — Vulnerabilidade Multidimensional <span class="iscale">· 0 a 1</span></div>
+        <div class="idesc">Cruza risco climático com fragilidades social, de saúde, segurança e fiscal.</div>
+        <div class="formula">VM = 0,30 × risco climático
+     + 0,25 × vulnerabilidade social
+     + 0,20 × (1 − cobertura de saúde)
+     + 0,15 × (1 − segurança)
+     + 0,10 × (1 − capacidade fiscal)</div>
+        <div class="subf"><b>Risco climático</b> = 0,55 × IVC + 0,45 × IRI</div>
+        <div class="subf"><b>Vulnerab. social</b> = 0,65 × IVC + 0,35 × estresse de renda</div>
+      </div>
+
+    </div>
+
+    <h3 style="margin-top:26px">Simulações</h3>
+
+    <div class="idx full">
+      <div class="iname">Simulação de inundação por chuva extrema</div>
+      <div class="idesc">Modelo paramétrico sobre o DEM (Modelo Digital de Elevação — a representação
+      digital do relevo do terreno). Usa relevo SRTM (<i>Shuttle Radar Topography Mission</i>, relevo de
+      satélite ~30 m) ou LiDAR (<i>Light Detection and Ranging</i>, varredura a laser aérea de alta
+      precisão) onde disponível: converte a chuva em lâmina d'água e a distribui pelo relevo,
+      ponderada por drenagem e impermeabilização.</div>
+      <div class="formula">Coeficiente de escoamento:   C = 0,22 + 0,58 × impermeabilização
+Chuva efetiva (m):           R_ef = (precipitação_mm / 1000) × C
+Elevação da lâmina (m):      Δh = R_ef × (5,5 + mín(precip / 120 ; 1,5))
+Superfície d'água (m):       H = cota_base(P10) + Δh_médio × (1 + 0,75 × acúmulo_D8_norm)
+Profundidade (m):            prof = máx(0 ; H − elevação)   → modulada por TWI, declividade, IRI e rios</div>
+      <div class="subf"><b>TWI</b> (Índice de Umidade Topográfica) = ln(1 + acúmulo) − ln(1 + tan(declividade)) — reforça baixadas e planícies</div>
+      <div class="subf"><b>Fator de drenagem</b> = 1 − declividade / 48 (limitado a 0,22–1,0) — encostas escoam mais</div>
+      <div class="subf"><b>Acúmulo D8</b> (algoritmo de direção de fluxo entre 8 células vizinhas) = fluxo acumulado por direção de maior declive (linhas de drenagem naturais)</div>
+      <div class="subf">Faixas de profundidade: <b>superficial</b> &lt; 35 cm · <b>moderada</b> 35–80 cm · <b>crítica</b> &gt; 80 cm</div>
+    </div>
+
+    <div class="idx full">
+      <div class="iname">Simulação de ilha de calor urbana (UHI, do inglês <i>Urban Heat Island</i>) — proxy térmico v1.1</div>
+      <div class="idesc">Estima o acréscimo térmico por bairro (ΔT) a partir da cobertura do solo (MapBiomas)
+      e da densidade, somado ao pico de temperatura previsto para a cidade.</div>
+      <div class="formula">Temperatura local = pico previsto (°C) + ΔT_UHI
+
+ΔT_UHI = 3,5 × impermeabilização
+       + 1,2 × tecido urbano construído
+       − 2,5 × cobertura vegetal
+       + 1,0 × densidade populacional
+       (amplificado sob onda de calor: × [1 + 0,35 × excesso térmico / 10])</div>
+      <div class="subf">Faixas de intensidade: <b>leve</b> &lt; 1,5 °C · <b>moderada</b> 1,5–3,0 °C · <b>severa</b> &gt; 3,0 °C</div>
+      <div class="src-line">Referências: Oke (1982), Li &amp; Bou-Zeid (2013), EPA Heat Island Compendium. Não substitui LST medida por satélite nem estudo microclimático de campo.</div>
+    </div>
+
+    <div class="idx full">
+      <div class="iname">Deslizamento e previsão de alagamento (ML)</div>
+      <div class="idesc">Camada geotécnica e modelo preditivo complementares às simulações acima.</div>
+      <div class="formula">Deslizamento:  encostas com declividade &gt; 30° sinalizadas a partir do DEM
+Alagamento ML: RandomForest sobre variáveis hidro-climáticas → probabilidade de risco,
+               com limiar (mm/24h) e importância das variáveis (principais fatores)</div>
+      <div class="subf">A previsão por ML alimenta o risco do Monitor e é interpretável (limiar + top variáveis).</div>
+    </div>
+
+    <p class="src-line">Fórmulas conforme <code>analytical_engine.py</code>, <code>hydro_simulator.py</code> e
+    <code>heat_simulator.py</code>. Índices calculados sobre setores censitários (IBGE) e agregados por bairro.</p>
+
+    <h2>Leitura honesta para a homologação</h2>
+    <div class="note warn">
+      <p style="margin:0">A base técnica está madura, mas parte das fontes depende de acordos
+      institucionais (GeoSGB/CPRM por convênio; SNIS, SINTER, MUNIC e SIRENE por integração
+      institucional). No piloto Recife, 5 das 11 fontes-núcleo estão plenamente integradas e as
+      demais são estimadas ou estão em integração — sempre sinalizadas na interface, para que o
+      gestor decida com plena ciência da procedência de cada dado.</p>
+    </div>
+
+    <hr class="sep" />
+
+    <h2>Roteiro de apresentação do vídeo (demo Recife)</h2>
+    <p class="method-note">Sequência de falas alinhada às cenas do vídeo demo. Os números são do
+    cenário demonstrado (Recife-PE, chuva de 140 mm) — cite-os para dar concretude. Ajuste o ritmo à
+    duração do vídeo.</p>
+
+    <div class="scene">
+      <div class="snum">1</div>
+      <div class="sbody">
+        <div class="sh">Abertura — o que é a plataforma</div>
+        <div class="sshow">Tela: painel com imagem de satélite do Recife, seletor de município e botões Diagnóstico / Apresentar / Relatório / Comparar.</div>
+        <ul>
+          <li>"Esta é a <b>Sinidu+Clima</b>, uma plataforma nacional de inteligência territorial com foco climático."</li>
+          <li>"Tudo parte de um município — aqui, Recife — e cruza dados oficiais de várias fontes em um só ambiente."</li>
+          <li>"Trabalhamos em <b>2D e em Terreno 3D</b>, e podemos gerar diagnóstico, relatório e comparação a qualquer momento."</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="scene">
+      <div class="snum">2</div>
+      <div class="sbody">
+        <div class="sh">Diagnóstico executivo automático (IA)</div>
+        <div class="sshow">Tela: "Leitura Executiva" com narrativa gerada por IA e bairros coloridos por vulnerabilidade.</div>
+        <ul>
+          <li>"Com um clique, a plataforma escreve um <b>diagnóstico executivo em linguagem natural</b>."</li>
+          <li>"Ela consolida o risco num <b>Score</b> e aponta os bairros mais críticos e as recomendações territoriais."</li>
+        </ul>
+        <div class="skeys">Números do vídeo: <b>Score Sinidu 52/100</b> · IVC <b>0,43</b> · IRI <b>0,46</b> · <b>9 desastres</b> em 10 anos · ~<b>R$ 55 mi</b> em danos · CAPAG <b>B+</b> · bairros críticos: Recife, Boa Vista, Sancho.</div>
+      </div>
+    </div>
+
+    <div class="scene">
+      <div class="snum">3</div>
+      <div class="sbody">
+        <div class="sh">Camadas e cruzamento de riscos</div>
+        <div class="sshow">Tela: painel "Camadas Espaciais" com selos Oficial/Observado/Estimado/Derivado e o preset "Cruzar riscos".</div>
+        <ul>
+          <li>"São <b>19 camadas</b> vindas de <b>17 fontes</b> oficiais."</li>
+          <li>"Cada camada mostra a <b>origem do dado</b> — oficial, observado, estimado ou derivado — então nunca se decide às cegas."</li>
+          <li>"Num clique eu <b>cruzo bairros + vulnerabilidade + inundação</b> para achar as áreas prioritárias."</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="scene">
+      <div class="snum">4</div>
+      <div class="sbody">
+        <div class="sh">Simulação de chuva extrema</div>
+        <div class="sshow">Tela: "Modelo Pluvial Territorial", 140 mm vs referência 80 mm, box de metodologia, manchas azuis no mapa.</div>
+        <ul>
+          <li>"Simulo um cenário de <b>chuva extrema de 140 mm</b>, comparado a uma referência de 80 mm."</li>
+          <li>"O modelo cruza o <b>relevo (DEM)</b>, o acúmulo de fluxo, a umidade topográfica e a impermeabilização do solo."</li>
+          <li>"O resultado são <b>manchas por profundidade</b>: superficial, moderada e crítica."</li>
+        </ul>
+        <div class="skeys">Ponto de destaque: mancha de <b>alagamento crítico (&gt; 80 cm)</b>, cota da água simulada em <b>1,69 m</b> naquele ponto.</div>
+      </div>
+    </div>
+
+    <div class="scene">
+      <div class="snum">5</div>
+      <div class="sbody">
+        <div class="sh">Consequência e exposição quantificadas</div>
+        <div class="sshow">Tela: métricas de consequência, delta vs referência e ranking de bairros atingidos.</div>
+        <ul>
+          <li>"A plataforma <b>quantifica a consequência</b>, não só desenha a mancha."</li>
+          <li>"E é <b>transparente sobre a incerteza</b> — mostra a resolução e a precisão do relevo usado."</li>
+        </ul>
+        <div class="skeys">Números do vídeo: <b>57,58 km²</b> afetados · ~<b>1,59 milhão</b> de habitantes em setores inundáveis · <b>45 bairros</b> · <b>61%</b> de impermeabilização · resolução DEM ~<b>20,6 m</b>, incerteza vertical <b>±16 m</b>. Bairros: Rosarinho e Aflitos 100%, Bomba do Hemetério 99%.</div>
+      </div>
+    </div>
+
+    <div class="scene">
+      <div class="snum">6</div>
+      <div class="sbody">
+        <div class="sh">Assistente de IA — pergunta em linguagem natural</div>
+        <div class="sshow">Tela: "Agente Sinidu" respondendo sobre impactos e próxima ação.</div>
+        <ul>
+          <li>"Posso <b>perguntar em português</b> e o assistente explica os impactos do cenário."</li>
+          <li>"<b>Saúde</b>: risco de leptospirose e diarreias. <b>Economia</b>: prejuízo no comércio da Zona Sul. <b>Mobilidade</b>: interdição de vias como a Av. Agamenon."</li>
+          <li>"E ele <b>sugere a próxima ação</b>, referenciando PAC, Plano de Ação Climática e a base GeoReDUS."</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="scene">
+      <div class="snum">7</div>
+      <div class="sbody">
+        <div class="sh">Simulação de ilha de calor</div>
+        <div class="sshow">Tela: "Ilha de Calor Urbana", pico previsto e mapa térmico (laranja/vermelho).</div>
+        <ul>
+          <li>"Além da água, simulo o <b>calor urbano</b>."</li>
+          <li>"Testo cenários de <b>desmatamento e asfalto</b> e vejo o efeito na temperatura por bairro."</li>
+          <li>"Uso a <b>temperatura de superfície observada por satélite</b> como referência de calibração."</li>
+        </ul>
+        <div class="skeys">Números do vídeo: <b>pico de 41 °C</b> · cenário com desmatamento −10% e +20% de asfalto.</div>
+      </div>
+    </div>
+
+    <div class="scene">
+      <div class="snum">8</div>
+      <div class="sbody">
+        <div class="sh">Relevo de alta resolução (DEM / LiDAR)</div>
+        <div class="sshow">Tela: card "DEM / LiDAR — Recife" com opção de importar GeoTIFF.</div>
+        <ul>
+          <li>"Para o Recife usamos <b>LiDAR de alta resolução</b> — isso dá curvas de nível e simulações mais precisas."</li>
+          <li>"Outros municípios entram com relevo SRTM e podem <b>subir seu próprio LiDAR</b> quando tiverem."</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="scene">
+      <div class="snum">9</div>
+      <div class="sbody">
+        <div class="sh">Fechamento — do dado ao plano</div>
+        <div class="sshow">Encerramento.</div>
+        <ul>
+          <li>"Em resumo: <b>diagnóstico, simulação e plano de ação num só ambiente</b>, com dados oficiais e origem sempre sinalizada."</li>
+          <li>"Do dado bruto ao <b>plano de contingência</b> e ao <b>relatório com export SEI rastreável</b>."</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="tips">
+      <b>Dicas de condução</b>
+      <ul>
+        <li>Enfatize sempre <b>dados oficiais + selo de origem</b> — é o principal diferencial de credibilidade.</li>
+        <li>Seja honesto: as simulações são <b>modelos paramétricos para triagem e priorização</b>, não substituem estudo hidrológico/geológico oficial.</li>
+        <li>Tenha os <b>números-chave na ponta da língua</b> (Score 52, 140 mm, cota 1,69 m, 57,58 km², 41 °C) — dão concretude.</li>
+        <li>Se houver tempo, mostre o <b>Terreno 3D</b> e termine no <b>plano de contingência</b> para fechar o ciclo "diagnóstico → ação".</li>
+        <li>Feche conectando ao <b>MCID</b>: a plataforma apoia priorização de investimento e resposta a desastres.</li>
+      </ul>
+    </div>
+
+  </div>
+
+  <footer>
+    <span>Sinidu+Clima · Plataforma Nacional de Inteligência Territorial</span>
+    <span>Panorama gerado em julho de 2026 · dados extraídos do código-fonte</span>
+  </footer>
+</div>
+</body>
+</html>

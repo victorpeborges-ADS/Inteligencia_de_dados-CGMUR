@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import datetime
+from app.timeutil import utc_now
 from typing import Any
 
 from shapely.geometry import mapping, shape
@@ -16,7 +16,12 @@ from app.models import (
     InfraestruturaUrbana,
     Municipio,
 )
-from app.services.cobrade_templates import default_acoes_por_nivel
+from app.services.cobrade_templates import (
+    cobrade_for_cenario,
+    default_acoes_por_nivel,
+    default_protocolo_campo,
+    default_recursos_from_support,
+)
 from app.services.osrm_router import routes_from_zones_to_support_points
 
 
@@ -33,6 +38,9 @@ def _snapshot_plan(plan: ContingencyPlan) -> dict:
         "pontos_apoio": plan.pontos_apoio,
         "contatos_defesa_civil": plan.contatos_defesa_civil,
         "acoes_por_nivel": plan.acoes_por_nivel,
+        "recursos_operacionais": getattr(plan, "recursos_operacionais", None) or [],
+        "protocolo_campo": getattr(plan, "protocolo_campo", None) or {},
+        "cobrade_codigo": getattr(plan, "cobrade_codigo", None),
         "status": plan.status,
         "versao": plan.versao,
     }
@@ -142,7 +150,10 @@ def generate_plan_from_simulation(
     buffer_m: float = 500,
     criado_por: str = "simulacao",
     simulacao_ref: dict | None = None,
+    nivel_alerta: str | None = None,
 ) -> ContingencyPlan:
+    from app.services.live_alert_level import live_alert_snapshot, normalize_nivel
+
     muni = _municipio_by_ibge(db, codigo_ibge)
     if not muni:
         raise ValueError(f"Município {codigo_ibge} não encontrado")
@@ -151,18 +162,30 @@ def generate_plan_from_simulation(
     pontos = load_support_points(db, muni.id)
     rotas = routes_from_zones_to_support_points(zonas, pontos, uf=muni.uf)
 
+    if nivel_alerta:
+        nivel = normalize_nivel(nivel_alerta, default="AMARELO")
+    else:
+        live = live_alert_snapshot(db, codigo_ibge, hours=24)
+        nivel = live["nivel_alerta"] if live.get("vivo") else "AMARELO"
+
+    cobrade = cobrade_for_cenario(cenario_tipo)
     plan = ContingencyPlan(
         municipio_id=muni.id,
         cenario_tipo=cenario_tipo.upper(),
-        nivel_alerta="AMARELO",
+        nivel_alerta=nivel,
         criado_por=criado_por,
         zonas_evacuacao=zonas,
         rotas_fuga=rotas,
         pontos_apoio=pontos,
         contatos_defesa_civil=[
-            {"nome": "Coordenação Defesa Civil", "cargo": "Coordenador", "telefone": "", "whatsapp": ""},
+            {"nome": "Coordenação Defesa Civil", "cargo": "Coordenador / Plantão 24h", "telefone": "", "whatsapp": ""},
+            {"nome": "Corpo de Bombeiros", "cargo": "CBM", "telefone": "193", "whatsapp": ""},
+            {"nome": "SAMU", "cargo": "Regulação", "telefone": "192", "whatsapp": ""},
         ],
         acoes_por_nivel=default_acoes_por_nivel(cenario_tipo.upper()),
+        recursos_operacionais=default_recursos_from_support(pontos),
+        protocolo_campo=default_protocolo_campo(cenario_tipo.upper()),
+        cobrade_codigo=cobrade.get("codigo"),
         status="RASCUNHO",
         versao=1,
         simulacao_ref=simulacao_ref,
@@ -183,13 +206,14 @@ def update_plan(db: Session, plan_id: int, payload: dict, revisado_por: str = "u
     for field in (
         "cenario_tipo", "nivel_alerta", "zonas_evacuacao", "rotas_fuga",
         "pontos_apoio", "contatos_defesa_civil", "acoes_por_nivel", "status",
+        "recursos_operacionais", "protocolo_campo", "cobrade_codigo",
     ):
         if field in payload and payload[field] is not None:
             setattr(plan, field, payload[field])
 
     plan.versao += 1
-    plan.data_revisao = datetime.datetime.utcnow()
-    plan.updated_at = datetime.datetime.utcnow()
+    plan.data_revisao = utc_now()
+    plan.updated_at = utc_now()
     save_revision(db, plan, revisado_por)
     db.commit()
     db.refresh(plan)
@@ -212,6 +236,10 @@ def plan_to_dict(plan: ContingencyPlan, muni: Municipio | None = None) -> dict[s
         "pontos_apoio": plan.pontos_apoio,
         "contatos_defesa_civil": plan.contatos_defesa_civil,
         "acoes_por_nivel": plan.acoes_por_nivel,
+        "recursos_operacionais": getattr(plan, "recursos_operacionais", None) or [],
+        "protocolo_campo": getattr(plan, "protocolo_campo", None) or {},
+        "cobrade_codigo": getattr(plan, "cobrade_codigo", None),
+        "cobrade": cobrade_for_cenario(plan.cenario_tipo),
         "status": plan.status,
         "versao": plan.versao,
         "simulacao_ref": plan.simulacao_ref,

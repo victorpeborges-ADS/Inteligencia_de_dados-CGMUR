@@ -1,7 +1,7 @@
 """Carga automática de municípios prioritários via malhas IBGE."""
 from __future__ import annotations
 
-import datetime
+from app.timeutil import utc_now
 import json
 import logging
 from pathlib import Path
@@ -62,7 +62,7 @@ def upsert_seed_rows(db: Session) -> int:
             existing.criterio = row["criterio"]
             existing.decretos_emergencia = row.get("decretos", 0)
             existing.prioridade = row.get("prioridade", 0)
-            existing.updated_at = datetime.datetime.utcnow()
+            existing.updated_at = utc_now()
         else:
             db.add(MunicipioSeed(
                 codigo_ibge=row["codigo_ibge"],
@@ -217,7 +217,7 @@ def load_municipio_from_seed(db: Session, seed: MunicipioSeed, skip_integrations
     seed.geom_fonte = geom_fonte
     seed.status_carga = "carregado" if not lacunas else "parcial"
     seed.lacunas = lacunas or ["saude", "seguranca"]
-    seed.updated_at = datetime.datetime.utcnow()
+    seed.updated_at = utc_now()
     db.commit()
     db.refresh(muni)
     return muni

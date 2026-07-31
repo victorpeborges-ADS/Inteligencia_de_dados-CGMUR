@@ -10,8 +10,12 @@ import {
   ResponsiveContainer,
   Legend,
 } from 'recharts';
-import { api, type MonitoringCompareResult } from '@/utils/api';
-import { X, FileDown, ArrowLeftRight, AlertTriangle } from 'lucide-react';
+import {
+  api,
+  type MonitoringCompareResult,
+  type MunicipalRankResponse,
+} from '@/utils/api';
+import { X, FileDown, ArrowLeftRight, AlertTriangle, ListOrdered } from 'lucide-react';
 import TermTooltip from '@/components/UI/TermTooltip';
 import RotatingLoader from '@/components/UI/RotatingLoader';
 import { EmptyState } from '@/design-system';
@@ -32,11 +36,43 @@ type CompareModalProps = {
   municipalities: Array<{ codigo_ibge: string; nome: string; uf?: string; populacao?: number }>;
 };
 
+type TabId = 'par' | 'ranking';
+
+const RANK_CRITERIOS: Array<{ id: string; label: string }> = [
+  { id: 'score_sinidu', label: 'Score Sinidu' },
+  { id: 'media_ivc', label: 'IVC médio' },
+  { id: 'media_iri', label: 'IRI médio' },
+  { id: 'media_adaptacao', label: 'Adaptação' },
+  { id: 'nota_capag', label: 'CAPAG' },
+  { id: 'populacao', label: 'População' },
+];
+
+function formatRankValor(valor: number | string | null | undefined, format: string): string {
+  if (valor == null || valor === '') return '—';
+  if (format === 'text') return String(valor);
+  if (format === 'percent') {
+    const n = typeof valor === 'number' ? valor : Number(valor);
+    if (Number.isNaN(n)) return String(valor);
+    return n <= 1 ? `${Math.round(n * 100)}%` : `${Math.round(n)}%`;
+  }
+  const n = typeof valor === 'number' ? valor : Number(valor);
+  if (Number.isNaN(n)) return String(valor);
+  return Math.round(n).toLocaleString('pt-BR');
+}
+
 export default function CompareModal({ open, onClose, codigoA, nomeA, municipalities }: CompareModalProps) {
+  const [tab, setTab] = useState<TabId>('par');
   const [codigoB, setCodigoB] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [data, setData] = useState<MonitoringCompareResult | null>(null);
+
+  const ufA = municipalities.find((m) => m.codigo_ibge === codigoA)?.uf ?? '';
+  const [rankCriterio, setRankCriterio] = useState('score_sinidu');
+  const [rankUf, setRankUf] = useState(ufA);
+  const [rankLoading, setRankLoading] = useState(false);
+  const [rankError, setRankError] = useState<string | null>(null);
+  const [rankData, setRankData] = useState<MunicipalRankResponse | null>(null);
 
   const presets = useMemo(
     () => buildComparePresets(codigoA, municipalities),
@@ -49,7 +85,11 @@ export default function CompareModal({ open, onClose, codigoA, nomeA, municipali
     setCodigoB(defaultPreset?.codigoIbge ?? '');
     setData(null);
     setError(null);
-  }, [open, codigoA, presets]);
+    setTab('par');
+    setRankUf(ufA);
+    setRankData(null);
+    setRankError(null);
+  }, [open, codigoA, presets, ufA]);
 
   const runCompare = async () => {
     if (!codigoB || codigoB === codigoA) {
@@ -69,11 +109,41 @@ export default function CompareModal({ open, onClose, codigoA, nomeA, municipali
   };
 
   useEffect(() => {
-    if (open && codigoB && codigoB !== codigoA) {
+    if (open && tab === 'par' && codigoB && codigoB !== codigoA) {
       runCompare().catch(() => {});
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [codigoB, open]);
+  }, [codigoB, open, tab]);
+
+  const runRank = async () => {
+    setRankLoading(true);
+    setRankError(null);
+    try {
+      const sameUf = municipalities
+        .filter((m) => !rankUf || m.uf === rankUf)
+        .map((m) => m.codigo_ibge)
+        .slice(0, 25);
+      const result = await api.rankMunicipalities({
+        criterio: rankCriterio,
+        uf: rankUf || undefined,
+        codigos: sameUf.length >= 2 ? sameUf : undefined,
+        limit: 15,
+      });
+      setRankData(result);
+    } catch (e) {
+      setRankError(e instanceof Error ? e.message : 'Falha no ranking');
+      setRankData(null);
+    } finally {
+      setRankLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (open && tab === 'ranking') {
+      runRank().catch(() => {});
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, tab, rankCriterio, rankUf]);
 
   const municipioB = municipalities.find((m) => m.codigo_ibge === codigoB);
   const nomeB = municipioB?.nome ?? codigoB;
@@ -104,6 +174,12 @@ export default function CompareModal({ open, onClose, codigoA, nomeA, municipali
   const maisCriticoNome =
     data?.mais_critico_ibge === codigoA ? nomeA : data?.mais_critico_ibge === codigoB ? nomeB : null;
 
+  const ufs = useMemo(
+    () =>
+      Array.from(new Set(municipalities.map((m) => m.uf).filter(Boolean) as string[])).sort(),
+    [municipalities],
+  );
+
   const exportPdf = () => {
     if (!data) return;
     const a = data.municipio_a as Record<string, unknown>;
@@ -132,17 +208,138 @@ export default function CompareModal({ open, onClose, codigoA, nomeA, municipali
   return (
     <div className="fixed inset-0 z-[2000] flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm">
       <div className="max-h-[90vh] w-full max-w-3xl overflow-y-auto rounded-2xl border border-sky-500/30 bg-zinc-950 shadow-2xl">
-        <div className="sticky top-0 flex items-center justify-between border-b border-zinc-800 bg-zinc-950/95 px-4 py-3">
-          <div className="flex items-center gap-2">
-            <ArrowLeftRight size={16} className="text-sky-300" />
-            <h2 className="text-sm font-bold uppercase tracking-wider text-sky-200">Comparador territorial</h2>
+        <div className="sticky top-0 z-10 border-b border-zinc-800 bg-zinc-950/95">
+          <div className="flex items-center justify-between px-4 py-3">
+            <div className="flex items-center gap-2">
+              <ArrowLeftRight size={16} className="text-sky-300" />
+              <h2 className="text-sm font-bold uppercase tracking-wider text-sky-200">Comparador territorial</h2>
+            </div>
+            <button type="button" onClick={onClose} className="rounded-lg p-1 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100">
+              <X className="h-5 w-5" />
+            </button>
           </div>
-          <button type="button" onClick={onClose} className="rounded-lg p-1 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100">
-            <X className="h-5 w-5" />
-          </button>
+          <div className="flex gap-1 px-4 pb-2">
+            <button
+              type="button"
+              onClick={() => setTab('par')}
+              className={`rounded-lg px-3 py-1.5 text-[10px] font-bold uppercase tracking-wide ${
+                tab === 'par' ? 'bg-sky-500/20 text-sky-100' : 'text-zinc-500 hover:text-zinc-300'
+              }`}
+            >
+              Comparar par
+            </button>
+            <button
+              type="button"
+              onClick={() => setTab('ranking')}
+              className={`inline-flex items-center gap-1 rounded-lg px-3 py-1.5 text-[10px] font-bold uppercase tracking-wide ${
+                tab === 'ranking' ? 'bg-sky-500/20 text-sky-100' : 'text-zinc-500 hover:text-zinc-300'
+              }`}
+            >
+              <ListOrdered size={12} />
+              Ranking
+            </button>
+          </div>
         </div>
 
         <div className="space-y-4 p-4">
+          {tab === 'ranking' ? (
+            <>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="mb-1 block text-[10px] uppercase text-zinc-500">Critério</label>
+                  <select
+                    value={rankCriterio}
+                    onChange={(e) => setRankCriterio(e.target.value)}
+                    className="w-full rounded-lg border border-zinc-700 bg-zinc-900 px-2 py-2 text-sm text-zinc-100"
+                  >
+                    {RANK_CRITERIOS.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="mb-1 block text-[10px] uppercase text-zinc-500">UF</label>
+                  <select
+                    value={rankUf}
+                    onChange={(e) => setRankUf(e.target.value)}
+                    className="w-full rounded-lg border border-zinc-700 bg-zinc-900 px-2 py-2 text-sm text-zinc-100"
+                  >
+                    <option value="">Todas (lista carregada)</option>
+                    {ufs.map((uf) => (
+                      <option key={uf} value={uf}>
+                        {uf}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              {rankLoading && (
+                <RotatingLoader
+                  messages={['Ordenando municípios…', 'Calculando critérios Sinidu+Clima…']}
+                  className="text-sky-200"
+                />
+              )}
+              {rankError && (
+                <p className="rounded-lg border border-rose-800 bg-rose-950/40 px-3 py-2 text-xs text-rose-200">
+                  {rankError}
+                </p>
+              )}
+              {rankData && !rankLoading && (
+                <>
+                  <p className="text-[10px] text-zinc-500">
+                    {rankData.criterio_label}
+                    {rankData.uf ? ` · UF ${rankData.uf}` : ''} · {rankData.total} municípios
+                    {rankData.higher_is_worse ? ' · maior = mais crítico' : ' · maior = melhor/maior porte'}
+                  </p>
+                  <div className="overflow-x-auto rounded-lg border border-zinc-800">
+                    <table className="w-full text-xs">
+                      <thead>
+                        <tr className="border-b border-zinc-800 text-left text-zinc-500">
+                          <th className="px-3 py-2">#</th>
+                          <th className="px-3 py-2">Município</th>
+                          <th className="px-3 py-2">Valor</th>
+                          <th className="px-3 py-2">Score</th>
+                          <th className="px-3 py-2">CAPAG</th>
+                        </tr>
+                      </thead>
+                      <tbody className="text-zinc-200">
+                        {rankData.items.map((row) => {
+                          const highlight = row.codigo_ibge === codigoA;
+                          return (
+                            <tr
+                              key={row.codigo_ibge}
+                              className={`border-b border-zinc-900 ${highlight ? 'bg-sky-500/10' : ''}`}
+                            >
+                              <td className="px-3 py-2 font-mono text-zinc-500">{row.posicao}</td>
+                              <td className="px-3 py-2">
+                                {row.nome}
+                                <span className="ml-1 text-[9px] text-zinc-500">{row.uf}</span>
+                                {highlight && (
+                                  <span className="ml-1 text-[8px] font-bold uppercase text-sky-300">você</span>
+                                )}
+                              </td>
+                              <td className="px-3 py-2 font-semibold">
+                                {formatRankValor(row.valor, rankData.format)}
+                              </td>
+                              <td className="px-3 py-2 text-zinc-400">{row.score_sinidu ?? '—'}</td>
+                              <td className="px-3 py-2 text-zinc-400">{row.nota_capag ?? '—'}</td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                  {rankData.nota && (
+                    <p className="text-[9px] leading-relaxed text-zinc-500">{rankData.nota}</p>
+                  )}
+                </>
+              )}
+            </>
+          ) : (
+            <>
           <div className="grid grid-cols-2 gap-3">
             <div className="rounded-lg border border-emerald-500/30 bg-emerald-950/20 p-3">
               <p className="text-[10px] uppercase text-zinc-500">Município A (base)</p>
@@ -323,6 +520,8 @@ export default function CompareModal({ open, onClose, codigoA, nomeA, municipali
                 <FileDown className="h-4 w-4" />
                 Exportar comparação como PDF
               </button>
+            </>
+          )}
             </>
           )}
         </div>

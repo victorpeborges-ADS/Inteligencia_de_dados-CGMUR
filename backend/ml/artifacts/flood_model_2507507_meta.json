@@ -5,7 +5,7 @@
   "auc_roc_cv": 0.992,
   "n_samples": 900,
   "n_positive": 801,
-  "threshold_mm_24h": 25.0,
+  "threshold_mm_24h": 30.0,
   "terrain": {
     "impermeabilizacao_pct": 58.0,
     "cobertura_vegetal_pct": 10.0,
@@ -21,7 +21,7 @@
     "cobertura_vegetal_pct",
     "declividade_media"
   ],
-  "trained_at": "2026-06-25T17:07:07Z",
-  "training_seconds": 2.16,
+  "trained_at": "2026-07-20T18:12:53Z",
+  "training_seconds": 0.85,
   "note": "Modelo baseline sintético. Execute etl/etl_flood_ml.py --municipio 2507507 para retreinar com OpenMeteo + S2ID."
 }

@@ -212,7 +212,7 @@ def gerar_grafico_score_radar(municipio_codigo: str) -> str:
         fig, ax = plt.subplots(figsize=(4, 4), subplot_kw={"polar": True}, facecolor="#ffffff")
         ax.plot(angles, local_vals, "o-", linewidth=2, color="#059669", label=muni.nome)
         ax.fill(angles, local_vals, alpha=0.2, color="#059669")
-        ax.plot(angles, nat_vals, "o--", linewidth=1.5, color="#6366f1", label="Média 61 municípios")
+        ax.plot(angles, nat_vals, "o--", linewidth=1.5, color="#6366f1", label="Média catálogo piloto")
         ax.set_xticks(angles[:-1])
         ax.set_xticklabels(labels, fontsize=8)
         ax.set_ylim(0, 100)

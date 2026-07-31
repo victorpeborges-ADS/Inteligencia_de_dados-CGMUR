@@ -35,7 +35,7 @@ jobs:
         run: |
           pip install -r requirements.txt
 
-      - name: Run pytest (serviços críticos + cobertura ≥60%)
+      - name: Run pytest (serviços críticos + cobertura ≥65%)
         working-directory: backend
         env:
           DATABASE_URL: postgresql://sinidu_user:sinidu_pass@localhost:5432/sinidu_db
@@ -50,8 +50,9 @@ jobs:
             --cov=app.services.onboarding_engine \
             --cov=app.services.postgis_backup \
             --cov=app.observability \
+            --cov-config=.coveragerc \
             --cov-report=term-missing:skip-covered \
-            --cov-fail-under=60
+            --cov-fail-under=70
 
       - name: Testes Fase 4 (tenant, OIDC, auditoria/SEI)
         working-directory: backend
@@ -76,6 +77,14 @@ jobs:
           AUTH_ENABLED: "false"
         run: |
           pytest tests/test_osrm_router.py tests/test_batch_export.py tests/test_external_sources_collector.py -q --tb=short --no-cov
+
+      - name: Testes operação demo (agente, jobs zumbis)
+        working-directory: backend
+        env:
+          DATABASE_URL: postgresql://sinidu_user:sinidu_pass@localhost:5432/sinidu_db
+          AUTH_ENABLED: "false"
+        run: |
+          pytest tests/test_contextual_agent_fast.py tests/test_stale_jobs.py -q --tb=short --no-cov
 
       - name: Testes Fase 12 (cache simulação e interpretação)
         working-directory: backend

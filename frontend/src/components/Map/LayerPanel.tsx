@@ -7,13 +7,51 @@ import {
   ChevronRight,
   ClipboardList,
   CloudRain,
+  ExternalLink,
   Eye,
   HeartPulse,
   Layers,
   Map,
+  Search,
   type LucideIcon,
 } from 'lucide-react';
 import type { LayerOption } from '@/config/platformTabs';
+import {
+  SOCIO_SUBCAMADAS,
+  type SocioSubcamadaId,
+} from '@/config/socioeconomicoSubcamadas';
+import {
+  DEPENDENCIA_COLORS,
+  DEPENDENCIA_LABELS,
+  EDUCACAO_ETAPAS,
+  EQUIPAMENTO_DEPS_DEFAULT,
+  EQUIPAMENTO_TIPOS,
+  EQUIPAMENTO_TIPOS_DEFAULT,
+  MAX_EDUCACAO_RAIO_M,
+  MIN_EDUCACAO_RAIO_M,
+  type DependenciaId,
+  type EducacaoEtapaId,
+  type EquipamentoTipoId,
+} from '@/config/educacaoInep';
+import TemporalYearPanel from './TemporalYearPanel';
+import {
+  getTemporalTemaForLayer,
+  PIB_CONTEXT_LAYERS,
+  type TemporalTemaId,
+  type TemporalTemaOption,
+} from '@/config/layerTemporal';
+import {
+  GEOREDUS_BASE_URL,
+  georedusMunicipioUrl,
+  matchGeoReDusIndicators,
+  matchLayerOption,
+} from '@/config/georedus';
+import { REGIONAL_ESCOPO_LABELS, type RegionalEscopo } from '@/config/regionalContext';
+import { MAP_CENTER_LEFT } from '@/config/mapOverlayLayout';
+import {
+  TERRITORIO_TIPOS,
+  type TerritorioTipoId,
+} from '@/config/territoriosEspeciais';
 
 /** Presets documentados — ver CHECKLIST_FASE_13.md */
 export const LAYER_PRESETS = {
@@ -22,6 +60,12 @@ export const LAYER_PRESETS = {
     label: 'Cruzar riscos',
     description: 'Bairros + vulnerabilidade climática + risco de inundação',
     layers: ['bairros', 'vulnerabilidade', 'inundacao'],
+  },
+  riscoConsolidado: {
+    id: 'risco_consolidado',
+    label: 'Risco agora',
+    description: 'Mapa síntese Score Sinidu × alerta vivo (semáforo)',
+    layers: ['bairros', 'risco_consolidado'],
   },
 } as const;
 
@@ -42,11 +86,36 @@ type LayerPanelProps = {
   toggleLayer: (layerId: string) => void;
   layerOptions: LayerOption[];
   malhaIndisponivel?: boolean;
+  codigoIbge?: string;
   className?: string;
+  socioSubcamada?: SocioSubcamadaId;
+  setSocioSubcamada?: (id: SocioSubcamadaId) => void;
+  educacaoEtapa?: EducacaoEtapaId;
+  setEducacaoEtapa?: (id: EducacaoEtapaId) => void;
+  educacaoRaioM?: number;
+  setEducacaoRaioM?: (value: number) => void;
+  showEducacaoBuffer?: boolean;
+  setShowEducacaoBuffer?: (value: boolean) => void;
+  equipamentoTiposAtivos?: EquipamentoTipoId[];
+  toggleEquipamentoTipo?: (id: EquipamentoTipoId) => void;
+  setEquipamentoTiposAtivos?: (ids: EquipamentoTipoId[]) => void;
+  equipamentoDepsAtivas?: DependenciaId[];
+  toggleEquipamentoDep?: (id: DependenciaId) => void;
+  setEquipamentoDepsAtivas?: (ids: DependenciaId[]) => void;
+  temporalActiveTemas?: TemporalTemaOption[];
+  layerAnoByTema?: Partial<Record<TemporalTemaId, number>>;
+  setLayerAnoForTema?: (temaId: TemporalTemaId, ano: number | null) => void;
+  showRegionalOverlay?: boolean;
+  setShowRegionalOverlay?: (value: boolean) => void;
+  regionalEscopo?: RegionalEscopo;
+  setRegionalEscopo?: (escopo: RegionalEscopo) => void;
+  territorioTipo?: TerritorioTipoId;
+  setTerritorioTipo?: (id: TerritorioTipoId) => void;
 };
 
 function qualityTone(quality: LayerOption['quality']) {
   if (quality === 'Oficial') return 'border-emerald-400/40 bg-emerald-500/10 text-emerald-300';
+  if (quality === 'Observado') return 'border-sky-400/40 bg-sky-500/10 text-sky-300';
   if (quality === 'Referencia') return 'border-cyan-400/40 bg-cyan-500/10 text-cyan-300';
   if (quality === 'Estimado') return 'border-amber-400/40 bg-amber-500/10 text-amber-300';
   if (quality === 'Indisponível') return 'border-rose-400/40 bg-rose-500/10 text-rose-300';
@@ -59,14 +128,49 @@ export default function LayerPanel({
   toggleLayer,
   layerOptions,
   malhaIndisponivel = false,
+  codigoIbge,
   className = '',
+  socioSubcamada = 'renda',
+  setSocioSubcamada,
+  educacaoEtapa = 'todas',
+  setEducacaoEtapa,
+  educacaoRaioM = 800,
+  setEducacaoRaioM,
+  showEducacaoBuffer = true,
+  setShowEducacaoBuffer,
+  equipamentoTiposAtivos = EQUIPAMENTO_TIPOS_DEFAULT,
+  toggleEquipamentoTipo,
+  setEquipamentoTiposAtivos,
+  equipamentoDepsAtivas = EQUIPAMENTO_DEPS_DEFAULT,
+  toggleEquipamentoDep,
+  setEquipamentoDepsAtivas,
+  temporalActiveTemas = [],
+  layerAnoByTema = {},
+  setLayerAnoForTema,
+  showRegionalOverlay = false,
+  setShowRegionalOverlay,
+  regionalEscopo = 'regiao_imediata',
+  setRegionalEscopo,
+  territorioTipo = 'todas',
+  setTerritorioTipo,
 }: LayerPanelProps) {
   const [panelCollapsed, setPanelCollapsed] = useState(false);
   const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({});
+  const [searchQuery, setSearchQuery] = useState('');
+
+  const filteredLayerOptions = useMemo(() => {
+    if (!searchQuery.trim()) return layerOptions;
+    return layerOptions.filter((opt) => matchLayerOption(searchQuery, opt));
+  }, [layerOptions, searchQuery]);
+
+  const externalMatches = useMemo(
+    () => matchGeoReDusIndicators(searchQuery),
+    [searchQuery],
+  );
 
   const layerGroups = useMemo(
-    () => Array.from(new Set(layerOptions.map((opt) => opt.group))),
-    [layerOptions],
+    () => Array.from(new Set(filteredLayerOptions.map((opt) => opt.group))),
+    [filteredLayerOptions],
   );
 
   useEffect(() => {
@@ -103,7 +207,7 @@ export default function LayerPanel({
 
   if (panelCollapsed) {
     return (
-      <div className={`absolute top-4 left-4 z-[999] ${className}`}>
+      <div className={`absolute top-4 left-4 z-[1200] ${className}`}>
         <button
           type="button"
           onClick={() => setPanelCollapsed(false)}
@@ -122,7 +226,7 @@ export default function LayerPanel({
 
   return (
     <div
-      className={`absolute top-4 left-4 z-[999] flex w-72 flex-col gap-2 rounded-xl border border-border bg-card/85 p-3 shadow-2xl backdrop-blur-md transition-all duration-300 ${className}`}
+      className={`map-ui-chrome absolute top-4 bottom-4 left-4 z-[1200] flex w-72 max-h-[calc(100%-2rem)] flex-col gap-2 overflow-hidden rounded-xl border border-border bg-card/85 p-3 shadow-2xl backdrop-blur-md transition-all duration-300 ${className}`}
     >
       <div className="flex items-center justify-between border-b border-zinc-800 pb-1.5">
         <span className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-zinc-400">
@@ -142,7 +246,18 @@ export default function LayerPanel({
         </div>
       </div>
 
-      <div className="grid grid-cols-2 gap-1.5">
+      <div className="relative">
+        <Search size={12} className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-zinc-500" />
+        <input
+          type="search"
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          placeholder="Pesquisar indicadores…"
+          className="w-full rounded-lg border border-zinc-800 bg-zinc-950/80 py-1.5 pl-8 pr-2 text-[11px] text-zinc-200 placeholder:text-zinc-600 focus:border-indigo-500/40 focus:outline-none"
+        />
+      </div>
+
+      <div className="grid grid-cols-3 gap-1.5">
         <button
           type="button"
           onClick={() => setActiveLayers([...LAYER_PRESETS.cruzarRiscos.layers])}
@@ -153,6 +268,14 @@ export default function LayerPanel({
         </button>
         <button
           type="button"
+          onClick={() => setActiveLayers([...LAYER_PRESETS.riscoConsolidado.layers])}
+          title={LAYER_PRESETS.riscoConsolidado.description}
+          className="rounded-lg border border-rose-500/30 bg-rose-500/10 px-2 py-1 text-[10px] font-bold text-rose-300 hover:bg-rose-500/20"
+        >
+          {LAYER_PRESETS.riscoConsolidado.label}
+        </button>
+        <button
+          type="button"
           onClick={() => setActiveLayers([])}
           className="rounded-lg border border-zinc-700 bg-zinc-950/70 px-2 py-1 text-[10px] font-bold text-zinc-400 hover:text-zinc-100"
         >
@@ -160,17 +283,259 @@ export default function LayerPanel({
         </button>
       </div>
 
-      <div className="flex max-h-[58vh] flex-col gap-2 overflow-y-auto pr-1">
+      <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto pr-1">
         {malhaIndisponivel && (
           <div className="rounded-lg border border-amber-500/40 bg-amber-950/30 px-2.5 py-2 text-[10px] leading-relaxed text-amber-100">
             Malha de bairros indisponível — camadas socioeconômicas e por bairro desativadas.
           </div>
         )}
 
+        {activeLayers.includes('socioeconomico') && setSocioSubcamada && (
+          <div className="rounded-lg border border-amber-500/25 bg-amber-950/15 p-2">
+            <p className="mb-1.5 text-[9px] font-bold uppercase tracking-wider text-amber-200">
+              Subcamada socioeconômica
+            </p>
+            <div className="flex flex-wrap gap-1">
+              {SOCIO_SUBCAMADAS.map((sub) => {
+                const isActive = socioSubcamada === sub.id;
+                return (
+                  <button
+                    key={sub.id}
+                    type="button"
+                    title={sub.description}
+                    onClick={() => setSocioSubcamada(sub.id)}
+                    className={`rounded-md border px-1.5 py-0.5 text-[9px] font-semibold transition ${
+                      isActive
+                        ? 'border-amber-400/50 bg-amber-500/20 text-amber-100'
+                        : 'border-zinc-700 bg-zinc-950/60 text-zinc-400 hover:border-amber-700/40 hover:text-amber-100'
+                    }`}
+                  >
+                    {sub.label}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {activeLayers.includes('territorios_especiais') && setTerritorioTipo && (
+          <div className="rounded-lg border border-fuchsia-500/25 bg-fuchsia-950/15 p-2">
+            <p className="mb-1.5 text-[9px] font-bold uppercase tracking-wider text-fuchsia-200">
+              Territórios especiais — tipo
+            </p>
+            <div className="flex flex-wrap gap-1">
+              {TERRITORIO_TIPOS.map((tipo) => {
+                const isActive = territorioTipo === tipo.id;
+                return (
+                  <button
+                    key={tipo.id}
+                    type="button"
+                    title={tipo.description}
+                    onClick={() => setTerritorioTipo(tipo.id)}
+                    className={`rounded-md border px-1.5 py-0.5 text-[9px] font-semibold transition ${
+                      isActive
+                        ? 'border-fuchsia-400/50 bg-fuchsia-500/20 text-fuchsia-100'
+                        : 'border-zinc-700 bg-zinc-950/60 text-zinc-400 hover:border-fuchsia-700/40 hover:text-fuchsia-100'
+                    }`}
+                  >
+                    {tipo.label}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {activeLayers.includes('educacao') && setEducacaoEtapa && (
+          <div className="rounded-lg border border-sky-500/25 bg-sky-950/15 p-2">
+            <p className="mb-1.5 text-[9px] font-bold uppercase tracking-wider text-sky-200">
+              Educação INEP — etapa
+            </p>
+            <div className="flex flex-wrap gap-1">
+              {EDUCACAO_ETAPAS.map((etapa) => {
+                const isActive = educacaoEtapa === etapa.id;
+                return (
+                  <button
+                    key={etapa.id}
+                    type="button"
+                    onClick={() => setEducacaoEtapa(etapa.id)}
+                    className={`rounded-md border px-1.5 py-0.5 text-[9px] font-semibold transition ${
+                      isActive
+                        ? 'border-sky-400/50 bg-sky-500/20 text-sky-100'
+                        : 'border-zinc-700 bg-zinc-950/60 text-zinc-400 hover:border-sky-700/40 hover:text-sky-100'
+                    }`}
+                  >
+                    {etapa.label}
+                  </button>
+                );
+              })}
+            </div>
+            {setEducacaoRaioM && (
+              <label className="mt-2 flex flex-col gap-1 text-[9px] text-zinc-400">
+                Buffer de influência ({educacaoRaioM} m)
+                <input
+                  type="range"
+                  min={MIN_EDUCACAO_RAIO_M}
+                  max={MAX_EDUCACAO_RAIO_M}
+                  step={50}
+                  value={educacaoRaioM}
+                  onChange={(e) => setEducacaoRaioM(Number(e.target.value))}
+                  className="w-full accent-sky-500"
+                />
+              </label>
+            )}
+            {setShowEducacaoBuffer && (
+              <label className="mt-2 flex items-center gap-2 text-[9px] text-zinc-400">
+                <input
+                  type="checkbox"
+                  checked={showEducacaoBuffer}
+                  onChange={(e) => setShowEducacaoBuffer(e.target.checked)}
+                  className="accent-sky-500"
+                />
+                Exibir buffer de influência
+              </label>
+            )}
+          </div>
+        )}
+
+        {activeLayers.includes('infraestrutura') && toggleEquipamentoTipo && toggleEquipamentoDep && (
+          <div className="rounded-lg border border-teal-500/25 bg-teal-950/15 p-2">
+            <div className="mb-1.5 flex items-center justify-between gap-2">
+              <p className="text-[9px] font-bold uppercase tracking-wider text-teal-200">
+                Equipamentos — tipo
+              </p>
+              {setEquipamentoTiposAtivos && (
+                <button
+                  type="button"
+                  onClick={() => setEquipamentoTiposAtivos([...EQUIPAMENTO_TIPOS_DEFAULT])}
+                  className="text-[8px] font-semibold text-teal-300/80 hover:text-teal-100"
+                >
+                  Todas (sem vias)
+                </button>
+              )}
+            </div>
+            <div className="flex flex-wrap gap-1">
+              {EQUIPAMENTO_TIPOS.map((tipo) => {
+                const isActive = equipamentoTiposAtivos.includes(tipo.id);
+                return (
+                  <button
+                    key={tipo.id}
+                    type="button"
+                    title={`${isActive ? 'Ocultar' : 'Mostrar'} ${tipo.label}`}
+                    onClick={() => toggleEquipamentoTipo(tipo.id)}
+                    className={`inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[9px] font-semibold transition ${
+                      isActive
+                        ? 'border-teal-400/50 bg-teal-500/20 text-teal-50'
+                        : 'border-zinc-700 bg-zinc-950/60 text-zinc-500 line-through opacity-60'
+                    }`}
+                  >
+                    <span
+                      className="inline-flex h-3.5 min-w-[14px] items-center justify-center rounded-sm px-0.5 text-[8px] font-extrabold text-white"
+                      style={{ backgroundColor: tipo.color }}
+                    >
+                      {tipo.short}
+                    </span>
+                    {tipo.label}
+                  </button>
+                );
+              })}
+            </div>
+            <div className="mb-1.5 mt-2.5 flex items-center justify-between gap-2">
+              <p className="text-[9px] font-bold uppercase tracking-wider text-teal-200">
+                Dependência
+              </p>
+              {setEquipamentoDepsAtivas && (
+                <button
+                  type="button"
+                  onClick={() => setEquipamentoDepsAtivas([...EQUIPAMENTO_DEPS_DEFAULT])}
+                  className="text-[8px] font-semibold text-teal-300/80 hover:text-teal-100"
+                >
+                  Todas
+                </button>
+              )}
+            </div>
+            <div className="flex flex-wrap gap-1">
+              {(Object.keys(DEPENDENCIA_LABELS) as DependenciaId[]).map((dep) => {
+                const isActive = equipamentoDepsAtivas.includes(dep);
+                return (
+                  <button
+                    key={dep}
+                    type="button"
+                    title={`${isActive ? 'Ocultar' : 'Mostrar'} ${DEPENDENCIA_LABELS[dep]}`}
+                    onClick={() => toggleEquipamentoDep(dep)}
+                    className={`inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[9px] font-semibold transition ${
+                      isActive
+                        ? 'border-teal-400/50 bg-teal-500/20 text-teal-50'
+                        : 'border-zinc-700 bg-zinc-950/60 text-zinc-500 line-through opacity-60'
+                    }`}
+                  >
+                    <span
+                      className="h-2.5 w-2.5 rounded-sm border border-white/30"
+                      style={{ backgroundColor: DEPENDENCIA_COLORS[dep] }}
+                    />
+                    {DEPENDENCIA_LABELS[dep]}
+                  </button>
+                );
+              })}
+            </div>
+            <p className="mt-2 text-[8px] leading-snug text-zinc-500">
+              Ex.: só creches municipais → ative Creche + Municipal e desative o restante.
+            </p>
+          </div>
+        )}
+
+        {temporalActiveTemas.length > 0 && setLayerAnoForTema && (
+          <TemporalYearPanel
+            activeTemas={temporalActiveTemas}
+            layerAnoByTema={layerAnoByTema}
+            setLayerAnoForTema={setLayerAnoForTema}
+          />
+        )}
+
+        {setShowRegionalOverlay && (
+          <div className="rounded-lg border border-teal-500/25 bg-teal-950/15 p-2">
+            <label className="flex items-center gap-2 text-[10px] font-bold text-teal-100">
+              <input
+                type="checkbox"
+                checked={showRegionalOverlay}
+                onChange={(e) => setShowRegionalOverlay(e.target.checked)}
+                className="accent-teal-500"
+              />
+              <Eye size={12} className="text-teal-300" />
+              Visualizar dados regionais
+            </label>
+            <p className="mt-1 text-[9px] leading-snug text-zinc-500">
+              Overlay dos municípios do escopo IBGE carregados no Sinidu. Complementa o comparador.
+            </p>
+            {showRegionalOverlay && setRegionalEscopo && (
+              <div className="mt-2 flex flex-wrap gap-1">
+                {(Object.keys(REGIONAL_ESCOPO_LABELS) as RegionalEscopo[]).map((id) => (
+                  <button
+                    key={id}
+                    type="button"
+                    onClick={() => setRegionalEscopo(id)}
+                    className={`rounded-md border px-1.5 py-0.5 text-[9px] font-semibold ${
+                      regionalEscopo === id
+                        ? 'border-teal-400/50 bg-teal-500/20 text-teal-100'
+                        : 'border-zinc-700 text-zinc-500 hover:text-teal-100'
+                    }`}
+                  >
+                    {REGIONAL_ESCOPO_LABELS[id]}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {searchQuery.trim() && filteredLayerOptions.length === 0 && externalMatches.length === 0 && (
+          <p className="px-1 text-[10px] italic text-zinc-500">Nenhuma camada local encontrada.</p>
+        )}
+
         {layerGroups.map((group) => {
           const GroupIcon = GROUP_ICONS[group];
           const isGroupCollapsed = collapsedGroups[group];
-          const groupLayers = layerOptions.filter((opt) => opt.group === group);
+          const groupLayers = filteredLayerOptions.filter((opt) => opt.group === group);
           const activeInGroup = groupLayers.filter((opt) => activeLayers.includes(opt.id)).length;
 
           return (
@@ -198,6 +563,13 @@ export default function LayerPanel({
 
               {!isGroupCollapsed && (
                 <div className="flex flex-col gap-1 px-1 pb-1.5">
+                  {group === 'Planejamento' && (
+                    <p className="mx-1 mb-0.5 rounded border border-teal-500/25 bg-teal-950/20 px-2 py-1.5 text-[9px] leading-snug text-teal-100/90">
+                      Priorização e recomendações destas camadas consideram o{' '}
+                      <span className="font-semibold text-teal-200">Plano Diretor</span> do
+                      município selecionado (legislação urbanística oficial).
+                    </p>
+                  )}
                   {groupLayers.map((opt) => {
                     const isActive = activeLayers.includes(opt.id);
                     const isDisabled = opt.disponivel === false;
@@ -208,8 +580,12 @@ export default function LayerPanel({
                         onClick={() => !isDisabled && toggleLayer(opt.id)}
                         disabled={isDisabled}
                         title={
-                          opt.tooltipEstimado
-                          || (isDisabled ? 'Camada indisponível — malha territorial ausente' : undefined)
+                          isActive && opt.descricao
+                            ? `${opt.descricao}\n\nFonte: ${opt.source}${
+                                opt.tooltipEstimado ? `\n\nNota: ${opt.tooltipEstimado}` : ''
+                              }`
+                            : opt.tooltipEstimado
+                              || (isDisabled ? 'Camada indisponível — malha territorial ausente' : undefined)
                         }
                         className={`flex w-full items-center justify-between rounded-lg border px-2 py-1.5 text-left text-xs transition-all ${
                           isDisabled
@@ -253,6 +629,32 @@ export default function LayerPanel({
             </div>
           );
         })}
+
+        {externalMatches.length > 0 && (
+          <div className="rounded-lg border border-cyan-500/25 bg-cyan-950/10 p-2">
+            <p className="mb-1.5 text-[9px] font-bold uppercase tracking-wider text-cyan-300">
+              GeoReDUS — referência externa
+            </p>
+            <div className="flex flex-col gap-1">
+              {externalMatches.map((item) => (
+                <a
+                  key={item.id}
+                  href={codigoIbge ? georedusMunicipioUrl(codigoIbge) : GEOREDUS_BASE_URL}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  title={item.description}
+                  className="flex items-start justify-between gap-2 rounded-lg border border-cyan-800/40 bg-zinc-950/50 px-2 py-1.5 text-left transition hover:border-cyan-600/50 hover:bg-cyan-950/30"
+                >
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-[11px] font-semibold text-cyan-100">{item.label}</span>
+                    <span className="mt-0.5 block text-[8px] text-zinc-500">{item.source}</span>
+                  </span>
+                  <ExternalLink size={12} className="mt-0.5 shrink-0 text-cyan-400" />
+                </a>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

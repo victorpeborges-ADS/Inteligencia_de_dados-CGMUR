@@ -1,0 +1,4 @@
+# Dependências opcionais do servidor MCP Sinidu (Fase 20c).
+# Não entram na imagem API por padrão — instalar no host da equipe:
+#   pip install -r requirements-mcp.txt
+mcp>=1.6.0,<2

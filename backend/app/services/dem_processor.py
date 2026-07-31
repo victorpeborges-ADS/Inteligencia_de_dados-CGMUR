@@ -23,6 +23,24 @@ DEM_BASE_DIR = Path(os.getenv("DEM_DIR", "/data/dem"))
 LOCAL_DEM_DIR = Path(os.getenv("LOCAL_DEM_DIR", "/data/dem/local"))
 SLOPE_CRITICAL_DEG = 30.0
 FLOOD_ELEVATION_M = 2.0
+
+
+def _opentopography_enabled(api_key: str | None = None) -> bool:
+    """OpenTopo só quando explicitamente ligado ou com API key (evita wait frio sem rede)."""
+    flag = os.getenv("OPENTOPOGRAPHY_ENABLED", "").strip().lower()
+    if flag in ("0", "false", "no", "off"):
+        return False
+    if flag in ("1", "true", "yes", "on"):
+        return True
+    key = (api_key if api_key is not None else os.getenv("OPENTOPOGRAPHY_API_KEY", "")).strip()
+    return bool(key)
+
+
+def _opentopography_timeout_s() -> float:
+    try:
+        return max(3.0, float(os.getenv("OPENTOPOGRAPHY_TIMEOUT_S", "12")))
+    except ValueError:
+        return 12.0
 TERRARIUM_DECODER = {
     "rScaler": 256,
     "gScaler": 1,
@@ -134,10 +152,30 @@ def local_dem_source_paths(codigo_ibge: str) -> list[Path]:
     return [
         dem_dir(code) / "local_dem.tif",
         dem_dir(code) / "lidar.tif",
+        dem_dir(code) / "merit.tif",
+        dem_dir(code) / "anadem.tif",
         LOCAL_DEM_DIR / f"{code}.tif",
         LOCAL_DEM_DIR / f"{code}_lidar.tif",
         LOCAL_DEM_DIR / f"{code}_dsm.tif",
+        LOCAL_DEM_DIR / f"{code}_merit.tif",
+        LOCAL_DEM_DIR / f"{code}_anadem.tif",
+        LOCAL_DEM_DIR / f"{code}_merit_hydro.tif",
     ]
+
+
+def hydro_dem_label(filename: str) -> str | None:
+    """21b.5 — identifica DEM hidrologicamente condicionado (MERIT-Hydro/ANADEM) pelo nome do arquivo.
+
+    Esses produtos já vêm com depressões/sumidouros tratados na fonte, então o
+    Priority-Flood interno do simulador hidrológico pode ser dispensado (ver
+    ``hydro_simulator._fill_sinks``).
+    """
+    name = (filename or "").lower()
+    if "merit" in name:
+        return "MERIT-Hydro"
+    if "anadem" in name:
+        return "ANADEM"
+    return None
 
 
 def find_local_dem(codigo_ibge: str) -> Path | None:
@@ -249,11 +287,11 @@ def _store_refined_pilot_dem(
         return None
 
 
-def sync_dem_batch(db: Session, *, limit: int = 61, force: bool = False) -> dict[str, Any]:
+def sync_dem_batch(db: Session, *, limit: int = 6, force: bool = False) -> dict[str, Any]:
     """Processa DEM (LiDAR local ou SRTM) para municípios prioritários."""
     from app.data_connectors.constants import TARGET_IBGE_CODES
 
-    targets = TARGET_IBGE_CODES[: min(max(limit, 1), 61)]
+    targets = TARGET_IBGE_CODES[: min(max(limit, 1), 6)]
     processed = 0
     skipped = 0
     local_count = 0
@@ -284,12 +322,12 @@ def sync_dem_batch(db: Session, *, limit: int = 61, force: bool = False) -> dict
     }
 
 
-def dem_status(*, limit: int = 61) -> dict[str, Any]:
+def dem_status(*, limit: int = 6) -> dict[str, Any]:
     """Panorama DEM dos municípios prioritários (processados, LiDAR local, piloto)."""
     from app.config import settings
     from app.data_connectors.constants import TARGET_IBGE_CODES
 
-    targets = TARGET_IBGE_CODES[: min(max(limit, 1), 61)]
+    targets = TARGET_IBGE_CODES[: min(max(limit, 1), 6)]
     local_count = 0
     refined_count = 0
     processed = 0
@@ -341,6 +379,9 @@ def _download_srtm(
     east: float,
     api_key: str | None = None,
 ) -> tuple[np.ndarray, float, float, float, float] | None:
+    if not _opentopography_enabled(api_key):
+        logger.info("OpenTopography desligado (sem API key / OPENTOPOGRAPHY_ENABLED=false)")
+        return None
     params: dict[str, Any] = {
         "demtype": "SRTMGL1",
         "south": south,
@@ -351,8 +392,9 @@ def _download_srtm(
     }
     if api_key:
         params["API_Key"] = api_key
+    timeout = _opentopography_timeout_s()
     try:
-        response = httpx.get(OPENTOPOGRAPHY_URL, params=params, timeout=120.0)
+        response = httpx.get(OPENTOPOGRAPHY_URL, params=params, timeout=timeout)
         if response.status_code != 200 or len(response.content) < 1000:
             logger.warning("OpenTopography HTTP %s (%s bytes)", response.status_code, len(response.content))
             return None
@@ -365,7 +407,7 @@ def _download_srtm(
                 data[data == nodata] = np.nan
             return data, src.res[0], src.res[1], src.bounds.left, src.bounds.bottom
     except Exception as exc:
-        logger.warning("Falha download SRTM: %s", exc)
+        logger.warning("Falha download SRTM (timeout=%.0fs): %s", timeout, exc)
         return None
 
 
@@ -532,6 +574,7 @@ def process_municipality_dem(
 
     api_key = api_key or os.getenv("OPENTOPOGRAPHY_API_KEY")
     dem_source = "SRTM 30m"
+    hydro_dem_flag = False
     local_path = find_local_dem(codigo_ibge)
     result: tuple[np.ndarray, float, float, float, float] | None = None
 
@@ -539,10 +582,15 @@ def process_municipality_dem(
         result = _load_local_dem_geotiff(local_path, west, south, east, north)
         if result is not None:
             name = local_path.name.lower()
-            if "lidar" in name or local_path.parent.name == str(codigo_ibge).zfill(7)[:7]:
+            hydro_label = hydro_dem_label(name)
+            if hydro_label:
+                dem_source = hydro_label
+                hydro_dem_flag = True
+            elif "lidar" in name or local_path.parent.name == str(codigo_ibge).zfill(7)[:7]:
                 dem_source = "LiDAR/DSM local"
             else:
                 dem_source = "DEM local"
+            logger.info("DEM %s: usando arquivo local %s", codigo_ibge, local_path.name)
 
     if result is None:
         result = _download_srtm(south, north, west, east, api_key)
@@ -648,6 +696,7 @@ def process_municipality_dem(
         "vertical_accuracy_m": vertical_acc,
         "data_reference": "2024",
         "default_exaggeration": 2.5,
+        "hydro_dem": hydro_dem_flag,
     }
     if local_path:
         meta["local_dem_path"] = str(local_path)

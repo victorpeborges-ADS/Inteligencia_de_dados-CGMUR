@@ -10,8 +10,6 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-import folium
-import matplotlib.pyplot as plt
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 from shapely.geometry import shape
 from sqlalchemy import func
@@ -229,6 +227,8 @@ def _capag_interpretation(nota: str | None) -> str:
 
 
 def _matplotlib_map_fallback(muni_geojson: dict, bairros: List[dict]) -> bytes:
+    import matplotlib.pyplot as plt
+
     fig, ax = plt.subplots(figsize=(8, 6), facecolor="#0f172a")
     ax.set_facecolor("#0f172a")
 
@@ -258,7 +258,7 @@ def _matplotlib_map_fallback(muni_geojson: dict, bairros: List[dict]) -> bytes:
     return buf.getvalue()
 
 
-def _folium_to_png_bytes(m: folium.Map) -> bytes:
+def _folium_to_png_bytes(m: Any) -> bytes:
     with tempfile.TemporaryDirectory() as tmp:
         html_path = Path(tmp) / "map.html"
         png_path = Path(tmp) / "map.png"
@@ -277,6 +277,8 @@ def _folium_to_png_bytes(m: folium.Map) -> bytes:
 
 
 def render_municipality_map(db: Session, muni: Municipio, ranking: List[dict]) -> str:
+    import folium
+
     geojson = json.loads(db.scalar(muni.geom.ST_AsGeoJSON()))
     sh = shape(geojson)
     lat, lon = sh.centroid.y, sh.centroid.x
@@ -403,6 +405,109 @@ def fetch_precipitation_series(lat: float, lon: float) -> List[dict]:
         return []
 
 
+def _fator_entry(
+    *,
+    id: str,
+    nome: str,
+    valor: float | int | None,
+    unidade: str,
+    score: float,
+    contribuicao: float,
+    detalhe: str = "",
+) -> dict:
+    return {
+        "id": id,
+        "nome": nome,
+        "valor": valor,
+        "unidade": unidade,
+        "score": round(float(score), 3),
+        "contribuicao": round(float(contribuicao), 2),
+        "detalhe": detalhe,
+    }
+
+
+def _build_fatores_explicados(item: dict, flood: dict, adaptation_gap: float) -> tuple[list[dict], list[str]]:
+    """Monta fatores com contribuição relativa ao Score (17h.2a)."""
+    income_score = float(item.get("income_score", 0.0))
+    density_score = float(item.get("density_score", 0.0))
+    s2id_iri = float(flood.get("s2id_historico_score", 0.0))
+    imperm = float(flood.get("impermeabilizacao_score", 0.0))
+    hidro = float(flood.get("hidrografia_proximidade_score", 0.0))
+    adapt = float(item.get("capacidade_adaptacao", 0.0))
+
+    # Contribuição aproximada ao score 0–100
+    fatores = [
+        _fator_entry(
+            id="renda",
+            nome="Estresse de renda",
+            valor=item.get("renda_media"),
+            unidade="R$/mês",
+            score=income_score,
+            contribuicao=income_score * 0.5 * 0.5 * 0.45 * 100,  # sensibilidade×IVC×peso
+            detalhe="Menor renda → maior sensibilidade no IVC",
+        ),
+        _fator_entry(
+            id="densidade",
+            nome="Densidade demográfica",
+            valor=item.get("densidade_hab_km2"),
+            unidade="hab/km²",
+            score=density_score,
+            contribuicao=density_score * 0.5 * 0.5 * 0.45 * 100,
+            detalhe="Densidade elevada aumenta a sensibilidade",
+        ),
+        _fator_entry(
+            id="s2id",
+            nome="Histórico S2ID (inundação)",
+            valor=item.get("s2id_desastres_count"),
+            unidade="eventos",
+            score=s2id_iri,
+            contribuicao=s2id_iri * 0.4 * 0.35 * 100,
+            detalhe="Eventos de inundação/alagamento no bairro",
+        ),
+        _fator_entry(
+            id="impermeabilizacao",
+            nome="Impermeabilização",
+            valor=round(imperm * 100, 1) if imperm is not None else None,
+            unidade="%",
+            score=imperm,
+            contribuicao=imperm * 0.4 * 0.35 * 100,
+            detalhe="Área urbana MapBiomas — escoamento elevado",
+        ),
+        _fator_entry(
+            id="hidrografia",
+            nome="Proximidade de corpos d'água",
+            valor=round(hidro, 2),
+            unidade="score",
+            score=hidro,
+            contribuicao=hidro * 0.2 * 0.35 * 100,
+            detalhe="Proximidade a rios/corpos d'água no IRI",
+        ),
+        _fator_entry(
+            id="adaptacao",
+            nome="Déficit de adaptação",
+            valor=round(adapt, 2),
+            unidade="capacidade 0–1",
+            score=adaptation_gap,
+            contribuicao=adaptation_gap * 0.20 * 100,
+            detalhe="Baixa vegetação/infraestrutura de saúde eleva o score",
+        ),
+        _fator_entry(
+            id="exposicao",
+            nome="Exposição (S2ID + alertas)",
+            valor=item.get("exposicao"),
+            unidade="score",
+            score=float(item.get("exposicao") or 0.0),
+            contribuicao=float(item.get("exposicao") or 0.0) * 0.5 * 0.45 * 100,
+            detalhe="Histórico de desastres e alertas CEMADEN no IVC",
+        ),
+    ]
+    fatores.sort(key=lambda f: f["contribuicao"], reverse=True)
+    principais = [f["id"] for f in fatores[:3] if f["contribuicao"] > 0]
+    if not principais and fatores:
+        principais = [fatores[0]["id"]]
+    return fatores, principais
+
+
 def build_bairro_ranking(db: Session, muni: Municipio) -> tuple[List[dict], dict]:
     vulnerabilities = AnalyticalEngine.calculate_climate_vulnerability(db, muni.id)
     floods = AnalyticalEngine.calculate_flood_risk(db, muni.id)
@@ -415,8 +520,10 @@ def build_bairro_ranking(db: Session, muni: Municipio) -> tuple[List[dict], dict
         iri = float(flood.get("indice_risco_inundacao", 0.0))
         adaptation_gap = 1.0 - float(item.get("capacidade_adaptacao", 0.0))
         score = round(((ivc * 0.45) + (iri * 0.35) + (adaptation_gap * 0.20)) * 100)
+        fatores, principais = _build_fatores_explicados(item, flood, adaptation_gap)
         ranking.append({
             "bairro": item["bairro_nome"],
+            "bairro_id": item.get("id"),
             "score_sinidu": score,
             "ivc": round(ivc, 3),
             "iri": round(iri, 3),
@@ -426,6 +533,14 @@ def build_bairro_ranking(db: Session, muni: Municipio) -> tuple[List[dict], dict
                 "inundacao_pct": round(iri * 35, 1),
                 "deficit_adaptacao_pct": round(adaptation_gap * 20, 1),
             },
+            "fatores": fatores,
+            "fatores_principais": principais,
+            "populacao": item.get("populacao"),
+            "renda_media": item.get("renda_media"),
+            "densidade_hab_km2": item.get("densidade_hab_km2"),
+            "s2id_historico_score": flood.get("s2id_historico_score"),
+            "impermeabilizacao_score": flood.get("impermeabilizacao_score"),
+            "hidrografia_proximidade_score": flood.get("hidrografia_proximidade_score"),
         })
     ranking.sort(key=lambda row: row["score_sinidu"], reverse=True)
 

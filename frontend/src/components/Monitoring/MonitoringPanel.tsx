@@ -32,7 +32,10 @@ import {
   ChevronUp,
   X,
   GitCompare,
+  Megaphone,
 } from 'lucide-react';
+import PublicAlertDispatchModal from './PublicAlertDispatchModal';
+import FieldFloodEventForm from './FieldFloodEventForm';
 
 const MonitoringMiniMap = dynamic(() => import('./MonitoringMiniMap'), { ssr: false });
 
@@ -59,6 +62,7 @@ interface Props {
 
 export default function MonitoringPanel({ codigoIbge, municipioNome, onActivateContingency, onToast }: Props) {
   const [data, setData] = useState<MonitoringDashboard | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [scenario, setScenario] = useState<ScenarioAnalysis | null>(null);
   const [scenarioLoading, setScenarioLoading] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -73,6 +77,13 @@ export default function MonitoringPanel({ codigoIbge, municipioNome, onActivateC
   const [compareOpen, setCompareOpen] = useState(false);
   const [compareResult, setCompareResult] = useState<MonitoringCompareResult | null>(null);
   const [compareLoading, setCompareLoading] = useState(false);
+  const [alertaVivo, setAlertaVivo] = useState<{
+    nivel_alerta: string;
+    vivo: boolean;
+    cemaden_ativos_24h: number;
+    titulo_recente?: string | null;
+  } | null>(null);
+  const [disseminateOpen, setDisseminateOpen] = useState(false);
 
   const pushAgenteProativo = useAppStore((s) => s.pushAgenteProativo);
   const setAgenteAberto = useAppStore((s) => s.setAgenteAberto);
@@ -82,14 +93,30 @@ export default function MonitoringPanel({ codigoIbge, municipioNome, onActivateC
     try {
       const dash = await api.getMonitoringDashboard(codigoIbge);
       setData(dash);
+      setLoadError(null);
       setAlertNivel(dash.nivel_risco_atual);
       setLastUpdate(new Date());
     } catch (e) {
       console.error(e);
+      setLoadError(e instanceof Error ? e.message : 'Falha ao carregar o monitoramento.');
     } finally {
       setLoading(false);
     }
   }, [codigoIbge, setAlertNivel]);
+
+  const loadAlertaVivo = useCallback(async () => {
+    try {
+      const snap = await api.getContingencyAlertaVivo(codigoIbge);
+      setAlertaVivo({
+        nivel_alerta: snap.nivel_alerta,
+        vivo: snap.vivo,
+        cemaden_ativos_24h: snap.cemaden_ativos_24h,
+        titulo_recente: snap.titulo_recente,
+      });
+    } catch {
+      setAlertaVivo(null);
+    }
+  }, [codigoIbge]);
 
   const loadScenario = useCallback(
     async (force = false) => {
@@ -112,6 +139,7 @@ export default function MonitoringPanel({ codigoIbge, municipioNome, onActivateC
       await api.syncMonitoring(codigoIbge);
       onToast?.('Monitoramento', 'OpenMeteo e CEMADEN sincronizados.');
       await load();
+      await loadAlertaVivo();
       await loadScenario(true);
     } catch (e) {
       onToast?.('Erro de sync', e instanceof Error ? e.message : 'Falha na sincronização');
@@ -123,9 +151,13 @@ export default function MonitoringPanel({ codigoIbge, municipioNome, onActivateC
   useEffect(() => {
     setLoading(true);
     load();
-    const id = setInterval(load, 5 * 60 * 1000);
+    loadAlertaVivo();
+    const id = setInterval(() => {
+      load();
+      loadAlertaVivo();
+    }, 5 * 60 * 1000);
     return () => clearInterval(id);
-  }, [load]);
+  }, [load, loadAlertaVivo]);
 
   useEffect(() => {
     if (!data) return;
@@ -193,6 +225,32 @@ export default function MonitoringPanel({ codigoIbge, municipioNome, onActivateC
     return <p className="text-sm text-zinc-400">Carregando monitoramento…</p>;
   }
 
+  if (!data && loadError) {
+    return (
+      <div className="rounded-xl border border-rose-700/50 bg-rose-950/30 p-4">
+        <div className="flex items-center gap-2 text-rose-200">
+          <AlertTriangle size={16} />
+          <h3 className="text-sm font-bold">Monitoramento indisponível</h3>
+        </div>
+        <p className="mt-2 text-xs leading-snug text-rose-200/80">
+          Não foi possível carregar o painel de {municipioNome || codigoIbge}. O nível de risco{' '}
+          <strong>não pode ser confirmado agora</strong> — não assuma VERDE.
+        </p>
+        <p className="mt-1 font-mono text-[10px] text-rose-300/70">{loadError}</p>
+        <button
+          type="button"
+          onClick={() => {
+            setLoading(true);
+            load();
+          }}
+          className="mt-3 flex items-center gap-1.5 rounded-lg border border-rose-600/50 bg-rose-900/40 px-3 py-1.5 text-[11px] font-bold uppercase text-rose-100 hover:bg-rose-800/50"
+        >
+          <RefreshCw size={12} /> Tentar novamente
+        </button>
+      </div>
+    );
+  }
+
   const nivel = data?.nivel_risco_atual || 'VERDE';
   const nome = data?.nome_municipio || municipioNome || codigoIbge;
   const weatherMissing = !data?.weather_disponivel && data?.precip_24h_mm == null;
@@ -204,7 +262,7 @@ export default function MonitoringPanel({ codigoIbge, municipioNome, onActivateC
       {criticalPopup && (
         <div className="fixed inset-0 z-[2000] flex items-center justify-center bg-black/70 p-4">
           <div className="max-w-md rounded-2xl border border-red-500/50 bg-zinc-950 p-6 shadow-2xl">
-            <h3 className="text-lg font-bold text-red-300">Alerta crítico — probabilidade &gt; 75%</h3>
+            <h3 className="text-lg font-bold text-red-300">Alerta crítico — score de risco &gt; 75%</h3>
             <p className="mt-3 text-sm text-zinc-300">{criticalPopup.mensagem}</p>
             <div className="mt-5 flex gap-2">
               <button
@@ -263,14 +321,144 @@ export default function MonitoringPanel({ codigoIbge, municipioNome, onActivateC
         <Card icon={<Activity size={14} />} label="Risco atual" value={nivel} accent="amber" badgeClass={riskBadgeClass} />
       </div>
 
+      {alertaVivo && (
+        <div
+          className={`rounded-xl border p-3 ${
+            alertaVivo.vivo
+              ? 'border-rose-500/40 bg-rose-950/25'
+              : 'border-zinc-700/60 bg-zinc-900/40'
+          }`}
+        >
+          <div className="flex items-start justify-between gap-2">
+            <div>
+              <p className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">
+                Alerta vivo (contingência)
+              </p>
+              <p className="mt-1 text-sm font-extrabold text-zinc-100">
+                Nível {alertaVivo.nivel_alerta}
+                {alertaVivo.vivo ? (
+                  <span className="ml-2 rounded-full bg-rose-500/20 px-2 py-0.5 text-[9px] font-bold uppercase text-rose-200">
+                    Ativo 24h
+                  </span>
+                ) : (
+                  <span className="ml-2 rounded-full bg-zinc-700/50 px-2 py-0.5 text-[9px] font-bold uppercase text-zinc-400">
+                    Sem evento vivo
+                  </span>
+                )}
+              </p>
+              <p className="mt-1 text-[11px] text-zinc-400">
+                CEMADEN 24h: {alertaVivo.cemaden_ativos_24h}
+                {alertaVivo.titulo_recente ? ` · ${alertaVivo.titulo_recente}` : ''}
+              </p>
+            </div>
+            <div className="flex shrink-0 flex-col gap-1.5">
+              <button
+                type="button"
+                onClick={() => setDisseminateOpen(true)}
+                className="inline-flex items-center justify-center gap-1 rounded-lg border border-rose-500/40 bg-rose-950/40 px-2.5 py-1.5 text-[9px] font-bold uppercase tracking-wider text-rose-100 hover:bg-rose-900/50"
+              >
+                <Megaphone size={11} />
+                Disseminar aviso municipal
+              </button>
+              {onActivateContingency && (
+                <button
+                  type="button"
+                  onClick={() => onActivateContingency(alertaVivo.nivel_alerta, null)}
+                  className="rounded-lg border border-amber-500/40 bg-amber-950/40 px-2.5 py-1.5 text-[9px] font-bold uppercase tracking-wider text-amber-100 hover:bg-amber-900/50"
+                >
+                  Abrir contingência
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      <PublicAlertDispatchModal
+        open={disseminateOpen}
+        onClose={() => setDisseminateOpen(false)}
+        codigoIbge={codigoIbge}
+        onDone={() => {
+          onToast?.('Alerta disseminado', 'Registro auditável criado para Defesa Civil / canais selecionados.');
+          void load();
+        }}
+      />
+
+      <FieldFloodEventForm
+        codigoIbge={codigoIbge}
+        onToast={onToast}
+        onCreated={() => void load()}
+      />
+
       {data?.risk_probability != null && (
-        <p className="text-xs text-zinc-400">
-          Probabilidade de evento crítico:{' '}
-          <strong className="text-amber-300">{(data.risk_probability * 100).toFixed(0)}%</strong>
-          {data.precip_72h_mm != null && (
-            <span className="text-zinc-600"> · Precip. 72h: {data.precip_72h_mm} mm</span>
+        <div className="rounded-xl border border-zinc-800 bg-zinc-950/40 px-3 py-2.5">
+          <p className="text-xs text-zinc-400">
+            {data.selo_previsao?.score_kind === 'probabilidade_modelo' || data.risk_source === 'ml_full'
+              ? 'Probabilidade de evento crítico: '
+              : 'Score de chuva: '}
+            <strong className="text-amber-300">{(data.risk_probability * 100).toFixed(0)}%</strong>
+            <span className="ml-1.5 rounded bg-teal-500/15 px-1.5 py-0.5 text-[9px] font-bold uppercase text-teal-200">
+              {data.selo_previsao?.label_ui
+                || (data.risk_source === 'ml_full' ? 'ML full · Derivado' : 'Heurística · Estimado')}
+            </span>
+            {data.selo_previsao?.selo_qualidade && (
+              <span className="ml-1 rounded bg-zinc-800 px-1.5 py-0.5 text-[9px] font-bold uppercase text-zinc-300">
+                {data.selo_previsao.selo_qualidade}
+              </span>
+            )}
+            {data.precip_72h_mm != null && (
+              <span className="text-zinc-600"> · Precip. 72h: {data.precip_72h_mm} mm</span>
+            )}
+            {data.cemaden_obs_mm != null && (
+              <span className="text-zinc-600">
+                {' '}· CEMADEN obs.: {data.cemaden_obs_mm} mm
+                {data.cemaden_estacoes != null ? ` (${data.cemaden_estacoes} est.)` : ''}
+              </span>
+            )}
+          </p>
+          {data.selo_previsao?.narrativa && (
+            <p className="mt-1.5 text-[10px] leading-snug text-zinc-500">{data.selo_previsao.narrativa}</p>
           )}
-        </p>
+          {data.selo_previsao?.disclaimer && (
+            <p className="mt-1 text-[9px] leading-snug text-zinc-600">{data.selo_previsao.disclaimer}</p>
+          )}
+        </div>
+      )}
+
+      {data?.acerto_previsoes && (
+        <div className="rounded-xl border border-emerald-500/25 bg-emerald-950/20 p-3">
+          <p className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-emerald-300/90">
+            <CheckCircle2 size={12} />
+            Acerto das previsões
+          </p>
+          {data.acerto_previsoes.disponivel && data.acerto_previsoes.acerto_pct != null ? (
+            <>
+              <p className="mt-1.5 text-sm font-extrabold text-zinc-100">
+                Acertamos{' '}
+                <span className="text-emerald-300">{Math.round(data.acerto_previsoes.acerto_pct)}%</span>
+                {' '}das últimas{' '}
+                <span className="text-zinc-200">{data.acerto_previsoes.n_verificadas}</span>
+                {' '}previsões
+              </p>
+              <p className="mt-1 text-[11px] leading-snug text-zinc-500">
+                {data.acerto_previsoes.amostra_suficiente
+                  ? 'Comparação previsão × evento oficial no horizonte de 24h.'
+                  : 'Amostra ainda pequena — interprete com cautela.'}
+                {data.acerto_previsoes.n_pendentes > 0
+                  ? ` · ${data.acerto_previsoes.n_pendentes} aguardando desfecho`
+                  : ''}
+              </p>
+            </>
+          ) : (
+            <p className="mt-1.5 text-[11px] leading-snug text-zinc-400">
+              {data.acerto_previsoes.narrativa ||
+                'Ainda acumulando verificação. Sincronize o Monitor para registrar previsões.'}
+              {data.acerto_previsoes.n_pendentes > 0
+                ? ` (${data.acerto_previsoes.n_pendentes} pendentes de desfecho)`
+                : ''}
+            </p>
+          )}
+        </div>
       )}
 
       {/* Card Análise de Cenário */}

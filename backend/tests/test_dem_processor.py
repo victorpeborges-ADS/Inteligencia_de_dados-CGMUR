@@ -14,6 +14,7 @@ from app.services.dem_processor import (
     _upsample_dem_superres,
     dem_resolution_m,
     find_local_dem,
+    hydro_dem_label,
     import_local_dem_bytes,
     local_dem_source_paths,
 )
@@ -64,6 +65,62 @@ def test_local_dem_paths_and_import(tmp_path, monkeypatch):
     assert find_local_dem(code) == dest
 
 
+def test_local_dem_paths_include_merit_anadem_names():
+    """21b.5 — path list deve cobrir MERIT-Hydro/ANADEM em ambos os diretórios."""
+    code = "2611606"
+    paths = [p.name for p in local_dem_source_paths(code)]
+    assert "merit.tif" in paths
+    assert "anadem.tif" in paths
+    assert f"{code}_merit.tif" in paths
+    assert f"{code}_anadem.tif" in paths
+    assert f"{code}_merit_hydro.tif" in paths
+
+
+def test_hydro_dem_label_detects_merit_and_anadem():
+    """21b.5 — nome do arquivo determina dem_source/hydro_dem flag."""
+    assert hydro_dem_label("2611606_merit.tif") == "MERIT-Hydro"
+    assert hydro_dem_label("2611606_merit_hydro.tif") == "MERIT-Hydro"
+    assert hydro_dem_label("merit.tif") == "MERIT-Hydro"
+    assert hydro_dem_label("2611606_anadem.tif") == "ANADEM"
+    assert hydro_dem_label("anadem.tif") == "ANADEM"
+    assert hydro_dem_label("local_dem.tif") is None
+    assert hydro_dem_label("2611606_lidar.tif") is None
+
+
+def test_hydro_simulator_skips_fill_sinks_when_hydro_dem(monkeypatch):
+    """21b.5 — meta.hydro_dem=True dispensa Priority-Flood e marca método pela fonte."""
+    import numpy as np
+
+    from app.services import hydro_simulator as hs
+
+    fill_called = {"n": 0}
+
+    def _fake_fill_sinks(elevation, mask):
+        fill_called["n"] += 1
+        return elevation, {"dem_hydro_conditioned": True, "method": "priority_flood"}
+
+    monkeypatch.setattr(hs, "_fill_sinks", _fake_fill_sinks)
+
+    meta = {"hydro_dem": True, "dem_source": "MERIT-Hydro"}
+    elev = np.zeros((3, 3))
+    mask = np.ones((3, 3), dtype=bool)
+
+    if meta.get("hydro_dem"):
+        fill_meta = {
+            "dem_hydro_conditioned": True,
+            "cells_filled": 0,
+            "fill_volume_cell_m": 0.0,
+            "method": str(meta.get("dem_source") or "hydro_dem_source"),
+        }
+    else:
+        elev, fill_meta = hs._fill_sinks(elev, mask)
+
+    assert fill_called["n"] == 0
+    assert fill_meta["dem_hydro_conditioned"] is True
+    assert fill_meta["method"] == "MERIT-Hydro"
+    assert fill_meta["cells_filled"] == 0
+
+
 def test_find_local_dem_in_shared_dir(tmp_path, monkeypatch):
     monkeypatch.setattr(dp, "DEM_BASE_DIR", tmp_path / "dem")
     local_dir = tmp_path / "local"
@@ -72,6 +129,37 @@ def test_find_local_dem_in_shared_dir(tmp_path, monkeypatch):
     shared = local_dir / "2611606_lidar.tif"
     shared.write_bytes(b"\x00" * 4096)
     assert find_local_dem("2611606") == shared
+
+
+def test_opentopography_disabled_without_key(monkeypatch):
+    monkeypatch.delenv("OPENTOPOGRAPHY_API_KEY", raising=False)
+    monkeypatch.delenv("OPENTOPOGRAPHY_ENABLED", raising=False)
+    assert dp._opentopography_enabled(None) is False
+    monkeypatch.setenv("OPENTOPOGRAPHY_ENABLED", "false")
+    monkeypatch.setenv("OPENTOPOGRAPHY_API_KEY", "fake")
+    assert dp._opentopography_enabled("fake") is False
+    monkeypatch.setenv("OPENTOPOGRAPHY_ENABLED", "true")
+    assert dp._opentopography_enabled("fake") is True
+
+
+def test_download_srtm_skips_when_disabled(monkeypatch):
+    monkeypatch.setenv("OPENTOPOGRAPHY_ENABLED", "false")
+    called = {"n": 0}
+
+    def _fake_get(*_a, **_k):
+        called["n"] += 1
+        raise AssertionError("httpx não deveria ser chamado")
+
+    monkeypatch.setattr(dp.httpx, "get", _fake_get)
+    assert dp._download_srtm(-9, -8, -35, -34, api_key=None) is None
+    assert called["n"] == 0
+
+
+def test_opentopography_timeout_default(monkeypatch):
+    monkeypatch.delenv("OPENTOPOGRAPHY_TIMEOUT_S", raising=False)
+    assert dp._opentopography_timeout_s() == 12.0
+    monkeypatch.setenv("OPENTOPOGRAPHY_TIMEOUT_S", "8")
+    assert dp._opentopography_timeout_s() == 8.0
 
 
 def test_dem_status_counts(tmp_path, monkeypatch):

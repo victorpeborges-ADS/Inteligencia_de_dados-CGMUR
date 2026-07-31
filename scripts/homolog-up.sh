@@ -21,8 +21,20 @@ fi
 
 "$ROOT/scripts/generate-dev-certs.sh"
 
-echo "Subindo stack de homologação (build pode levar alguns minutos)…"
-"${COMPOSE[@]}" up -d --build
+BUILD_FLAG="--no-build"
+if [[ "${FORCE_BUILD:-0}" == "1" ]]; then
+  BUILD_FLAG="--build"
+  echo "FORCE_BUILD=1 — rebuild completo (pode levar vários minutos)."
+elif ! docker image inspect sinidumvp-backend:latest >/dev/null 2>&1 \
+  || ! docker image inspect sinidumvp-frontend:latest >/dev/null 2>&1; then
+  BUILD_FLAG="--build"
+  echo "Imagens ausentes — build inicial."
+else
+  echo "Imagens locais encontradas — subindo sem rebuild (FORCE_BUILD=1 para reconstruir)."
+fi
+
+echo "Subindo stack de homologação…"
+"${COMPOSE[@]}" up -d ${BUILD_FLAG}
 
 echo ""
 echo "Aguardando readiness do backend…"
@@ -35,8 +47,8 @@ done
 
 echo ""
 echo "=== Homologação Sinidu+Clima ==="
-echo "App:       https://localhost  (aceite o certificado autoassinado)"
-echo "Alternativa: http://localhost:3000  (frontend direto, mesma build prod)"
+echo "App:       https://localhost  (aceite o certificado autoassinado — rota recomendada)"
+echo "Alternativa: http://localhost:3000  (mapa offline se API HTTPS bloquear no browser)"
 echo "API:       https://localhost/api/v1/"
 echo "Keycloak:  http://localhost:8080  (admin / admin)"
 echo ""
@@ -47,3 +59,10 @@ echo "  leitor.pe / leitor     → leitor (UF PE)"
 echo ""
 echo "Login SSO: botão na modal de autenticação do frontend."
 echo "Auditoria: https://localhost/auditoria (após login admin)"
+echo ""
+echo "Smoke OIDC/TLS:"
+echo "  ./scripts/validacao_oidc_govbr.sh https://localhost"
+echo "Smoke completo (auth + amostra):"
+echo "  ./scripts/demo-smoke.sh https://localhost"
+echo "Piloto Recife+Aracaju (opcional, ~5 min):"
+echo "  RUN_PILOTO_VALIDATION=1 ./scripts/demo-smoke.sh https://localhost"

@@ -10,7 +10,9 @@ from sqlalchemy.orm import Session
 from app.models import DiagnosticoExecutivo, Municipio, PlanoAcaoMunicipal
 from app.services.federal_financing_catalog import suggest_programs
 from app.services.maturity_engine import compute_maturity
+from app.services.measures_catalog import recommend_measures
 from app.services.mitigation_planner import MitigationPlanner
+from app.services.municipal_profile_service import build_municipal_profile
 from app.services.report_generator import _ensure_capag_fresh, build_bairro_ranking
 
 logger = logging.getLogger(__name__)
@@ -278,6 +280,35 @@ def build_action_plan_payload(
     except Exception:
         maturity = None
 
+    try:
+        perfil = build_municipal_profile(db, muni.codigo_ibge, maturity=maturity)
+    except Exception as exc:
+        logger.warning("Perfil municipal falhou: %s", exc)
+        perfil = None
+
+    nivel_risco = (
+        "VERMELHO" if score >= 66 else "LARANJA" if score >= 45 else "AMARELO" if score >= 33 else "VERDE"
+    )
+    fatores_agregados: list[str] = []
+    seen_f: set[str] = set()
+    for row in ranking[:8]:
+        for fid in row.get("fatores_principais") or []:
+            if fid not in seen_f:
+                seen_f.add(fid)
+                fatores_agregados.append(fid)
+
+    medidas_recomendadas = (
+        recommend_measures(
+            perfil,
+            nivel_risco=nivel_risco,
+            fatores_principais=fatores_agregados,
+            bairros_alvo=top_bairros,
+            limit=6,
+        )
+        if perfil
+        else []
+    )
+
     lacunas: list[str] = []
     if not nota_capag:
         lacunas.append("CAPAG não disponível — revisar elegibilidade a crédito.")
@@ -285,12 +316,16 @@ def build_action_plan_payload(
         lacunas.append("Sem eventos S2ID locais — experiências próprias limitadas.")
     if maturity and maturity.get("fontes_faltantes"):
         lacunas.extend(f["nome"] for f in maturity["fontes_faltantes"][:3])
+    if perfil:
+        lacunas.extend(perfil.get("restricoes") or [])
 
     capacidade = {
         "nota_capag": nota_capag,
         "nota_capag_raw": capag_meta.get("nota_capag_raw"),
         "media_ivc": media_ivc,
         "score_sinidu": score,
+        "porte": perfil.get("porte") if perfil else None,
+        "porte_label": perfil.get("porte_label") if perfil else None,
         "receita_corrente_liquida": float(fiscal.receita_corrente_liquida) if fiscal and fiscal.receita_corrente_liquida else None,
         "alertas": [],
     }
@@ -331,6 +366,8 @@ def build_action_plan_payload(
         "programas_financiamento": programas,
         "capacidade_fiscal": capacidade,
         "maturidade": maturity,
+        "perfil": perfil,
+        "medidas_recomendadas": medidas_recomendadas,
         "ranking_bairros": ranking[:8],
         "lacunas": lacunas,
         "fontes_consultadas": fontes,

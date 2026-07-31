@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from app.timeutil import utc_now
 from pathlib import Path
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
-from weasyprint import HTML
 
 from app.config import settings
 from app.models import ContingencyPlan, Municipio
@@ -15,6 +14,8 @@ TEMPLATE_DIR = Path(__file__).resolve().parent.parent / "reports" / "templates"
 
 
 def generate_contingency_pdf(plan: ContingencyPlan, muni: Municipio | None) -> Path:
+    from weasyprint import HTML
+
     env = Environment(
         loader=FileSystemLoader(str(TEMPLATE_DIR)),
         autoescape=select_autoescape(["html"]),
@@ -23,7 +24,7 @@ def generate_contingency_pdf(plan: ContingencyPlan, muni: Municipio | None) -> P
     html = template.render(
         plan=plan,
         muni=muni,
-        gerado_em=datetime.utcnow().strftime("%d/%m/%Y %H:%M UTC"),
+        gerado_em=utc_now().strftime("%d/%m/%Y %H:%M UTC"),
     )
     out_dir = Path(settings.REPORTS_DIR) / "contingency"
     out_dir.mkdir(parents=True, exist_ok=True)

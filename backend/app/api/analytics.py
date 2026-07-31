@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi.responses import FileResponse
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 from app.db import get_db
@@ -15,6 +16,47 @@ import json
 from shapely.geometry import shape
 
 router = APIRouter()
+
+
+@router.get("/risk-panel")
+def get_risk_panel(
+    request: Request,
+    codigo_ibge: str | None = Query(default=None),
+    top_bairros: int = Query(default=8, ge=1, le=30),
+    db: Session = Depends(get_db),
+):
+    """Painel de risco único (semáforo) — Score, IVC, IRI, VM, alerta vivo e modo baixa maturidade."""
+    # Import lazy: evita ciclo analytics ↔ report_generator ↔ risk_traffic_light
+    from app.services.risk_traffic_light_service import build_risk_panel
+
+    muni = get_accessible_municipio(db, codigo_ibge, request=request)
+    try:
+        return build_risk_panel(db, muni.codigo_ibge, top_bairros=top_bairros)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.get("/risk-panel/field-report.pdf")
+def download_field_report_pdf(
+    request: Request,
+    codigo_ibge: str | None = Query(default=None),
+    db: Session = Depends(get_db),
+):
+    """Ficha de campo PDF (1–2 págs) — status, hotspots e medidas (17h.4c)."""
+    from app.services.field_report_service import generate_field_report_pdf
+
+    muni = get_accessible_municipio(db, codigo_ibge, request=request)
+    try:
+        path = generate_field_report_pdf(db, muni.codigo_ibge)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Falha ao gerar ficha de campo: {exc}") from exc
+    return FileResponse(
+        path,
+        media_type="application/pdf",
+        filename=path.name,
+    )
 
 def executive_snapshot(db: Session, muni: Municipio):
     alerts_count = db.query(AlertaCemaden).filter(AlertaCemaden.municipio_id == muni.id).count()
@@ -261,6 +303,47 @@ def compare_municipalities(codigos: str = Query(...), request: Request = ..., db
         request=request,
     )
     return payload
+
+
+@router.get("/rank")
+def rank_municipalities_endpoint(
+    request: Request,
+    criterio: str = Query(default="score_sinidu"),
+    codigos: str | None = Query(default=None, description="Lista IBGE separada por vírgula"),
+    uf: str | None = Query(default=None),
+    limit: int = Query(default=15, ge=2, le=40),
+    db: Session = Depends(get_db),
+):
+    """Ranking N municípios por critério comum (17h.2e) — consórcios/UF."""
+    from app.services.municipal_rank_service import CRITERIO_META, rank_municipalities
+
+    actor = resolve_actor(request)
+    codes = [c.strip() for c in (codigos or "").split(",") if c.strip()] or None
+    # Garante acesso a pelo menos um município âncora quando há códigos
+    if codes:
+        for code in codes[:5]:
+            get_accessible_municipio(db, code, request=request)
+    try:
+        payload = rank_municipalities(
+            db,
+            criterio=criterio,
+            codigos=codes,
+            uf=uf,
+            limit=limit,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    log_audit(
+        db,
+        user=actor,
+        action="rank.analytics",
+        resource_type="ranking",
+        codigo_ibge=codes[0] if codes else None,
+        metadata={"criterio": criterio, "uf": uf, "total": payload.get("total")},
+        request=request,
+    )
+    return {**payload, "criterios_disponiveis": list(CRITERIO_META.keys())}
 
 
 @router.get("/socioeconomic-ranking")

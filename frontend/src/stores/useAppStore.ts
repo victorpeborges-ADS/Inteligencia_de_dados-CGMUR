@@ -1,7 +1,23 @@
 import { create } from 'zustand';
 
 import { DEFAULT_LAYER_OPTIONS, type ActiveTab, type LayerOption } from '@/config/platformTabs';
+import { DEFAULT_SOCIO_SUBCAMADA, type SocioSubcamadaId } from '@/config/socioeconomicoSubcamadas';
+import type { TemporalTemaId, TemporalOptionsResponse } from '@/config/layerTemporal';
+import {
+  DEFAULT_EDUCACAO_ETAPA,
+  DEFAULT_EDUCACAO_RAIO_M,
+  EQUIPAMENTO_DEPS_DEFAULT,
+  EQUIPAMENTO_TIPOS_DEFAULT,
+  type DependenciaId,
+  type EducacaoEtapaId,
+  type EquipamentoTipoId,
+} from '@/config/educacaoInep';
+import {
+  DEFAULT_TERRITORIO_TIPO,
+  type TerritorioTipoId,
+} from '@/config/territoriosEspeciais';
 import { DEFAULT_MAP_LAYERS } from '@/utils/municipalitySync';
+import { moveLayerInStack } from '@/utils/activeLayerOrder';
 import type { MunicipalityOption } from '@/utils/api';
 import { SEED_MUNICIPALITIES } from '@/data/municipalities_seed';
 
@@ -25,6 +41,9 @@ type AppStore = {
   activeLayers: string[];
   setActiveLayers: (layers: string[] | ((prev: string[]) => string[])) => void;
   toggleLayer: (layerId: string) => void;
+  layerOpacityById: Record<string, number>;
+  setLayerOpacity: (layerId: string, opacity: number) => void;
+  moveActiveLayer: (layerId: string, direction: 'up' | 'down') => void;
   layerOptions: LayerOption[];
   setLayerOptions: (
     value: LayerOption[] | ((prev: LayerOption[]) => LayerOption[]),
@@ -39,11 +58,46 @@ type AppStore = {
   setMunicipioEnsuring: (value: boolean) => void;
   municipioEnsureError: string | null;
   setMunicipioEnsureError: (value: string | null) => void;
+  /** True quando malha municipal/bairros já chegou — painel deve esperar para não saturar o backend. */
+  mapSpatialReady: boolean;
+  setMapSpatialReady: (value: boolean) => void;
   alertNivel: string;
   setAlertNivel: (nivel: string) => void;
   resetMapLayers: () => void;
+  socioSubcamada: SocioSubcamadaId;
+  setSocioSubcamada: (id: SocioSubcamadaId) => void;
+  educacaoEtapa: EducacaoEtapaId;
+  setEducacaoEtapa: (id: EducacaoEtapaId) => void;
+  educacaoRaioM: number;
+  setEducacaoRaioM: (value: number) => void;
+  showEducacaoBuffer: boolean;
+  setShowEducacaoBuffer: (value: boolean) => void;
+  /** Tipos de equipamento visíveis no mapa (vazio = nenhum). */
+  equipamentoTiposAtivos: EquipamentoTipoId[];
+  toggleEquipamentoTipo: (id: EquipamentoTipoId) => void;
+  setEquipamentoTiposAtivos: (ids: EquipamentoTipoId[]) => void;
+  /** Esferas administrativas visíveis (vazio = nenhum, exceto vias). */
+  equipamentoDepsAtivas: DependenciaId[];
+  toggleEquipamentoDep: (id: DependenciaId) => void;
+  setEquipamentoDepsAtivas: (ids: DependenciaId[]) => void;
+  territorioTipo: TerritorioTipoId;
+  setTerritorioTipo: (id: TerritorioTipoId) => void;
+  temporalOptions: TemporalOptionsResponse | null;
+  setTemporalOptions: (value: TemporalOptionsResponse | null) => void;
+  layerAnoByTema: Partial<Record<TemporalTemaId, number>>;
+  setLayerAnoForTema: (temaId: TemporalTemaId, ano: number | null) => void;
+  initLayerAnoFromTemporal: (temas: Record<string, { tema_id: string; padrao: number | null }>) => void;
+  showRegionalOverlay: boolean;
+  setShowRegionalOverlay: (value: boolean) => void;
+  regionalEscopo: 'regiao_imediata' | 'mesorregiao';
+  setRegionalEscopo: (escopo: 'regiao_imediata' | 'mesorregiao') => void;
+  compareModalOpen: boolean;
+  setCompareModalOpen: (open: boolean) => void;
   agenteAberto: boolean;
   setAgenteAberto: (aberto: boolean) => void;
+  /** Produto único Agente Sinidu — operacional (FAB/tools) × normativo (aba Assistente/RAG). */
+  agenteModo: 'operacional' | 'normativo';
+  setAgenteModo: (modo: 'operacional' | 'normativo') => void;
   agenteMensagens: AgentMessage[];
   addAgenteMensagem: (msg: Omit<AgentMessage, 'id' | 'ts'> & Partial<Pick<AgentMessage, 'id' | 'ts'>>) => void;
   clearAgenteMensagens: () => void;
@@ -67,6 +121,9 @@ type AppStore = {
   focusMode: boolean;
   setFocusMode: (value: boolean) => void;
   toggleFocusMode: () => void;
+  colorMode: 'dark' | 'light';
+  setColorMode: (mode: 'dark' | 'light') => void;
+  toggleColorMode: () => void;
 };
 
 export const FOCUS_MODE_STORAGE_KEY = 'sinidu-focus-mode';
@@ -82,7 +139,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
   activeTab: 'dashboard',
   setActiveTab: (tab) => set({ activeTab: tab }),
   selectedMunicipio: '2611606',
-  setSelectedMunicipio: (codigo) => set({ selectedMunicipio: codigo }),
+  setSelectedMunicipio: (codigo) =>
+    set({ selectedMunicipio: codigo, mapSpatialReady: false }),
   municipalities: SEED_MUNICIPALITIES,
   setMunicipalities: (value) =>
     set({
@@ -91,14 +149,31 @@ export const useAppStore = create<AppStore>((set, get) => ({
   activeLayers: [...DEFAULT_MAP_LAYERS],
   setActiveLayers: (value) =>
     set({
-      activeLayers: typeof value === 'function' ? value(get().activeLayers) : value,
+      activeLayers: (typeof value === 'function' ? value(get().activeLayers) : value).filter(
+        (id) => id !== 'edificacoes',
+      ),
     }),
-  toggleLayer: (layerId) =>
+  toggleLayer: (layerId) => {
+    if (layerId === 'edificacoes') return; // LOD1 UI pausada — qualidade insuficiente
     set((state) => ({
       activeLayers: state.activeLayers.includes(layerId)
         ? state.activeLayers.filter((id) => id !== layerId)
         : [...state.activeLayers, layerId],
+    }));
+  },
+  layerOpacityById: {},
+  setLayerOpacity: (layerId, opacity) =>
+    set((state) => ({
+      layerOpacityById: {
+        ...state.layerOpacityById,
+        [layerId]: Math.min(1, Math.max(0.15, opacity)),
+      },
     })),
+  moveActiveLayer: (layerId, direction) =>
+    set((state) => {
+      const next = moveLayerInStack(state.activeLayers, layerId, direction);
+      return next ? { activeLayers: next } : state;
+    }),
   layerOptions: DEFAULT_LAYER_OPTIONS,
   setLayerOptions: (value) =>
     set({
@@ -114,15 +189,90 @@ export const useAppStore = create<AppStore>((set, get) => ({
   setMunicipioEnsuring: (value) => set({ municipioEnsuring: value }),
   municipioEnsureError: null,
   setMunicipioEnsureError: (value) => set({ municipioEnsureError: value }),
+  mapSpatialReady: false,
+  setMapSpatialReady: (value) => set({ mapSpatialReady: value }),
   alertNivel: 'VERDE',
   setAlertNivel: (nivel) => set({ alertNivel: nivel }),
   resetMapLayers: () => set({ activeLayers: [...DEFAULT_MAP_LAYERS] }),
+  socioSubcamada: DEFAULT_SOCIO_SUBCAMADA,
+  setSocioSubcamada: (id) => set({ socioSubcamada: id }),
+  educacaoEtapa: DEFAULT_EDUCACAO_ETAPA,
+  setEducacaoEtapa: (id) => set({ educacaoEtapa: id }),
+  educacaoRaioM: DEFAULT_EDUCACAO_RAIO_M,
+  setEducacaoRaioM: (value) => set({ educacaoRaioM: value }),
+  showEducacaoBuffer: true,
+  setShowEducacaoBuffer: (value) => set({ showEducacaoBuffer: value }),
+  equipamentoTiposAtivos: [...EQUIPAMENTO_TIPOS_DEFAULT],
+  toggleEquipamentoTipo: (id) =>
+    set((state) => {
+      const has = state.equipamentoTiposAtivos.includes(id);
+      return {
+        equipamentoTiposAtivos: has
+          ? state.equipamentoTiposAtivos.filter((t) => t !== id)
+          : [...state.equipamentoTiposAtivos, id],
+      };
+    }),
+  setEquipamentoTiposAtivos: (ids) => set({ equipamentoTiposAtivos: ids }),
+  equipamentoDepsAtivas: [...EQUIPAMENTO_DEPS_DEFAULT],
+  toggleEquipamentoDep: (id) =>
+    set((state) => {
+      const has = state.equipamentoDepsAtivas.includes(id);
+      return {
+        equipamentoDepsAtivas: has
+          ? state.equipamentoDepsAtivas.filter((d) => d !== id)
+          : [...state.equipamentoDepsAtivas, id],
+      };
+    }),
+  setEquipamentoDepsAtivas: (ids) => set({ equipamentoDepsAtivas: ids }),
+  territorioTipo: DEFAULT_TERRITORIO_TIPO,
+  setTerritorioTipo: (id) => set({ territorioTipo: id }),
+  temporalOptions: null,
+  setTemporalOptions: (value) => set({ temporalOptions: value }),
+  layerAnoByTema: {},
+  setLayerAnoForTema: (temaId, ano) =>
+    set((state) => {
+      const next = { ...state.layerAnoByTema };
+      if (ano == null) {
+        delete next[temaId];
+      } else {
+        next[temaId] = ano;
+      }
+      return { layerAnoByTema: next };
+    }),
+  initLayerAnoFromTemporal: (temas) => {
+    const next: Partial<Record<TemporalTemaId, number>> = {};
+    Object.values(temas).forEach((tema) => {
+      if (tema.padrao != null) {
+        next[tema.tema_id as TemporalTemaId] = tema.padrao;
+      }
+    });
+    set((state) => {
+      const prev = state.layerAnoByTema;
+      const prevKeys = Object.keys(prev);
+      const nextKeys = Object.keys(next);
+      if (
+        prevKeys.length === nextKeys.length
+        && nextKeys.every((key) => prev[key as TemporalTemaId] === next[key as TemporalTemaId])
+      ) {
+        return state;
+      }
+      return { layerAnoByTema: next };
+    });
+  },
+  showRegionalOverlay: false,
+  setShowRegionalOverlay: (value) => set({ showRegionalOverlay: value }),
+  regionalEscopo: 'regiao_imediata',
+  setRegionalEscopo: (escopo) => set({ regionalEscopo: escopo }),
+  compareModalOpen: false,
+  setCompareModalOpen: (open) => set({ compareModalOpen: open }),
   agenteAberto: false,
   setAgenteAberto: (aberto) =>
     set((state) => ({
       agenteAberto: aberto,
       agenteNaoLidas: aberto ? 0 : state.agenteNaoLidas,
     })),
+  agenteModo: 'operacional',
+  setAgenteModo: (modo) => set({ agenteModo: modo }),
   agenteMensagens: [],
   addAgenteMensagem: (msg) =>
     set((state) => ({
@@ -183,4 +333,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
   focusMode: false,
   setFocusMode: (value) => set({ focusMode: value }),
   toggleFocusMode: () => set((state) => ({ focusMode: !state.focusMode })),
+  colorMode: 'dark',
+  setColorMode: (mode) => set({ colorMode: mode }),
+  toggleColorMode: () =>
+    set((state) => ({ colorMode: state.colorMode === 'dark' ? 'light' : 'dark' })),
 }));

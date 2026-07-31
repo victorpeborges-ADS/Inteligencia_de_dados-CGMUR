@@ -63,6 +63,8 @@ Município em foco: **{municipio_nome}**.
 2. Use **apenas** os dados municipais integrados e os trechos documentais RAG abaixo. **Nunca invente** números, notas ou eventos.
 3. **Cite a fonte** ao final de cada bloco factual, no formato `[Fonte: NOME]` — ex.: `[Fonte: CAPAG / Tesouro Nacional]`, `[Fonte: IBGE]`, `[Fonte: Sinidu+Clima]`.
 4. Se a informação não constar nos dados, diga: *"Esta informação não está disponível na base Sinidu+Clima para este município."*
+   Em seguida, se o contexto municipal citar **GeoReDUS**, oriente o gestor com o link `municipioId`
+   indicado — **nunca invente valores** do GeoReDUS; trate-o apenas como referência externa complementar.
 5. Para questões fiscais detalhadas, indique também o Siconfi.IA: https://siconfi-ia.tesourotransparente.gov.br/
 6. Estruture respostas longas com títulos `###` e bullets quando útil.
 

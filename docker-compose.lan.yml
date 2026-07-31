@@ -1,0 +1,32 @@
+# Demo / acesso de colegas na mesma rede (LAN)
+# Uso:
+#   docker compose -f docker-compose.yml -f docker-compose.lan.yml up -d
+#   Colegas: http://SEU_IP:3000
+
+services:
+  backend:
+    environment:
+      - CORS_ALLOW_LAN=true
+      - CORS_ORIGINS=http://localhost:3000
+      - AUTH_ENABLED=false
+
+  frontend:
+    # Imagem atual veio de build prod (user nextjs). Root evita EACCES no .next.
+    user: "0:0"
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -e
+        mkdir -p /app/.next
+        chmod -R a+rwX /app/.next 2>/dev/null || true
+        if [ ! -d node_modules/next ]; then
+          echo "[frontend] npm install…"
+          npm install
+        fi
+        export NODE_ENV=development
+        exec npx next dev -H 0.0.0.0 -p 3000
+    environment:
+      - NEXT_PUBLIC_API_URL=
+      - HOSTNAME=0.0.0.0
+      - WATCHPACK_POLLING=true
+      - NODE_ENV=development

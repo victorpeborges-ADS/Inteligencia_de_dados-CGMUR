@@ -113,14 +113,71 @@ FONTE_REGISTRY: dict[str, dict[str, Any]] = {
         "descricao_curta": "Monitoramento territorial e indicadores MCID.",
         "integravel_etl": True,
     },
+    "ibge_singedlab_rs": {
+        "campos_score": ["Exposição populacional oficial", "Domicílios/estabelecimentos CNEFE"],
+        "impacto_confiabilidade": 6,
+        "impacto_score_pts": 4,
+        "dificuldade": "Importação manual",
+        "requisito": "Export CSV portal IBGE SINGED Lab (sem API pública)",
+        "descricao_curta": "População, domicílios e estabelecimentos nas áreas afetadas — enchentes RS 2024.",
+        "integravel_etl": True,
+    },
+    "inep_censo_escolar": {
+        "campos_score": ["Capacidade educacional", "Acesso à educação básica"],
+        "impacto_confiabilidade": 5,
+        "impacto_score_pts": 3,
+        "dificuldade": "Técnica",
+        "requisito": "Microdados INEP Censo Escolar ou seed municipal",
+        "descricao_curta": "Matrículas e infraestrutura das escolas de educação básica por município.",
+        "integravel_etl": True,
+    },
+    "incra_quilombos": {
+        "campos_score": ["Vulnerabilidade territorial", "VM / planejamento"],
+        "impacto_confiabilidade": 4,
+        "impacto_score_pts": 3,
+        "dificuldade": "Técnica",
+        "requisito": "GeoServer INCRA / certificação quilombola",
+        "descricao_curta": "Territórios quilombolas certificados pelo INCRA.",
+        "integravel_etl": True,
+    },
+    "funai_ti": {
+        "campos_score": ["Vulnerabilidade territorial", "VM / planejamento"],
+        "impacto_confiabilidade": 4,
+        "impacto_score_pts": 3,
+        "dificuldade": "Técnica",
+        "requisito": "GeoServer FUNAI / bases oficiais de TIs",
+        "descricao_curta": "Terras indígenas homologadas e demarcadas.",
+        "integravel_etl": True,
+    },
+    "ibge_aglomerados": {
+        "campos_score": ["Vulnerabilidade urbana", "IVC / VM"],
+        "impacto_confiabilidade": 5,
+        "impacto_score_pts": 4,
+        "dificuldade": "Técnica",
+        "requisito": "IBGE Censo 2022 aglomerados subnormais",
+        "descricao_curta": "Comunidades urbanas e aglomerados subnormais do Censo.",
+        "integravel_etl": True,
+    },
+    "gemeo_digital_3d": {
+        "campos_score": ["Exposição por edifício", "Simulação 3D", "Export CityJSON/3D Tiles"],
+        "impacto_confiabilidade": 7,
+        "impacto_score_pts": 6,
+        "dificuldade": "Técnica",
+        "requisito": "Footprints OSM + altura (OSM levels / nDSM LiDAR) + export LOD1",
+        "descricao_curta": (
+            "Modelo urbano LOD1 (gêmeo digital): edificações extrudadas com fonte de altura, "
+            "maturidade e exports 3D Tiles / CityJSON / CityGML."
+        ),
+        "integravel_etl": True,
+    },
 }
 
 RADAR_AXES: dict[str, list[str]] = {
     "IBGE": ["ibge_cidades", "munic"],
     "Clima": ["mapbiomas", "adapta_brasil"],
     "Fiscal": ["sinter"],
-    "Geoespacial": ["geosgb", "inde"],
-    "Riscos": ["s2id", "cemaden_georiscos"],
+    "Geoespacial": ["geosgb", "inde", "gemeo_digital_3d"],
+    "Riscos": ["s2id", "cemaden_georiscos", "ibge_singedlab_rs"],
     "Institucional": ["snis_sinisa", "sirene", "brasil_mais"],
 }
 
@@ -129,4 +186,5 @@ STATUS_SCORE = {
     "Estimado": 0.6,
     "Em integracao": 0.35,
     "Ausente": 0.0,
+    "Nao aplicavel": 1.0,
 }

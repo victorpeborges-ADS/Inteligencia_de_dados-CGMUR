@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
+from app.timeutil import utc_now
 import logging
-from datetime import datetime
 from typing import Any
 
 from sqlalchemy.orm import Session
@@ -146,7 +146,7 @@ def build_maturity_detail(db: Session, codigo_ibge: str) -> dict[str, Any]:
     if prev > maturidade:
         prev = max(maturidade - 4, 0)
 
-    now = datetime.utcnow()
+    now = utc_now()
     mes_atual = MONTH_LABELS[now.month - 1]
     mes_anterior = MONTH_LABELS[(now.month - 2) % 12]
     delta = maturidade - round(prev)
@@ -209,7 +209,7 @@ def enrich_bases(db: Session, codigo_ibge: str, bases: list[dict[str, Any]]) -> 
         meta = FONTE_REGISTRY.get(base["id"], {})
         sync = get_source_sync_meta(db, codigo_ibge, base["id"])
         impact_conf = meta.get("impacto_confiabilidade", 0)
-        enriched.append({
+        row = {
             **base,
             "ultima_sync": sync.get("ultima_sync"),
             "registros": sync.get("registros", 0),
@@ -219,5 +219,21 @@ def enrich_bases(db: Session, codigo_ibge: str, bases: list[dict[str, Any]]) -> 
             "integravel_etl": meta.get("integravel_etl", False),
             "dificuldade": meta.get("dificuldade"),
             "impacto_score_pts": meta.get("impacto_score_pts"),
-        })
+        }
+        if base["id"] == "gemeo_digital_3d":
+            from app.services.building_catalog_service import catalog_meta_gemeo_digital
+
+            meta3d = catalog_meta_gemeo_digital(db, codigo_ibge)
+            row["modelo_3d"] = {
+                "lod": meta3d.get("lod"),
+                "maturidade_3d_pct": meta3d.get("maturidade_3d_pct"),
+                "por_fonte_altura": meta3d.get("por_fonte_altura"),
+                "por_qualidade": meta3d.get("por_qualidade"),
+                "fonte_altura_predominante": meta3d.get("fonte_altura_predominante"),
+                "especificacao": meta3d.get("especificacao"),
+                "tileset_url": (meta3d.get("tiles_3d") or {}).get("tileset_url"),
+                "cityjson_url": (meta3d.get("citymodel") or {}).get("cityjson_url"),
+                "citygml_url": (meta3d.get("citymodel") or {}).get("citygml_url"),
+            }
+        enriched.append(row)
     return enriched

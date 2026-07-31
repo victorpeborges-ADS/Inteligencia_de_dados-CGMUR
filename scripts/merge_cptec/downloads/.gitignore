@@ -1,0 +1,4 @@
+# Cache local MERGE/CPTEC (GRIB2). Não versionar os binários.
+*
+!.gitignore
+!README.md

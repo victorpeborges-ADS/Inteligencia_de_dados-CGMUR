@@ -29,6 +29,9 @@
 
   <p>Nível de alerta referência:
     <span class="badge {{ plan.nivel_alerta|lower }}">{{ plan.nivel_alerta }}</span>
+    {% if plan.cobrade_codigo %}
+    · COBRADE <strong>{{ plan.cobrade_codigo }}</strong>
+    {% endif %}
   </p>
 
   <h2>1. Zonas de evacuação ({{ plan.zonas_evacuacao|length }})</h2>
@@ -77,5 +80,41 @@
   <h3>{{ nivel }}</h3>
   <ul>{% for a in acoes %}<li>{{ a }}</li>{% endfor %}</ul>
   {% endfor %}
+
+  <h2>6. Recursos operacionais</h2>
+  <table>
+    <tr><th>Tipo</th><th>Nome</th><th>Qtd</th><th>Capacidade</th><th>Fonte</th></tr>
+    {% for r in (plan.recursos_operacionais or []) %}
+    <tr>
+      <td>{{ r.tipo | default('—') }}</td>
+      <td>{{ r.nome | default('—') }}</td>
+      <td>{{ r.quantidade | default('—') }}</td>
+      <td>{{ r.capacidade_pessoas | default('—') }}</td>
+      <td>{{ r.fonte | default('—') }}</td>
+    </tr>
+    {% else %}
+    <tr><td colspan="5">Nenhum recurso inventariado</td></tr>
+    {% endfor %}
+  </table>
+
+  <h2>7. Protocolo de campo (alerta → ação)</h2>
+  {% set proto = plan.protocolo_campo or {} %}
+  {% if proto.passos %}
+  <ol>
+    {% for p in proto.passos %}
+    <li>
+      <strong>{{ p.quando }}</strong> — {{ p.quem }}: {{ p.o_que }}
+      {% if p.sla_minutos %} (SLA {{ p.sla_minutos }} min){% endif %}
+    </li>
+    {% endfor %}
+  </ol>
+  {% endif %}
+  {% if proto.checklist_campo %}
+  <p><strong>Checklist de campo</strong></p>
+  <ul>{% for c in proto.checklist_campo %}<li>{{ c }}</li>{% endfor %}</ul>
+  {% endif %}
+  {% if proto.canais %}
+  <p><strong>Canais:</strong> {{ proto.canais | join(', ') }}</p>
+  {% endif %}
 </body>
 </html>

@@ -11,10 +11,11 @@ import httpx
 logger = logging.getLogger(__name__)
 
 OSRM_BASE_URL = os.getenv("OSRM_URL", "http://osrm:5000")
-OSRM_REGION = os.getenv("OSRM_REGION", "nordeste")
+OSRM_REGION = os.getenv("OSRM_REGION", "pe-se")
 
 _REGION_DEFAULT_UFS: dict[str, str] = {
     "pernambuco": "PE",
+    "pe-se": "PE,SE",
     "nordeste": "PE,AL,SE,PB,RN,CE,PI,MA",
     "sudeste": "SP,RJ,MG,ES",
     "sul": "PR,RS,SC",
@@ -29,7 +30,7 @@ if _env_covered:
 else:
     OSRM_COVERED_UFS = {
         uf.strip().upper()
-        for uf in _REGION_DEFAULT_UFS.get(OSRM_REGION, _REGION_DEFAULT_UFS["nordeste"]).split(",")
+        for uf in _REGION_DEFAULT_UFS.get(OSRM_REGION, _REGION_DEFAULT_UFS["pe-se"]).split(",")
         if uf.strip()
     }
 
@@ -120,6 +121,12 @@ def osrm_status() -> dict[str, Any]:
     except Exception as exc:
         detail = str(exc)[:120]
 
+    setup_hint = (
+        f"OSRM_REGION={OSRM_REGION} bash docker/osrm/setup-osrm.sh && docker compose up -d osrm"
+        if not available
+        else None
+    )
+
     return {
         "available": available,
         "region": OSRM_REGION,
@@ -127,6 +134,8 @@ def osrm_status() -> dict[str, Any]:
         "supported_regions": SUPPORTED_OSRM_REGIONS,
         "url": OSRM_BASE_URL,
         "detail": detail,
+        "setup_hint": setup_hint,
+        "fallback_active": not available,
     }
 
 

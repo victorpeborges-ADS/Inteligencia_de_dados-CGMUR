@@ -140,6 +140,44 @@ def collect_saude_municipality(db: Session, codigo_ibge: str, *, force: bool = F
         db.query(EstabelecimentoSaude).filter(EstabelecimentoSaude.municipio_id == muni.id).delete(synchronize_session=False)
 
     lacunas: list[str] = []
+    if code == "2611606":
+        from app.data_connectors.equipamentos_recife_collector import sync_equipamentos_recife
+
+        eq = sync_equipamentos_recife(db, force=True if force or existing == 0 else force, commit=True)
+        por_tipo = eq.get("por_tipo") or {}
+        sim = _load_sim_indicators(code)
+        pop = max(muni.populacao or 1, 1)
+        ubs = int(por_tipo.get("ubs", 0))
+        hosp = int(por_tipo.get("hospital", 0))
+        samu = int(por_tipo.get("samu", 0))
+        agg = db.query(MunicipioSaude).filter(MunicipioSaude.codigo_ibge == code).first()
+        if not agg:
+            agg = MunicipioSaude(codigo_ibge=code)
+            db.add(agg)
+        agg.mortalidade_causas_externas = sim["mortalidade_causas_externas"]
+        agg.taxa_afogamento = sim["taxa_afogamento"]
+        agg.taxa_desabamento = sim["taxa_desabamento"]
+        agg.cobertura_esf = round(min(1.0, ubs / max(pop / 3500, 1)), 3)
+        agg.ubs_count = ubs
+        agg.caps_count = int(por_tipo.get("caps", 0))
+        agg.hospital_count = hosp
+        agg.leitos_sus_total = hosp * 40
+        agg.cobertura_saude_score = round(
+            min(1.0, (ubs * 0.35 + hosp * 0.4 + samu * 0.25) / max(pop / 50000, 1)),
+            3,
+        )
+        agg.ano_ref = sim.get("ano_ref", 2022)
+        agg.lacunas = []
+        db.commit()
+        return {
+            "codigo_ibge": code,
+            "skipped": bool(eq.get("skipped")),
+            "records": eq.get("records"),
+            "por_tipo": por_tipo,
+            "por_dependencia": eq.get("por_dependencia"),
+            "fonte": "equipamentos_recife_osm_seed",
+            "data_quality": eq.get("data_quality", "derivado"),
+        }
     if code in _PILOT_ESTABELECIMENTOS:
         rows = _synthetic_establishments(db, muni)
         fonte = "oficial_curado"

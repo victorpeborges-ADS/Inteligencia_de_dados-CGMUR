@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from app.timeutil import utc_now
 import datetime
 import logging
 from typing import Any
@@ -64,7 +65,7 @@ def sync_cemaden_alerts(db: Session) -> dict[str, Any]:
                 titulo=f"Alerta CEMADEN — {nivel_raw}",
                 mensagem=props.get("descricao") or props.get("description"),
                 payload=props,
-                expires_at=datetime.datetime.utcnow() + datetime.timedelta(days=2),
+                expires_at=utc_now() + datetime.timedelta(days=2),
             ))
             created += 1
             if nivel in ("LARANJA", "VERMELHO"):
@@ -89,7 +90,7 @@ def sync_cemaden_alerts(db: Session) -> dict[str, Any]:
                 titulo=f"Alerta CEMADEN — {ac.nivel_alerta}",
                 mensagem=ac.descricao,
                 payload={"nivel_alerta": ac.nivel_alerta, "fonte": "db_local"},
-                expires_at=datetime.datetime.utcnow() + datetime.timedelta(days=2),
+                expires_at=utc_now() + datetime.timedelta(days=2),
             ))
             created += 1
             if nivel in ("LARANJA", "VERMELHO"):
@@ -107,7 +108,7 @@ def sync_cemaden_alerts(db: Session) -> dict[str, Any]:
 
 
 async def emit_recent_alerts(db: Session, since_minutes: int = 35) -> int:
-    cutoff = datetime.datetime.utcnow() - datetime.timedelta(minutes=since_minutes)
+    cutoff = utc_now() - datetime.timedelta(minutes=since_minutes)
     rows = (
         db.query(MonitoringAlert)
         .filter(MonitoringAlert.created_at >= cutoff)

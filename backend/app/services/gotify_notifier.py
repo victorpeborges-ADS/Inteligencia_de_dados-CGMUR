@@ -64,3 +64,24 @@ def push_job_status(job_label: str, job_id: str, status: str, detail: str = "") 
     if detail:
         message += f"\n{detail[:4000]}"
     return push_alert(title, message, priority=5 if ok else 9)
+
+
+def gotify_status() -> dict:
+    """Estado do canal Gotify (token + health check leve)."""
+    configured = bool(GOTIFY_TOKEN.strip())
+    reachable = False
+    detail = "GOTIFY_TOKEN não configurado"
+    if configured:
+        try:
+            with httpx.Client(timeout=3.0) as client:
+                resp = client.get(f"{GOTIFY_URL}/health")
+                reachable = resp.status_code < 500
+                detail = "ok" if reachable else f"HTTP {resp.status_code}"
+        except Exception as exc:
+            detail = str(exc)[:120]
+    return {
+        "configured": configured,
+        "reachable": reachable,
+        "url": GOTIFY_URL,
+        "detail": detail,
+    }

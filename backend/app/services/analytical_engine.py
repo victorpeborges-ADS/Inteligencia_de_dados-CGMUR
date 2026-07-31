@@ -1,5 +1,6 @@
 import json
 import logging
+from collections import OrderedDict
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from app.models import Municipio, Bairro, SetorCensitario, CoberturaVegetalMapBiomas, HistoricoDesastreS2ID, AlertaCemaden, InfraestruturaUrbana, MunicipioSaude, MunicipioSeguranca, MunicipioFiscal, EstabelecimentoSaude
@@ -10,6 +11,16 @@ from typing import List, Dict, Any
 logger = logging.getLogger(__name__)
 
 class AnalyticalEngine:
+    # Nota (jul/2026): _covered_area_deg é chamado uma vez por bairro/setor (centenas de
+    # vezes por request) sempre com a MESMA lista de cover_geoms (ex.: todos os polígonos
+    # "Área Urbana" do MapBiomas do município). Sem memoização, o unary_union + make_valid
+    # dessa lista era refeito do zero em cada iteração — em Recife isso sozinho custava
+    # ~84s no painel de risco. A chave usa id()+len() da lista (mesmo objeto Python
+    # reaproveitado dentro do laço do caller) com um LRU pequeno, evitando qualquer
+    # crescimento de memória sem limite entre requests.
+    _cover_union_cache: "OrderedDict[tuple[int, int], Any]" = OrderedDict()
+    _COVER_CACHE_MAXSIZE = 32
+
     @staticmethod
     def _shape_from_db_geometry(db: Session, geom) -> Any:
         return shape(json.loads(db.scalar(geom.ST_AsGeoJSON())))
@@ -46,18 +57,33 @@ class AnalyticalEngine:
                 return None
 
     @staticmethod
-    def _covered_area_deg(db: Session, base_geom, cover_geoms) -> float:
-        base_shape = AnalyticalEngine._repair_shape(
-            AnalyticalEngine._shape_from_db_geometry(db, base_geom),
-        )
+    def _merged_cover_shape(db: Session, cover_geoms) -> Any | None:
+        if not cover_geoms:
+            return None
+        cache = AnalyticalEngine._cover_union_cache
+        key = (id(cover_geoms), len(cover_geoms))
+        cached = cache.get(key)
+        if cached is not None:
+            cache.move_to_end(key)
+            return cached
+
         cover_shapes = [
             AnalyticalEngine._shape_from_db_geometry(db, row.geom)
             for row in cover_geoms
         ]
-        if not cover_shapes:
-            return 0.0
+        merged = AnalyticalEngine._safe_unary_union(cover_shapes) if cover_shapes else None
+        cache[key] = merged
+        cache.move_to_end(key)
+        while len(cache) > AnalyticalEngine._COVER_CACHE_MAXSIZE:
+            cache.popitem(last=False)
+        return merged
 
-        merged = AnalyticalEngine._safe_unary_union(cover_shapes)
+    @staticmethod
+    def _covered_area_deg(db: Session, base_geom, cover_geoms) -> float:
+        base_shape = AnalyticalEngine._repair_shape(
+            AnalyticalEngine._shape_from_db_geometry(db, base_geom),
+        )
+        merged = AnalyticalEngine._merged_cover_shape(db, cover_geoms)
         if merged is None:
             return 0.0
         try:
@@ -67,106 +93,225 @@ class AnalyticalEngine:
             return 0.0
 
     @staticmethod
+    def _percentile_ranks(values: list[float]) -> list[float]:
+        """Rank percentual 0–1 dentro do município (empates → média dos ranks)."""
+        n = len(values)
+        if n == 0:
+            return []
+        if n == 1:
+            return [0.5]
+        indexed = sorted(enumerate(values), key=lambda t: t[1])
+        ranks = [0.0] * n
+        i = 0
+        while i < n:
+            j = i
+            while j + 1 < n and indexed[j + 1][1] == indexed[i][1]:
+                j += 1
+            avg_rank = (i + j) / 2.0
+            pct = avg_rank / (n - 1)
+            for k in range(i, j + 1):
+                ranks[indexed[k][0]] = pct
+            i = j + 1
+        return ranks
+
+    @staticmethod
+    def _bairro_area_km2(db: Session, geom) -> float:
+        """Área aproximada em km² (SRID 4326 → fator tropical ~Recife)."""
+        area_deg = db.scalar(func.ST_Area(geom))
+        if area_deg is None or float(area_deg) <= 0:
+            return 0.01
+        # 1°² ≈ 12_100–12_300 km² perto de lat -8°
+        return float(area_deg) * 12300.0
+
+    @staticmethod
+    def _resolve_bairro_renda(db: Session, muni: Municipio, bairro: Bairro) -> tuple[float, str]:
+        """Renda mensal do bairro — prioriza tabela local conhecida; evita setores flat."""
+        from app.services.socioeconomic_engine import RECIFE_BAIRRO_RENDA
+
+        nome = (bairro.nome or "").strip()
+        if nome in RECIFE_BAIRRO_RENDA:
+            return float(RECIFE_BAIRRO_RENDA[nome]), "recife_bairro_renda"
+        # match case-insensitive / parcial
+        for key, val in RECIFE_BAIRRO_RENDA.items():
+            if key.casefold() == nome.casefold() or key.casefold() in nome.casefold() or nome.casefold() in key.casefold():
+                return float(val), "recife_bairro_renda"
+
+        if bairro.renda_media_censo2022 is not None and float(bairro.renda_media_censo2022) > 0:
+            return float(bairro.renda_media_censo2022), "bairro_renda_censo"
+
+        # setores cujo centróide cai no bairro (evita overcount por ST_Intersects amplo)
+        sectors = (
+            db.query(SetorCensitario)
+            .filter(
+                SetorCensitario.municipio_id == muni.id,
+                func.ST_Contains(bairro.geom, func.ST_Centroid(SetorCensitario.geom)),
+            )
+            .all()
+        )
+        if sectors:
+            avg = sum(float(s.renda_media or 0) for s in sectors) / len(sectors)
+            if avg > 0:
+                return avg, "setor_centroid"
+
+        return 1800.0, "fallback"
+
+    @staticmethod
     def calculate_climate_vulnerability(db: Session, municipio_id: int) -> List[Dict[str, Any]]:
         """
-        Dynamically calculates the Climate Vulnerability Index (IVC) for all bairros
-        in the municipality using PostGIS-driven aggregates.
-        IVC = (Exposure + Sensitivity) - (Adaptive Capacity)
-        All scores normalized between 0.0 and 1.0.
+        IVC por bairro — sensibilidade relativa ao município + exposição territorial.
+
+        Correção (jul/2026): a fórmula antiga saturava densidade (pop inflada / teto 15k)
+        e usava renda de setores quase constante → IVC ~igual em todos os bairros.
+        Agora: renda prioritária por bairro, densidade por área share do município,
+        scores por percentil intra-municipal e exposição com impermeabilização MapBiomas.
         """
+        muni = db.query(Municipio).filter(Municipio.id == municipio_id).first()
+        if not muni:
+            return []
+
         bairros = db.query(Bairro).filter(Bairro.municipio_id == municipio_id).all()
-        results = []
-        
+        if not bairros:
+            return []
+
+        muni_area = AnalyticalEngine._bairro_area_km2(db, muni.geom)
+        muni_pop = int(muni.populacao or 0) or 1
+
+        urban_cover = db.query(CoberturaVegetalMapBiomas).filter(
+            CoberturaVegetalMapBiomas.municipio_id == municipio_id,
+            CoberturaVegetalMapBiomas.classe_uso == "Área Urbana",
+        ).all()
+        forest_cover = db.query(CoberturaVegetalMapBiomas).filter(
+            CoberturaVegetalMapBiomas.municipio_id == municipio_id,
+            CoberturaVegetalMapBiomas.classe_uso == "Vegetação / Floresta",
+        ).all()
+
+        raw_rows: list[dict[str, Any]] = []
+        densities: list[float] = []
+        incomes: list[float] = []
+
         for b in bairros:
-            # 1. Sensitivity: Population density & average income from sectors inside the Bairro
-            # We use spatial intersection query
-            sectors = db.query(SetorCensitario).filter(
-                SetorCensitario.municipio_id == municipio_id,
-                func.ST_Intersects(b.geom, SetorCensitario.geom)
-            ).all()
-            
-            total_pop = sum(s.populacao for s in sectors)
-            avg_income = sum(float(s.renda_media) for s in sectors) / len(sectors) if sectors else 1500.0
-            
-            # Neighborhood Area in km2 (ST_Area returns degrees for SRID 4326, we estimate based on centroid or convert)
-            area_deg = db.scalar(func.ST_Area(b.geom))
-            # Rough conversion factor for Recife lat (-8 deg): 1 sq degree = 12,300 km2
-            area_km2 = float(area_deg) * 12300.0 if area_deg else 2.0
-            
-            density = total_pop / area_km2 if area_km2 > 0 else 0
-            
-            # Normalize density (cap at 15000 pop/km2)
-            density_score = min(density / 15000.0, 1.0)
-            # Normalize income (inverse: higher income = lower sensitivity. Cap at 7000 BRL)
-            income_score = max(0.0, 1.0 - (avg_income / 7000.0))
-            
-            sensibilidade = (density_score * 0.5) + (income_score * 0.5)
-            
-            # 2. Exposure: Active Warnings (CEMADEN) & Historical Disasters (S2ID)
-            # Count historical disasters in this neighborhood
+            area_km2 = max(AnalyticalEngine._bairro_area_km2(db, b.geom), 0.01)
+            # População: se a soma dos pop_censo está inflada, redistribui pop municipal por área
+            pop_raw = int(b.pop_censo2022) if b.pop_censo2022 is not None else None
+            pop_est = int(round(muni_pop * (area_km2 / muni_area))) if muni_area > 0 else (pop_raw or 0)
+            pop = pop_est if (pop_raw is None or pop_raw <= 0) else pop_raw
+
+            avg_income, renda_fonte = AnalyticalEngine._resolve_bairro_renda(db, muni, b)
+            density = pop / area_km2 if area_km2 > 0 else 0.0
+
             disasters_count = db.query(HistoricoDesastreS2ID).filter(
-                func.ST_Intersects(b.geom, HistoricoDesastreS2ID.geom)
+                HistoricoDesastreS2ID.municipio_id == municipio_id,
+                func.ST_Intersects(b.geom, HistoricoDesastreS2ID.geom),
             ).count()
-            
-            # Check for active alerts intersecting
             active_alerts = db.query(AlertaCemaden).filter(
-                func.ST_Intersects(b.geom, AlertaCemaden.geom)
+                AlertaCemaden.municipio_id == municipio_id,
+                func.ST_Intersects(b.geom, AlertaCemaden.geom),
             ).all()
-            
             alert_weight = 0.0
             for alt in active_alerts:
-                if alt.nivel_alerta == "MUITO_ALTO":
+                nivel = str(getattr(alt, "nivel_alerta", "") or "").upper()
+                if nivel in {"MUITO_ALTO", "VERMELHO"}:
                     alert_weight = max(alert_weight, 1.0)
-                elif alt.nivel_alerta == "ALTO":
+                elif nivel in {"ALTO", "LARANJA"}:
                     alert_weight = max(alert_weight, 0.8)
-                elif alt.nivel_alerta == "MEDIO":
+                elif nivel in {"MEDIO", "MÉDIO", "AMARELO"}:
                     alert_weight = max(alert_weight, 0.5)
-                elif alt.nivel_alerta == "BAIXO":
+                elif nivel in {"BAIXO", "VERDE"}:
                     alert_weight = max(alert_weight, 0.2)
-                    
-            disaster_score = min(disasters_count / 5.0, 1.0)
-            exposicao = (disaster_score * 0.4) + (alert_weight * 0.6)
-            
-            # 3. Adaptive Capacity: Vegetation coverage % + Healthcare infrastructure count
-            # Calculate total vegetation cover inside neighborhood
-            forest_cover = db.query(CoberturaVegetalMapBiomas).filter(
-                CoberturaVegetalMapBiomas.municipio_id == municipio_id,
-                CoberturaVegetalMapBiomas.classe_uso == "Vegetação / Floresta",
-                func.ST_Intersects(b.geom, CoberturaVegetalMapBiomas.geom)
-            ).all()
+
+            area_deg = db.scalar(func.ST_Area(b.geom)) or 0.0
+            urban_area_deg = AnalyticalEngine._covered_area_deg(db, b.geom, urban_cover)
+            urban_pct = float(urban_area_deg) / float(area_deg) if area_deg else 0.5
             veg_area_deg = AnalyticalEngine._covered_area_deg(db, b.geom, forest_cover)
-            
-            # If subquery union is empty, fallback to simple calculations or standard values
-            veg_pct = 0.0
-            if veg_area_deg and area_deg:
-                veg_pct = float(veg_area_deg) / float(area_deg)
-                
-            # Hospitals count inside the neighborhood
+            veg_pct = float(veg_area_deg) / float(area_deg) if area_deg else 0.0
+
             hospitals_count = db.query(InfraestruturaUrbana).filter(
                 InfraestruturaUrbana.tipo == "hospital",
-                func.ST_Intersects(b.geom, InfraestruturaUrbana.geom)
+                func.ST_Intersects(b.geom, InfraestruturaUrbana.geom),
             ).count()
-            
-            veg_score = min(veg_pct * 3.0, 1.0) # 33% vegetation = full score
-            infra_score = min(hospitals_count / 2.0, 1.0) # 2 hospitals = full score
-            
+
+            densities.append(float(density))
+            incomes.append(float(avg_income))
+            raw_rows.append({
+                "b": b,
+                "area_km2": area_km2,
+                "populacao": pop,
+                "pop_raw": pop_raw,
+                "pop_est_area": pop_est,
+                "renda_media": avg_income,
+                "renda_fonte": renda_fonte,
+                "density": density,
+                "disasters_count": int(disasters_count),
+                "alert_weight": alert_weight,
+                "urban_pct": urban_pct,
+                "veg_pct": veg_pct,
+                "hospitais_count": int(hospitals_count),
+            })
+
+        # Se pop_censo somada >> pop municipal, troca para estimativa por área (evita densidade tetada)
+        pop_sum = sum(int(r["pop_raw"] or 0) for r in raw_rows)
+        use_area_pop = pop_sum > muni_pop * 1.35
+        if use_area_pop:
+            densities = []
+            for r in raw_rows:
+                r["populacao"] = int(r["pop_est_area"])
+                r["density"] = r["populacao"] / r["area_km2"] if r["area_km2"] > 0 else 0.0
+                densities.append(float(r["density"]))
+
+        density_ranks = AnalyticalEngine._percentile_ranks(densities)
+        # renda alta → sensibilidade baixa
+        income_ranks = AnalyticalEngine._percentile_ranks(incomes)
+        income_sensitivity = [1.0 - r for r in income_ranks]
+
+        results: list[dict[str, Any]] = []
+        for idx, r in enumerate(raw_rows):
+            density_score = density_ranks[idx]
+            income_score = income_sensitivity[idx]
+            sensibilidade = (density_score * 0.55) + (income_score * 0.45)
+
+            disaster_score = min(r["disasters_count"] / 5.0, 1.0)
+            impermeabilizacao = min(float(r["urban_pct"]), 1.0)
+            # Exposição: histórico + alerta + tecido urbano (evita coluna zero quando S2ID é pontual)
+            exposicao = (
+                disaster_score * 0.35
+                + float(r["alert_weight"]) * 0.25
+                + impermeabilizacao * 0.40
+            )
+
+            veg_score = min(float(r["veg_pct"]) * 3.0, 1.0)
+            infra_score = min(r["hospitais_count"] / 2.0, 1.0)
             capacidade_adaptacao = (veg_score * 0.6) + (infra_score * 0.4)
-            
-            # Final Climate Vulnerability Index (IVC)
-            # IVC = (exposicao + sensibilidade) / 2 adjusted by (1 - capacidade)
+
             ivc = (exposicao + sensibilidade) / 2.0
-            ivc = ivc * (1.0 - (capacidade_adaptacao * 0.3)) # Adaptive capacity reduces vulnerability by up to 30%
+            ivc = ivc * (1.0 - (capacidade_adaptacao * 0.3))
             ivc = round(max(0.0, min(1.0, ivc)), 2)
-            
+
+            b = r["b"]
             results.append({
                 "id": b.id,
                 "bairro_nome": b.nome,
                 "exposicao": round(exposicao, 2),
                 "sensibilidade": round(sensibilidade, 2),
                 "capacidade_adaptacao": round(capacidade_adaptacao, 2),
-                "indice_vulnerabilidade": ivc
+                "indice_vulnerabilidade": ivc,
+                "populacao": int(r["populacao"]),
+                "densidade_hab_km2": round(float(r["density"]), 1),
+                "renda_media": round(float(r["renda_media"]), 2),
+                "renda_fonte": r["renda_fonte"],
+                "density_score": round(density_score, 3),
+                "income_score": round(income_score, 3),
+                "s2id_desastres_count": int(r["disasters_count"]),
+                "alertas_peso": round(float(r["alert_weight"]), 2),
+                "veg_pct": round(float(r["veg_pct"]), 3),
+                "urban_pct": round(float(r["urban_pct"]), 3),
+                "hospitais_count": int(r["hospitais_count"]),
+                "pop_method": "area_share" if use_area_pop else "bairro_censo",
+                "nota_metodologica": (
+                    "IVC relativo ao município (percentis de densidade/renda). "
+                    "Não é índice oficial IBGE/CEMADEN."
+                ),
             })
-            
+
         return results
 
     @staticmethod
@@ -207,21 +352,26 @@ class AnalyticalEngine:
         geom,
         muni_shape,
         water_rows: list,
+        *,
+        flood_events: list | None = None,
+        urban_cover: list | None = None,
     ) -> dict[str, float]:
-        flood_events = db.query(HistoricoDesastreS2ID).filter(
-            HistoricoDesastreS2ID.municipio_id == municipio_id,
-            HistoricoDesastreS2ID.tipo_desastre.in_(["Inundação", "Alagamento Urbano"]),
-        ).all()
+        if flood_events is None:
+            flood_events = db.query(HistoricoDesastreS2ID).filter(
+                HistoricoDesastreS2ID.municipio_id == municipio_id,
+                HistoricoDesastreS2ID.tipo_desastre.in_(["Inundação", "Alagamento Urbano"]),
+            ).all()
         flood_disasters = sum(
             1 for ev in flood_events if AnalyticalEngine._intersects_shape(db, geom, ev.geom)
         )
         s2id_score = min(flood_disasters / 3.0, 1.0)
 
         area_deg = db.scalar(func.ST_Area(geom))
-        urban_cover = db.query(CoberturaVegetalMapBiomas).filter(
-            CoberturaVegetalMapBiomas.municipio_id == municipio_id,
-            CoberturaVegetalMapBiomas.classe_uso == "Área Urbana",
-        ).all()
+        if urban_cover is None:
+            urban_cover = db.query(CoberturaVegetalMapBiomas).filter(
+                CoberturaVegetalMapBiomas.municipio_id == municipio_id,
+                CoberturaVegetalMapBiomas.classe_uso == "Área Urbana",
+            ).all()
         urban_area_deg = AnalyticalEngine._covered_area_deg(db, geom, urban_cover)
         urban_pct = float(urban_area_deg) / float(area_deg) if urban_area_deg and area_deg else 0.5
         impermeabilizacao_score = min(urban_pct, 1.0)
@@ -247,10 +397,26 @@ class AnalyticalEngine:
             CoberturaVegetalMapBiomas.municipio_id == municipio_id,
             CoberturaVegetalMapBiomas.classe_uso == "Corpo d'água",
         ).all()
+        flood_events = db.query(HistoricoDesastreS2ID).filter(
+            HistoricoDesastreS2ID.municipio_id == municipio_id,
+            HistoricoDesastreS2ID.tipo_desastre.in_(["Inundação", "Alagamento Urbano"]),
+        ).all()
+        urban_cover = db.query(CoberturaVegetalMapBiomas).filter(
+            CoberturaVegetalMapBiomas.municipio_id == municipio_id,
+            CoberturaVegetalMapBiomas.classe_uso == "Área Urbana",
+        ).all()
         setores = db.query(SetorCensitario).filter(SetorCensitario.municipio_id == municipio_id).all()
         results: list[dict[str, Any]] = []
         for s in setores:
-            metrics = AnalyticalEngine._iri_for_unit(db, municipio_id, s.geom, muni_shape, water_rows)
+            metrics = AnalyticalEngine._iri_for_unit(
+                db,
+                municipio_id,
+                s.geom,
+                muni_shape,
+                water_rows,
+                flood_events=flood_events,
+                urban_cover=urban_cover,
+            )
             results.append({
                 "id": s.id,
                 "codigo_setor": s.codigo_setor,
@@ -261,56 +427,117 @@ class AnalyticalEngine:
 
     @staticmethod
     def calculate_climate_vulnerability_setores(db: Session, municipio_id: int) -> List[Dict[str, Any]]:
-        """IVC por setor censitário."""
+        """IVC por setor censitário — mesma lógica relativa do IVC por bairro."""
+        muni = db.query(Municipio).filter(Municipio.id == municipio_id).first()
+        if not muni:
+            return []
         setores = db.query(SetorCensitario).filter(SetorCensitario.municipio_id == municipio_id).all()
-        results: list[dict[str, Any]] = []
+        if not setores:
+            return []
+
+        muni_area = AnalyticalEngine._bairro_area_km2(db, muni.geom)
+        muni_pop = int(muni.populacao or 0) or 1
+        urban_cover = db.query(CoberturaVegetalMapBiomas).filter(
+            CoberturaVegetalMapBiomas.municipio_id == municipio_id,
+            CoberturaVegetalMapBiomas.classe_uso == "Área Urbana",
+        ).all()
+        forest_cover = db.query(CoberturaVegetalMapBiomas).filter(
+            CoberturaVegetalMapBiomas.municipio_id == municipio_id,
+            CoberturaVegetalMapBiomas.classe_uso == "Vegetação / Floresta",
+        ).all()
+
+        raw_rows: list[dict[str, Any]] = []
+        densities: list[float] = []
+        incomes: list[float] = []
+
         for s in setores:
-            area_deg = db.scalar(func.ST_Area(s.geom))
-            area_km2 = float(area_deg) * 12300.0 if area_deg else 0.01
-            pop = int(s.populacao or 0)
-            density = pop / area_km2 if area_km2 > 0 else 0
-            density_score = min(density / 15000.0, 1.0)
+            area_km2 = max(AnalyticalEngine._bairro_area_km2(db, s.geom), 0.01)
+            pop_raw = int(s.populacao or 0)
+            pop_est = int(round(muni_pop * (area_km2 / muni_area))) if muni_area > 0 else pop_raw
+            pop = pop_raw if pop_raw > 0 else pop_est
             avg_income = float(s.renda_media or 1500.0)
-            income_score = max(0.0, 1.0 - (avg_income / 7000.0))
-            sensibilidade = (density_score * 0.5) + (income_score * 0.5)
+            density = pop / area_km2 if area_km2 > 0 else 0.0
 
             disasters_count = db.query(HistoricoDesastreS2ID).filter(
-                func.ST_Intersects(s.geom, HistoricoDesastreS2ID.geom)
+                HistoricoDesastreS2ID.municipio_id == municipio_id,
+                func.ST_Intersects(s.geom, HistoricoDesastreS2ID.geom),
             ).count()
             active_alerts = db.query(AlertaCemaden).filter(
-                func.ST_Intersects(s.geom, AlertaCemaden.geom)
+                AlertaCemaden.municipio_id == municipio_id,
+                func.ST_Intersects(s.geom, AlertaCemaden.geom),
             ).all()
             alert_weight = 0.0
             for alt in active_alerts:
-                if alt.nivel_alerta == "MUITO_ALTO":
+                nivel = str(getattr(alt, "nivel_alerta", "") or "").upper()
+                if nivel in {"MUITO_ALTO", "VERMELHO"}:
                     alert_weight = max(alert_weight, 1.0)
-                elif alt.nivel_alerta == "ALTO":
+                elif nivel in {"ALTO", "LARANJA"}:
                     alert_weight = max(alert_weight, 0.8)
-                elif alt.nivel_alerta == "MEDIO":
+                elif nivel in {"MEDIO", "MÉDIO", "AMARELO"}:
                     alert_weight = max(alert_weight, 0.5)
-                elif alt.nivel_alerta == "BAIXO":
+                elif nivel in {"BAIXO", "VERDE"}:
                     alert_weight = max(alert_weight, 0.2)
-            disaster_score = min(disasters_count / 5.0, 1.0)
-            exposicao = (disaster_score * 0.4) + (alert_weight * 0.6)
 
-            forest_cover = db.query(CoberturaVegetalMapBiomas).filter(
-                CoberturaVegetalMapBiomas.municipio_id == municipio_id,
-                CoberturaVegetalMapBiomas.classe_uso == "Vegetação / Floresta",
-                func.ST_Intersects(s.geom, CoberturaVegetalMapBiomas.geom),
-            ).all()
-            veg_area_deg = AnalyticalEngine._covered_area_deg(db, s.geom, forest_cover)
-            veg_pct = float(veg_area_deg) / float(area_deg) if veg_area_deg and area_deg else 0.0
+            area_deg = db.scalar(func.ST_Area(s.geom)) or 0.0
+            urban_pct = (
+                float(AnalyticalEngine._covered_area_deg(db, s.geom, urban_cover)) / float(area_deg)
+                if area_deg else 0.5
+            )
+            veg_pct = (
+                float(AnalyticalEngine._covered_area_deg(db, s.geom, forest_cover)) / float(area_deg)
+                if area_deg else 0.0
+            )
             hospitals_count = db.query(InfraestruturaUrbana).filter(
                 InfraestruturaUrbana.tipo == "hospital",
                 func.ST_Intersects(s.geom, InfraestruturaUrbana.geom),
             ).count()
-            veg_score = min(veg_pct * 3.0, 1.0)
-            infra_score = min(hospitals_count / 2.0, 1.0)
-            capacidade_adaptacao = (veg_score * 0.6) + (infra_score * 0.4)
 
+            densities.append(float(density))
+            incomes.append(float(avg_income))
+            raw_rows.append({
+                "s": s,
+                "area_km2": area_km2,
+                "populacao": pop,
+                "pop_raw": pop_raw,
+                "pop_est_area": pop_est,
+                "renda_media": avg_income,
+                "density": density,
+                "disasters_count": int(disasters_count),
+                "alert_weight": alert_weight,
+                "urban_pct": urban_pct,
+                "veg_pct": veg_pct,
+                "hospitais_count": int(hospitals_count),
+            })
+
+        pop_sum = sum(int(r["pop_raw"] or 0) for r in raw_rows)
+        use_area_pop = pop_sum > muni_pop * 1.35
+        if use_area_pop:
+            densities = []
+            for r in raw_rows:
+                r["populacao"] = int(r["pop_est_area"])
+                r["density"] = r["populacao"] / r["area_km2"] if r["area_km2"] > 0 else 0.0
+                densities.append(float(r["density"]))
+
+        density_ranks = AnalyticalEngine._percentile_ranks(densities)
+        income_sensitivity = [1.0 - r for r in AnalyticalEngine._percentile_ranks(incomes)]
+
+        results: list[dict[str, Any]] = []
+        for idx, r in enumerate(raw_rows):
+            sensibilidade = (density_ranks[idx] * 0.55) + (income_sensitivity[idx] * 0.45)
+            disaster_score = min(r["disasters_count"] / 5.0, 1.0)
+            exposicao = (
+                disaster_score * 0.35
+                + float(r["alert_weight"]) * 0.25
+                + min(float(r["urban_pct"]), 1.0) * 0.40
+            )
+            capacidade_adaptacao = (
+                min(float(r["veg_pct"]) * 3.0, 1.0) * 0.6
+                + min(r["hospitais_count"] / 2.0, 1.0) * 0.4
+            )
             ivc = (exposicao + sensibilidade) / 2.0
             ivc = ivc * (1.0 - (capacidade_adaptacao * 0.3))
             ivc = round(max(0.0, min(1.0, ivc)), 2)
+            s = r["s"]
             results.append({
                 "id": s.id,
                 "codigo_setor": s.codigo_setor,
@@ -332,19 +559,89 @@ class AnalyticalEngine:
         results = []
         muni = db.query(Municipio).filter(Municipio.id == municipio_id).first()
         muni_shape = AnalyticalEngine._shape_from_db_geometry(db, muni.geom) if muni else None
+        if muni_shape is None:
+            return []
+
         water_rows = db.query(CoberturaVegetalMapBiomas).filter(
             CoberturaVegetalMapBiomas.municipio_id == municipio_id,
             CoberturaVegetalMapBiomas.classe_uso == "Corpo d'água",
         ).all()
+        flood_events = db.query(HistoricoDesastreS2ID).filter(
+            HistoricoDesastreS2ID.municipio_id == municipio_id,
+            HistoricoDesastreS2ID.tipo_desastre.in_(["Inundação", "Alagamento Urbano"]),
+        ).all()
+        urban_cover = db.query(CoberturaVegetalMapBiomas).filter(
+            CoberturaVegetalMapBiomas.municipio_id == municipio_id,
+            CoberturaVegetalMapBiomas.classe_uso == "Área Urbana",
+        ).all()
+
+        # Pré-processa geometrias uma vez (evita unary_union/parse por bairro).
+        flood_pts = []
+        for ev in flood_events:
+            try:
+                flood_pts.append(
+                    AnalyticalEngine._repair_shape(
+                        AnalyticalEngine._shape_from_db_geometry(db, ev.geom)
+                    )
+                )
+            except Exception:
+                continue
+        urban_merged = AnalyticalEngine._safe_unary_union(
+            [
+                AnalyticalEngine._shape_from_db_geometry(db, row.geom)
+                for row in urban_cover
+            ]
+        )
+        water_merged = AnalyticalEngine._safe_unary_union(
+            [
+                AnalyticalEngine._shape_from_db_geometry(db, row.geom)
+                for row in water_rows
+            ]
+        )
+
+        minx, miny, maxx, maxy = muni_shape.bounds
+        max_ref = max(((maxx - minx) ** 2 + (maxy - miny) ** 2) ** 0.5 * 0.4, 0.004)
 
         for b in bairros:
-            if muni_shape is None:
+            try:
+                unit = AnalyticalEngine._repair_shape(
+                    AnalyticalEngine._shape_from_db_geometry(db, b.geom)
+                )
+            except Exception:
                 continue
-            metrics = AnalyticalEngine._iri_for_unit(db, municipio_id, b.geom, muni_shape, water_rows)
+            if unit is None or unit.is_empty:
+                continue
+
+            flood_disasters = sum(1 for pt in flood_pts if pt is not None and unit.intersects(pt))
+            s2id_score = min(flood_disasters / 3.0, 1.0)
+
+            area = float(unit.area) or 1e-12
+            if urban_merged is not None and not urban_merged.is_empty:
+                try:
+                    urban_pct = min(1.0, float(unit.intersection(urban_merged).area) / area)
+                except Exception:
+                    urban_pct = 0.5
+            else:
+                urban_pct = 0.5
+            impermeabilizacao_score = urban_pct
+
+            if water_merged is None or water_merged.is_empty:
+                water_score = 0.25
+            elif unit.intersects(water_merged):
+                water_score = 1.0
+            else:
+                dist = unit.centroid.distance(water_merged)
+                water_score = round(max(0.2, min(1.0, 1.0 - dist / max_ref)), 2)
+
+            iri = (s2id_score * 0.4) + (impermeabilizacao_score * 0.4) + (water_score * 0.2)
+            iri = round(max(0.0, min(1.0, iri)), 2)
             results.append({
                 "id": b.id,
                 "bairro_nome": b.nome,
-                **metrics,
+                "s2id_historico_score": round(s2id_score, 2),
+                "impermeabilizacao_score": round(impermeabilizacao_score, 2),
+                "hidrografia_proximidade_score": water_score,
+                "indice_risco_inundacao": iri,
             })
 
         return results
@@ -595,9 +892,22 @@ class AnalyticalEngine:
         return affected_bairros, min(affected_pop, cap), exposures
 
     @staticmethod
-    def run_chuva_extrema_simulation(db: Session, muni_id: int, precipitacao_mm: float) -> Dict[str, Any]:
+    def run_chuva_extrema_simulation(
+        db: Session,
+        muni_id: int,
+        precipitacao_mm: float,
+        *,
+        impermeability_offset: float = 0.0,
+        nivel_mar_m: float = 0.0,
+        chuva_antecedente_mm: float = 0.0,
+        sea_level_meta: dict | None = None,
+        drain_removed_mm: float = 0.0,
+        rede_saturada: bool = False,
+        drenagem_meta: dict | None = None,
+        duracao_h: float = 1.0,
+    ) -> Dict[str, Any]:
         """
-        Simula chuva extrema com DEM SRTM, IRI por bairro, deslizamento por declividade
+        Simula chuva extrema com DEM SRTM, IRI por bairro, deslizamento por declividade×chuva
         e métricas recalculadas após união das manchas finais.
         """
         from app.services.hydro_simulator import enrich_rainfall_simulation
@@ -606,7 +916,19 @@ class AnalyticalEngine:
         bairros = db.query(Bairro).filter(Bairro.municipio_id == muni_id).all()
         muni_shape = shape(json.loads(db.scalar(muni.geom.ST_AsGeoJSON())))
 
-        terrain = enrich_rainfall_simulation(db, muni, precipitacao_mm)
+        terrain = enrich_rainfall_simulation(
+            db,
+            muni,
+            precipitacao_mm,
+            impermeability_offset=impermeability_offset,
+            nivel_mar_m=nivel_mar_m,
+            chuva_antecedente_mm=chuva_antecedente_mm,
+            sea_level_meta=sea_level_meta,
+            drain_removed_mm=drain_removed_mm,
+            rede_saturada=rede_saturada,
+            drenagem_meta=drenagem_meta,
+            duracao_h=duracao_h,
+        )
         flood_bands = terrain.get("flood_bands")
         intensity = 1.2 + (precipitacao_mm / 100.0)
 
@@ -666,12 +988,77 @@ class AnalyticalEngine:
                 "bairros_atingidos_count": len(bairro_exposures),
             }
 
+        # 17g.2e / 17g.2a — selo de confiança + validação contra histórico S2ID
+        try:
+            from app.services.simulation_confidence_service import enrich_simulation_confidence
+
+            sim_meta = enrich_simulation_confidence(
+                db,
+                muni,
+                sim_meta,
+                flood_geometry=fc,
+                affected_bairros=affected_bairros,
+            )
+        except Exception as exc:
+            import logging
+
+            logging.getLogger(__name__).warning("Selo/validação S2ID falhou: %s", exc)
+
+        # 17b.1 / 17b.5 — inundação × edifício + painel de exposição do cenário
+        try:
+            from app.services.building_exposure_service import enrich_simulation_building_exposure
+
+            sim_meta = enrich_simulation_building_exposure(
+                db,
+                muni,
+                sim_meta,
+                flood_geometry=fc,
+                affected_population=affected_pop,
+                precipitacao_mm=precipitacao_mm,
+            )
+        except Exception as exc:
+            import logging
+
+            logging.getLogger(__name__).warning("Exposição edifícios falhou: %s", exc)
+
+        affected_area_km2 = round(final_hazards.area * 12300.0, 2)
+
+        # Impactos operacionais: escoamento, mobilidade, âncora histórica
+        try:
+            from app.services.rainfall_event_anchors import (
+                estimate_operational_impacts,
+                match_anchor,
+            )
+
+            dmeta = drenagem_meta or {}
+            sim_meta["impacto_operacional"] = estimate_operational_impacts(
+                precip_mm=float(precipitacao_mm),
+                max_depth_m=float(sim_meta.get("max_depth_m") or 0.0),
+                affected_area_km2=float(affected_area_km2),
+                affected_population=int(affected_pop or 0),
+                landslide_zones=int(sim_meta.get("landslide_zones") or 0),
+                drainage_cap_mm_h=float(
+                    dmeta.get("capacidade_mm_h") or dmeta.get("capacidade") or 18.0
+                ),
+                drain_removed_mm=float(drain_removed_mm or dmeta.get("removido_mm") or 0.0),
+                drenagem_aplicada=bool(dmeta.get("aplicado", True)),
+                hydrograph_duration_h=float(sim_meta.get("hydrograph_duration_h") or 6.0),
+                duracao_h=float(duracao_h or 1.0),
+            )
+            anchor = match_anchor(muni.codigo_ibge, float(precipitacao_mm), duracao_h=float(duracao_h or 1.0))
+            if anchor:
+                sim_meta["ancora_historica"] = anchor
+        except Exception as exc:
+            import logging
+
+            logging.getLogger(__name__).warning("Impacto operacional / âncora falhou: %s", exc)
+
         return {
             "scenario_type": "ExtremeRainfall",
             "input_value": precipitacao_mm,
             "metric_impact": "População em áreas de alto risco de desastre",
             "impact_value": affected_pop,
-            "affected_area_km2": round(final_hazards.area * 12300.0, 2),
+            "affected_area_km2": affected_area_km2,
             "affected_population": affected_pop,
             "affected_bairros": affected_bairros,
             "geometry": fc,

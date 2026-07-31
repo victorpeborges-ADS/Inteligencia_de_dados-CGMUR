@@ -21,6 +21,23 @@ export const MUNICIPALITY_CENTERS: Record<string, [number, number]> = {
   '4106902': [-25.4284, -49.2733],
 };
 
+/** Normaliza saída da API de simulação para FeatureCollection plotável no mapa. */
+export function normalizeSimGeoJSON(payload: unknown): { type: 'FeatureCollection'; features: any[] } | null {
+  if (!payload || typeof payload !== 'object') return null;
+  const root = payload as Record<string, unknown>;
+  const geom = (root.geometry ?? root) as Record<string, unknown>;
+  if (geom?.type === 'FeatureCollection' && Array.isArray(geom.features) && geom.features.length > 0) {
+    return { type: 'FeatureCollection', features: geom.features as any[] };
+  }
+  if (geom?.type === 'Feature' && geom.geometry) {
+    return { type: 'FeatureCollection', features: [geom] };
+  }
+  if (Array.isArray(root.features) && root.features.length > 0) {
+    return { type: 'FeatureCollection', features: root.features as any[] };
+  }
+  return null;
+}
+
 export function getGeoJsonCenter(geojson: any): [number, number] | null {
   const coords: [number, number][] = [];
   const collect = (node: any) => {

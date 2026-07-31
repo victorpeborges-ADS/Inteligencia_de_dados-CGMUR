@@ -7,7 +7,11 @@ import {
   type DataCoverage,
   type DataCatalogNational,
   type FonteImpactAnalysis,
+  type InstitutionalGapsNational,
 } from '@/utils/api';
+import InstitutionalGapsPanel from '@/components/DataCatalog/InstitutionalGapsPanel';
+import GeoReDusReferenceCard from '@/components/DataCatalog/GeoReDusReferenceCard';
+import SingedLabPanel from '@/components/DataCatalog/SingedLabPanel';
 import {
   Database,
   Eye,
@@ -30,12 +34,14 @@ const STATUS_STYLE: Record<string, string> = {
   Estimado: 'bg-amber-500/15 text-amber-300 border-amber-700/40',
   'Em integracao': 'bg-sky-500/15 text-sky-300 border-sky-700/40',
   Ausente: 'bg-rose-500/15 text-rose-300 border-rose-700/40',
+  'Nao aplicavel': 'bg-zinc-700/30 text-zinc-400 border-zinc-600/40',
 };
 
 function StatusPill({ status }: { status: string }) {
+  const label = status === 'Nao aplicavel' ? 'N/A' : status;
   return (
     <span className={`rounded border px-1.5 py-0.5 text-[8px] font-bold uppercase ${STATUS_STYLE[status] || 'bg-zinc-800 text-zinc-400'}`}>
-      {status}
+      {label}
     </span>
   );
 }
@@ -63,6 +69,7 @@ type DataCatalogPanelProps = {
 export default function DataCatalogPanel({ codigoIbge, isGestorOrAdmin }: DataCatalogPanelProps) {
   const [coverage, setCoverage] = useState<DataCoverage | null>(null);
   const [national, setNational] = useState<DataCatalogNational | null>(null);
+  const [institutionalGaps, setInstitutionalGaps] = useState<InstitutionalGapsNational | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [modal, setModal] = useState<ModalState>(null);
@@ -80,12 +87,19 @@ export default function DataCatalogPanel({ codigoIbge, isGestorOrAdmin }: DataCa
       setCoverage(municipal);
       if (isGestorOrAdmin) {
         try {
-          setNational(await api.getNationalDataCatalog());
+          const [nat, gaps] = await Promise.all([
+            api.getNationalDataCatalog(),
+            api.getInstitutionalGapsNational(),
+          ]);
+          setNational(nat);
+          setInstitutionalGaps(gaps);
         } catch {
           setNational(null);
+          setInstitutionalGaps(null);
         }
       } else {
         setNational(null);
+        setInstitutionalGaps(null);
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Falha ao carregar catálogo');
@@ -173,6 +187,11 @@ export default function DataCatalogPanel({ codigoIbge, isGestorOrAdmin }: DataCa
     } finally {
       setModalLoading(false);
     }
+  };
+
+  const openImpactByFonteId = (fonteId: string) => {
+    const base = coverage?.bases.find((b) => b.id === fonteId);
+    if (base) openImpact(base);
   };
 
   if (loading && !coverage) {
@@ -267,6 +286,25 @@ export default function DataCatalogPanel({ codigoIbge, isGestorOrAdmin }: DataCa
         </div>
       )}
 
+      <GeoReDusReferenceCard codigoIbge={codigoIbge} municipioNome={coverage.municipio.nome} />
+
+      <SingedLabPanel
+        codigoIbge={codigoIbge}
+        municipioNome={coverage.municipio.nome}
+        uf={coverage.municipio.uf}
+        isGestorOrAdmin={isGestorOrAdmin}
+        singedlabBase={coverage.bases.find((b) => b.id === 'ibge_singedlab_rs')}
+        onImported={load}
+      />
+
+      <InstitutionalGapsPanel
+        bases={coverage.bases}
+        nacional={institutionalGaps}
+        isGestorOrAdmin={isGestorOrAdmin}
+        onAnalyzeGap={openImpactByFonteId}
+        onBatchComplete={load}
+      />
+
       {/* Source cards */}
       <div className="rounded-xl border border-zinc-800 bg-zinc-950/60 p-3">
         <p className="mb-3 text-xs text-zinc-400">{coverage.resumo}</p>
@@ -291,6 +329,15 @@ export default function DataCatalogPanel({ codigoIbge, isGestorOrAdmin }: DataCa
               )}
               {base.status === 'Ausente' && base.requisito && (
                 <p className="mt-1 text-[9px] text-rose-400/80">O que falta: {base.requisito}</p>
+              )}
+              {base.id === 'gemeo_digital_3d' && base.modelo_3d && (
+                <p className="mt-1 text-[9px] text-zinc-500">
+                  {base.modelo_3d.lod || 'LOD1'} · maturidade {base.modelo_3d.maturidade_3d_pct ?? 0}%
+                  {base.modelo_3d.fonte_altura_predominante
+                    ? ` · altura: ${base.modelo_3d.fonte_altura_predominante}`
+                    : ''}
+                  {base.modelo_3d.tileset_url || base.modelo_3d.cityjson_url ? ' · export pronto' : ''}
+                </p>
               )}
 
               <div className="mt-2 flex flex-wrap gap-1">

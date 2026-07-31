@@ -16,10 +16,10 @@ export const spacing = {
   16: 64,
 } as const;
 
-/** Larguras de layout recorrentes */
+/** Larguras de layout recorrentes — densidade um pouco mais compacta (20f.4) */
 export const layout = {
-  sidebarWidth: 450,
+  sidebarWidth: 440,
   layerPanelWidth: 256,
-  headerHeight: 88,
-  headerCompactHeight: 56,
+  headerHeight: 72,
+  headerCompactHeight: 52,
 } as const;

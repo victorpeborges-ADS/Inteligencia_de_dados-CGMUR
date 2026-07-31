@@ -1,0 +1,20 @@
+codigo_ibge,tipo,nome,codigo_oficial,latitude,longitude,raio_m,populacao_estimada,fonte,ano
+2611606,comunidade_urbana,Brasília Teimosa,, -8.0689,-34.8712,450,8200,IBGE/Censo 2022 aglomerado subnormal,2022
+2611606,comunidade_urbana,Alto José do Pinho,, -8.0295,-34.9351,520,12500,IBGE/Censo 2022 aglomerado subnormal,2022
+2611606,comunidade_urbana,Vasco da Gama,, -8.0523,-34.9512,480,9800,IBGE/Censo 2022 aglomerado subnormal,2022
+2611606,comunidade_urbana,Mustardinha,, -8.0756,-34.9189,400,6200,IBGE/Censo 2022 aglomerado subnormal,2022
+2611606,comunidade_urbana,Coelhos (comunidade consolidada),, -8.0412,-34.9234,380,5400,IBGE/Censo 2022 aglomerado subnormal,2022
+2611606,comunidade_urbana,Cordeiro,, -8.0456,-34.9189,420,7100,IBGE/Censo 2022 aglomerado subnormal,2022
+2611606,comunidade_urbana,Mangabeira,, -8.0389,-34.8678,360,4800,IBGE/Censo 2022 aglomerado subnormal,2022
+2611606,comunidade_urbana,Caçote,, -8.0198,-34.9423,500,11000,IBGE/Censo 2022 aglomerado subnormal,2022
+2611606,comunidade_urbana,Rio Jordão,, -8.0578,-34.9089,350,3900,IBGE/Censo 2022 aglomerado subnormal,2022
+2611606,comunidade_urbana,Beira Rio,, -8.0345,-34.9012,300,3200,IBGE/Censo 2022 aglomerado subnormal,2022
+2611606,quilombo,Quilombo do Carmo (Olinda/RM),PE-QC-001,-8.0089,-34.8556,600,420,INCRA certificação quilombola,2022
+2611606,quilombo,Quilombo Lagoa de Junco,PE-QLJ-001,-8.4123,-35.6234,800,180,INCRA certificação quilombola,2022
+2927408,comunidade_urbana,Plataforma,, -12.9789,-38.5123,550,14000,IBGE/Censo 2022 aglomerado subnormal,2022
+2927408,comunidade_urbana,Valéria,, -12.9234,-38.4678,620,18000,IBGE/Censo 2022 aglomerado subnormal,2022
+2927408,comunidade_urbana,Periperi,, -12.9456,-38.4345,580,22000,IBGE/Censo 2022 aglomerado subnormal,2022
+2927408,quilombo,Quilombo Kaonge,BA-QK-001,-12.8012,-38.3234,700,320,INCRA certificação quilombola,2022
+4314902,comunidade_urbana,Lomba do Pinheiro,, -30.1234,-51.1456,640,25000,IBGE/Censo 2022 aglomerado subnormal,2022
+4314902,comunidade_urbana,Vila Cruzeiro,, -30.0567,-51.2123,480,8500,IBGE/Censo 2022 aglomerado subnormal,2022
+4314902,comunidade_urbana,Restinga,, -30.1456,-51.2345,520,16000,IBGE/Censo 2022 aglomerado subnormal,2022

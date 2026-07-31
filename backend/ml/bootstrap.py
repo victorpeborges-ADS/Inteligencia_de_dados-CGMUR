@@ -63,15 +63,19 @@ def ensure_model_for(codigo_ibge: str, db: Session | None = None) -> bool:
 
 
 def ensure_flood_models(db: Session | None = None) -> dict[str, bool]:
-    """Garante os 5 modelos-alvo. Usado no boot da API."""
+    """Garante modelos ML no boot — só municípios de BOOT_PRIORITY (interseção com ML_TARGET)."""
+    from app.config import settings
+
     ensure_dirs()
+    priority = set(settings.BOOT_PRIORITY_IBGE_CODES)
+    targets = [c for c in ML_TARGET_IBGE_CODES if c in priority] or list(ML_TARGET_IBGE_CODES[:1])
     status: dict[str, bool] = {}
-    for codigo in ML_TARGET_IBGE_CODES:
+    for codigo in targets:
         try:
             status[codigo] = ensure_model_for(codigo, db)
         except Exception as exc:
             logger.error("Falha ao garantir modelo %s: %s", codigo, exc)
             status[codigo] = False
     ready = sum(status.values())
-    logger.info("Modelos ML alagamento: %d/%d prontos", ready, len(ML_TARGET_IBGE_CODES))
+    logger.info("Modelos ML alagamento (boot): %d/%d prontos (%s)", ready, len(targets), targets)
     return status

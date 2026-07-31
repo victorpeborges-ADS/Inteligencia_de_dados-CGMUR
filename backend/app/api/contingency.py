@@ -4,14 +4,19 @@ import asyncio
 import logging
 from typing import Any, Literal, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.db import get_db
 from app.models import ContingencyPlan, ContingencyPlanRevision, Municipio
-from app.services.cobrade_templates import default_acoes_por_nivel
+from app.services.cobrade_templates import (
+    cobrade_for_cenario,
+    default_acoes_por_nivel,
+    default_protocolo_campo,
+    default_recursos_from_support,
+)
 from app.services.contingency_planner import (
     generate_plan_from_simulation,
     plan_to_dict,
@@ -35,6 +40,9 @@ class ContingencyPlanCreate(BaseModel):
     pontos_apoio: list = Field(default_factory=list)
     contatos_defesa_civil: list = Field(default_factory=list)
     acoes_por_nivel: dict = Field(default_factory=dict)
+    recursos_operacionais: list = Field(default_factory=list)
+    protocolo_campo: dict = Field(default_factory=dict)
+    cobrade_codigo: Optional[str] = None
     status: str = "RASCUNHO"
 
 
@@ -46,6 +54,9 @@ class ContingencyPlanUpdate(BaseModel):
     pontos_apoio: Optional[list] = None
     contatos_defesa_civil: Optional[list] = None
     acoes_por_nivel: Optional[dict] = None
+    recursos_operacionais: Optional[list] = None
+    protocolo_campo: Optional[dict] = None
+    cobrade_codigo: Optional[str] = None
     status: Optional[str] = None
 
 
@@ -55,11 +66,27 @@ class GenerateFromSimulation(BaseModel):
     risk_geojson: dict
     buffer_m: float = 500
     simulacao_ref: Optional[dict] = None
+    nivel_alerta: Optional[str] = None
 
 
 @router.get("/templates/acoes")
 def get_action_templates(cenario_tipo: str = "INUNDACAO"):
-    return default_acoes_por_nivel(cenario_tipo.upper())
+    tipo = cenario_tipo.upper()
+    return {
+        "acoes_por_nivel": default_acoes_por_nivel(tipo),
+        "protocolo_campo": default_protocolo_campo(tipo),
+        "cobrade": cobrade_for_cenario(tipo),
+        "recursos_sugeridos": default_recursos_from_support([]),
+    }
+
+
+@router.get("/municipio/{codigo_ibge}/alerta-vivo")
+def get_alerta_vivo(codigo_ibge: str, request: Request, db: Session = Depends(get_db)):
+    """Nível de alerta CEMADEN/monitoramento para pré-preencher o plano."""
+    get_accessible_municipio(db, codigo_ibge, request=request)
+    from app.services.live_alert_level import live_alert_snapshot
+
+    return live_alert_snapshot(db, codigo_ibge, hours=24)
 
 
 @router.get("/municipio/{codigo_ibge}")
@@ -115,6 +142,7 @@ def list_revisions(plan_id: int, db: Session = Depends(get_db)):
 def create_plan(body: ContingencyPlanCreate, request: Request, db: Session = Depends(get_db)):
     muni = get_accessible_municipio(db, body.codigo_ibge, request=request)
     acoes = body.acoes_por_nivel or default_acoes_por_nivel(body.cenario_tipo)
+    cobrade = cobrade_for_cenario(body.cenario_tipo)
     plan = ContingencyPlan(
         municipio_id=muni.id,
         cenario_tipo=body.cenario_tipo,
@@ -125,6 +153,10 @@ def create_plan(body: ContingencyPlanCreate, request: Request, db: Session = Dep
         pontos_apoio=body.pontos_apoio,
         contatos_defesa_civil=body.contatos_defesa_civil,
         acoes_por_nivel=acoes,
+        recursos_operacionais=body.recursos_operacionais
+        or default_recursos_from_support(body.pontos_apoio),
+        protocolo_campo=body.protocolo_campo or default_protocolo_campo(body.cenario_tipo),
+        cobrade_codigo=body.cobrade_codigo or cobrade.get("codigo"),
         status=body.status,
     )
     db.add(plan)
@@ -146,6 +178,7 @@ def generate_from_simulation(body: GenerateFromSimulation, request: Request, db:
             body.risk_geojson,
             buffer_m=body.buffer_m,
             simulacao_ref=body.simulacao_ref,
+            nivel_alerta=body.nivel_alerta,
         )
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
@@ -168,7 +201,15 @@ def update_plan_endpoint(plan_id: int, body: ContingencyPlanUpdate, request: Req
 
 
 @router.post("/{plan_id}/activate")
-def activate_plan(plan_id: int, request: Request, db: Session = Depends(get_db)):
+def activate_plan(
+    plan_id: int,
+    request: Request,
+    db: Session = Depends(get_db),
+    confirm: bool = Query(False, description="Confirmação humana obrigatória (20a.3)"),
+):
+    from app.security.policy_gate import require_human_confirm
+
+    require_human_confirm(confirm, action="contingency.activate")
     plan = db.query(ContingencyPlan).filter(ContingencyPlan.id == plan_id).first()
     if not plan:
         raise HTTPException(404, "Plano não encontrado")
@@ -187,7 +228,7 @@ def activate_plan(plan_id: int, request: Request, db: Session = Depends(get_db))
         resource_type="contingency_plan",
         resource_id=plan.id,
         codigo_ibge=muni.codigo_ibge if muni else None,
-        metadata={"cenario_tipo": plan.cenario_tipo, "nivel_alerta": plan.nivel_alerta},
+        metadata={"cenario_tipo": plan.cenario_tipo, "nivel_alerta": plan.nivel_alerta, "confirm": True},
         request=request,
     )
     return plan_to_dict(plan, muni)

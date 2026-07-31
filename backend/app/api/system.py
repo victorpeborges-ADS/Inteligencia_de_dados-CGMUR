@@ -45,6 +45,9 @@ class SystemOverview(BaseModel):
     scheduler: dict
     audit: dict
     routing: dict
+    batch_coverage: dict
+    ctm: dict
+    homologation: dict
 
 
 @router.get("/overview", response_model=SystemOverview)
@@ -85,6 +88,36 @@ def system_overview(
     failed = sum(1 for s in sources if s.get("status") == "FALHA")
 
     from app.services.dem_processor import dem_status
+    from app.services.batch_export_service import batch_coverage_summary
+    from app.services.homologation_readiness_service import build_homologation_readiness
+    from app.services.institutional_gaps_service import build_ctm_operational_summary
+
+    batch_cov = batch_coverage_summary(db)
+    ctm_summary = build_ctm_operational_summary(db)
+    dem_meta = dem_status(limit=6)
+    boot_codes = settings.BOOT_PRIORITY_IBGE_CODES
+    from app.services.dem_processor import is_processed
+
+    dem_meta["boot_processed"] = sum(1 for code in boot_codes if is_processed(code))
+    dem_meta["boot_total"] = len(boot_codes)
+    tls_meta = _inspect_tls_cert(os.getenv("TLS_FULLCHAIN", "/etc/nginx/certs/fullchain.pem"))
+    routing_meta = _routing_overview()
+    from app.services.gotify_notifier import gotify_status
+    from app.services.postgis_backup import latest_backup_status
+
+    sched_meta = scheduler_status()
+    homologation = build_homologation_readiness(
+        db,
+        oidc_meta=oidc_meta,
+        tls_meta=tls_meta,
+        batch_coverage=batch_cov,
+        ctm_summary=ctm_summary,
+        dem_summary=dem_meta,
+        osrm_meta=routing_meta,
+        backup_meta=latest_backup_status(),
+        gotify_meta=gotify_status(),
+        scheduler_meta=sched_meta,
+    )
 
     return SystemOverview(
         timestamp=datetime.now(timezone.utc).isoformat(),
@@ -114,6 +147,7 @@ def system_overview(
             "carregados_db": loaded_count,
             "piloto_ibge": settings.PILOT_IBGE_CODE,
             "piloto_nome": settings.PILOT_NAME,
+            "boot_priority_ibge": settings.BOOT_PRIORITY_IBGE_CODES,
         },
         onboarding={
             "by_status": onboarding_by_status,
@@ -127,14 +161,17 @@ def system_overview(
             "sources": sources,
         },
         mapbiomas=mapbiomas_status(db),
-        dem=dem_status(limit=61),
-        tls=_inspect_tls_cert(os.getenv("TLS_FULLCHAIN", "/etc/nginx/certs/fullchain.pem")),
-        scheduler=scheduler_status(),
+        dem=dem_meta,
+        tls=tls_meta,
+        scheduler=sched_meta,
         audit={
             "total_eventos": audit_total,
             "top_acoes": [{"action": action, "count": count} for action, count in audit_recent],
         },
-        routing=_routing_overview(),
+        routing=routing_meta,
+        batch_coverage=batch_cov,
+        ctm=ctm_summary,
+        homologation=homologation,
     )
 
 
@@ -171,108 +208,138 @@ def get_background_job(
 
 @router.post("/jobs/onboarding-batch")
 def start_onboarding_batch_job(
-    limit: int = 61,
+    limit: int = 6,
     status: str = "pendente",
     force: bool = False,
     _admin: User = Depends(require_role(Role.ADMIN)),
 ):
     from app.services.background_jobs import get_job, run_onboarding_batch_job
 
-    job_id = run_onboarding_batch_job(limit=min(limit, 61), status_filter=status, force=force)
+    job_id = run_onboarding_batch_job(limit=min(limit, 6), status_filter=status, force=force)
     return {"job_id": job_id, "job": get_job(job_id)}
 
 
 @router.post("/jobs/mapbiomas-batch")
 def start_mapbiomas_batch_job(
-    limit: int = 61,
+    limit: int = 6,
     force: bool = False,
     _admin: User = Depends(require_role(Role.ADMIN)),
 ):
     from app.services.background_jobs import get_job, run_mapbiomas_batch_job
 
-    job_id = run_mapbiomas_batch_job(limit=min(limit, 61), force=force)
+    job_id = run_mapbiomas_batch_job(limit=min(limit, 6), force=force)
     return {"job_id": job_id, "job": get_job(job_id)}
 
 
 @router.post("/jobs/pipeline")
 def start_pipeline_job(
-    onboarding_limit: int = 61,
+    onboarding_limit: int = 6,
     _admin: User = Depends(require_role(Role.ADMIN)),
 ):
     from app.services.background_jobs import get_job, run_pipeline_job
 
-    job_id = run_pipeline_job(onboarding_limit=min(onboarding_limit, 61))
+    job_id = run_pipeline_job(onboarding_limit=min(onboarding_limit, 6))
     return {"job_id": job_id, "job": get_job(job_id)}
 
 
 @router.post("/jobs/diagnostics-batch")
 def start_diagnostics_batch_job(
-    limit: int = 61,
+    limit: int = 6,
+    codigos: str | None = None,
     _admin: User = Depends(require_role(Role.ADMIN)),
 ):
-    from app.services.background_jobs import get_job, run_diagnostics_batch_job
+    from app.services.background_jobs import find_active_job, get_job, run_diagnostics_batch_job
 
-    job_id = run_diagnostics_batch_job(limit=min(limit, 61))
-    return {"job_id": job_id, "job": get_job(job_id)}
+    existing = find_active_job("diagnostics_batch")
+    if existing:
+        return {"job_id": existing["id"], "job": existing, "reused": True}
+
+    codes = [c.strip().zfill(7)[:7] for c in codigos.split(",") if c.strip()] if codigos else None
+    job_id = run_diagnostics_batch_job(limit=min(limit, 6), codigos=codes)
+    return {"job_id": job_id, "job": get_job(job_id), "reused": False}
 
 
 @router.post("/jobs/reports-batch")
 def start_reports_batch_job(
-    limit: int = 61,
+    limit: int = 6,
     force: bool = False,
+    codigos: str | None = None,
     _admin: User = Depends(require_role(Role.ADMIN)),
 ):
-    from app.services.background_jobs import get_job, run_reports_batch_job
+    from app.services.background_jobs import find_active_job, get_job, run_reports_batch_job
 
-    job_id = run_reports_batch_job(limit=min(limit, 61), force=force)
-    return {"job_id": job_id, "job": get_job(job_id)}
+    existing = find_active_job("reports_batch")
+    if existing:
+        return {"job_id": existing["id"], "job": existing, "reused": True}
+
+    codes = [c.strip().zfill(7)[:7] for c in codigos.split(",") if c.strip()] if codigos else None
+    job_id = run_reports_batch_job(limit=min(limit, 6), force=force, codigos=codes)
+    return {"job_id": job_id, "job": get_job(job_id), "reused": False}
 
 
 @router.post("/jobs/fontes-externas-batch")
 def start_external_sources_batch_job(
-    limit: int = 61,
+    limit: int = 6,
     _admin: User = Depends(require_role(Role.ADMIN)),
 ):
     from app.services.background_jobs import get_job, run_external_sources_batch_job
 
-    job_id = run_external_sources_batch_job(limit=min(limit, 61))
+    job_id = run_external_sources_batch_job(limit=min(limit, 6))
     return {"job_id": job_id, "job": get_job(job_id)}
 
 
 @router.post("/jobs/bairros-batch")
 def start_bairros_batch_job(
-    limit: int = 61,
+    limit: int = 6,
     force: bool = False,
     _admin: User = Depends(require_role(Role.ADMIN)),
 ):
     from app.services.background_jobs import get_job, run_bairros_batch_job
 
-    job_id = run_bairros_batch_job(limit=min(limit, 61), force=force)
+    job_id = run_bairros_batch_job(limit=min(limit, 6), force=force)
     return {"job_id": job_id, "job": get_job(job_id)}
+
+
+@router.post("/jobs/ctm-batch")
+def start_ctm_batch_job(
+    force: bool = False,
+    codigos: str | None = None,
+    _admin: User = Depends(require_role(Role.ADMIN)),
+):
+    """Importa malhas CTM dos geoportais cadastrados (A.6 — escopo BAIXA/MÉDIA)."""
+    from app.services.background_jobs import find_active_job, get_job, run_ctm_batch_job
+
+    existing = find_active_job("ctm_batch")
+    if existing:
+        return {"job_id": existing["id"], "job": existing, "reused": True}
+
+    codes = [c.strip().zfill(7)[:7] for c in codigos.split(",") if c.strip()] if codigos else None
+    job_id = run_ctm_batch_job(force=force, codigos=codes)
+    return {"job_id": job_id, "job": get_job(job_id), "reused": False}
 
 
 @router.post("/jobs/dem-batch")
 def start_dem_batch_job(
-    limit: int = 61,
+    limit: int = 6,
     force: bool = False,
     _admin: User = Depends(require_role(Role.ADMIN)),
 ):
     from app.services.background_jobs import get_job, run_dem_batch_job
 
-    job_id = run_dem_batch_job(limit=min(limit, 61), force=force)
+    job_id = run_dem_batch_job(limit=min(limit, 6), force=force)
     return {"job_id": job_id, "job": get_job(job_id)}
 
 
 @router.post("/jobs/homologation-full")
 def start_homologation_full_job(
-    onboarding_limit: int = 61,
+    onboarding_limit: int = 6,
     force_dem: bool = False,
     _admin: User = Depends(require_role(Role.ADMIN)),
 ):
     from app.services.background_jobs import get_job, run_full_homologation_job
 
     job_id = run_full_homologation_job(
-        onboarding_limit=min(onboarding_limit, 61),
+        onboarding_limit=min(onboarding_limit, 6),
         force_dem=force_dem,
     )
     return {"job_id": job_id, "job": get_job(job_id)}

@@ -108,3 +108,45 @@ def _cleanup_old_backups(directory: Path, retention_days: int) -> int:
             path.unlink(missing_ok=True)
             removed += 1
     return removed
+
+
+def latest_backup_status(
+    *,
+    backup_dir: str | None = None,
+    max_age_hours: float | None = None,
+) -> dict[str, Any]:
+    """Inspeciona o dump PostGIS mais recente (sem executar pg_dump)."""
+    target_dir = Path(backup_dir or os.getenv("BACKUP_DIR", "/data/backups"))
+    max_age = max_age_hours if max_age_hours is not None else float(os.getenv("BACKUP_MAX_AGE_HOURS", "48"))
+    if not target_dir.exists():
+        return {
+            "available": False,
+            "status": "missing",
+            "detail": f"Diretório ausente: {target_dir}",
+            "age_hours": None,
+            "path": None,
+        }
+    files = sorted(
+        target_dir.glob("sinidu_postgis_*.sql.gz"),
+        key=lambda p: p.stat().st_mtime,
+        reverse=True,
+    )
+    if not files:
+        return {
+            "available": False,
+            "status": "missing",
+            "detail": "Nenhum dump sinidu_postgis_*.sql.gz",
+            "age_hours": None,
+            "path": None,
+        }
+    latest = files[0]
+    age_hours = (datetime.now(timezone.utc).timestamp() - latest.stat().st_mtime) / 3600
+    fresh = age_hours <= max_age
+    return {
+        "available": True,
+        "status": "ok" if fresh else "stale",
+        "detail": f"{latest.name} · {age_hours:.0f}h",
+        "age_hours": round(age_hours, 1),
+        "path": str(latest),
+        "max_age_hours": max_age,
+    }

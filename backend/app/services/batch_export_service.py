@@ -16,11 +16,11 @@ logger = logging.getLogger(__name__)
 def run_batch_diagnostics(
     db: Session,
     *,
-    limit: int = 61,
+    limit: int = 6,
     codigos: list[str] | None = None,
     ensure_dem: bool = True,
 ) -> dict[str, Any]:
-    targets = (codigos or TARGET_IBGE_CODES)[: min(limit, 61)]
+    targets = (codigos or TARGET_IBGE_CODES)[: min(limit, 6)]
     processed = 0
     skipped = 0
     dem_prepared = 0
@@ -61,11 +61,11 @@ def run_batch_diagnostics(
 def run_batch_reports(
     db: Session,
     *,
-    limit: int = 61,
+    limit: int = 6,
     force: bool = False,
     codigos: list[str] | None = None,
 ) -> dict[str, Any]:
-    targets = (codigos or TARGET_IBGE_CODES)[: min(limit, 61)]
+    targets = (codigos or TARGET_IBGE_CODES)[: min(limit, 6)]
     processed = 0
     skipped = 0
     blocked = 0
@@ -115,4 +115,58 @@ def run_batch_reports(
         "blocked_maturidade": blocked,
         "report_ids": report_ids,
         "errors": errors,
+    }
+
+
+def batch_coverage_summary(db: Session) -> dict[str, Any]:
+    """Resumo diagnósticos/PDFs para homologação (Passo 2 do roadmap)."""
+    from sqlalchemy import func, text
+
+    from app.models import DiagnosticoExecutivo, RelatorioMunicipal
+
+    total = db.query(func.count(Municipio.codigo_ibge)).scalar() or 0
+    with_diag = (
+        db.query(func.count(func.distinct(DiagnosticoExecutivo.codigo_ibge))).scalar() or 0
+    )
+    with_report = (
+        db.query(func.count(func.distinct(RelatorioMunicipal.codigo_ibge))).scalar() or 0
+    )
+    sem_report_rows = db.execute(
+        text(
+            """
+            SELECT m.codigo_ibge, m.nome, m.uf
+            FROM municipios m
+            LEFT JOIN (
+              SELECT DISTINCT codigo_ibge FROM relatorios_municipais
+            ) r ON r.codigo_ibge = m.codigo_ibge
+            WHERE r.codigo_ibge IS NULL
+            ORDER BY m.nome
+            """
+        )
+    ).fetchall()
+    sem_diag_rows = db.execute(
+        text(
+            """
+            SELECT m.codigo_ibge, m.nome, m.uf
+            FROM municipios m
+            LEFT JOIN (
+              SELECT DISTINCT codigo_ibge FROM diagnosticos_executivos
+            ) d ON d.codigo_ibge = m.codigo_ibge
+            WHERE d.codigo_ibge IS NULL
+            ORDER BY m.nome
+            """
+        )
+    ).fetchall()
+    return {
+        "municipios_total": int(total),
+        "com_diagnostico": int(with_diag),
+        "com_relatorio": int(with_report),
+        "sem_diagnostico": [
+            {"codigo_ibge": r[0], "nome": r[1], "uf": r[2]} for r in sem_diag_rows
+        ],
+        "sem_relatorio": [
+            {"codigo_ibge": r[0], "nome": r[1], "uf": r[2]} for r in sem_report_rows
+        ],
+        "relatorios_ok": len(sem_report_rows) == 0,
+        "diagnosticos_ok": len(sem_diag_rows) == 0,
     }

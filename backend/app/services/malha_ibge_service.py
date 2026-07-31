@@ -11,6 +11,7 @@ import httpx
 from sqlalchemy import func, text
 from sqlalchemy.orm import Session
 
+from app.data_connectors.censo_deficits_collector import enrich_setores_deficits
 from app.data_connectors.ibge_collector import _agregado_value
 from app.data_connectors.official_bairros_collector import import_official_ibge_mesh
 from app.models import Bairro, Municipio, MunicipioSeed, SetorCensitario
@@ -146,6 +147,7 @@ async def enriquecer_socioeconomico_censo(cod_ibge: str, db: Session) -> dict[st
             setor.fonte_renda = REAL_SOCIO_FONTE
 
     bairros_updated = _aggregate_bairro_socio(db, muni)
+    deficits_result = enrich_setores_deficits(db, muni)
     db.commit()
 
     return {
@@ -154,6 +156,7 @@ async def enriquecer_socioeconomico_censo(cod_ibge: str, db: Session) -> dict[st
         "domicilios_censo2022": int(dom or 0),
         "setores_atualizados": len(setores),
         "bairros_agregados": bairros_updated,
+        "deficits_censo": deficits_result,
         "fonte_socioeconomico": REAL_SOCIO_FONTE,
         "data_carga": datetime.now(timezone.utc).isoformat(),
     }

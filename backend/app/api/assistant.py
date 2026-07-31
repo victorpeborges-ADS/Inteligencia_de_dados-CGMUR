@@ -104,9 +104,19 @@ def assistant_chat(payload: ChatRequest, request: Request, db: Session = Depends
     rag_sources = [RagSource(**src) for src in result.get("rag_sources", [])]
     municipal_sources = [MunicipalDataSource(**src) for src in result.get("municipal_sources", [])]
 
+    from app.services.layer_crosswalk_service import recommend_layer_crosswalk
+
+    cross = recommend_layer_crosswalk(payload.message, cod_ibge=muni.codigo_ibge)
+    layers = result.get("recommended_layers") or cross.get("recommended_layers")
+    suggested = result.get("suggested_layer")
+    if not suggested and layers:
+        suggested = next((L for L in layers if L not in ("bairros", "municipio")), layers[0])
+
     return ChatResponse(
         response=result["response"],
-        suggested_layer=result.get("suggested_layer"),
+        suggested_layer=suggested,
+        recommended_layers=layers,
+        crosswalk_rationale=cross.get("rationale"),
         coordinates=coords,
         zoom=result.get("zoom", 13),
         source_url=result.get("source_url"),
@@ -117,6 +127,20 @@ def assistant_chat(payload: ChatRequest, request: Request, db: Session = Depends
         ai_provider=result.get("ai_provider"),
         ai_model=result.get("ai_model"),
     )
+
+
+@router.post("/municipal/{codigo_ibge}/prewarm")
+def prewarm_municipal_agent_context(
+    codigo_ibge: str,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    """Pré-aquece bundle de contexto do agente Sinidu (background)."""
+    muni = get_accessible_municipio(db, codigo_ibge, request=request)
+    from app.services.contextual_agent_prewarm import prewarm_agent_bundle
+
+    prewarm_agent_bundle(muni.codigo_ibge)
+    return {"codigo_ibge": muni.codigo_ibge, "status": "scheduled"}
 
 
 @router.post("/chat-contextual")
@@ -153,8 +177,20 @@ def assistant_chat_contextual(payload: ContextualChatRequest, request: Request, 
         ai_model=payload.ai_model,
         ai_api_key=payload.ai_api_key,
     )
+    from app.services.layer_crosswalk_service import recommend_layer_crosswalk
+
+    cross = result.get("crosswalk") or recommend_layer_crosswalk(
+        payload.message, cod_ibge=muni.codigo_ibge
+    )
+    layers = result.get("recommended_layers") or cross.get("recommended_layers")
+    suggested = None
+    if layers:
+        suggested = next((L for L in layers if L not in ("bairros", "municipio")), layers[0])
     return ChatResponse(
         response=result.get("response") or "",
+        suggested_layer=suggested,
+        recommended_layers=layers,
+        crosswalk_rationale=cross.get("rationale"),
         response_time_ms=result.get("response_time_ms"),
         ai_provider=result.get("ai_provider"),
         ai_model=result.get("ai_model"),

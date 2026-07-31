@@ -20,7 +20,7 @@ from ml.constants import ML_TARGET_IBGE_CODES
 from ml.paths import ensure_dirs
 from ml.precipitation import collect_precipitation
 from ml.terrain import extract_bairro_features
-from ml.features import build_labeled_dataset
+from ml.features import build_labeled_dataset, build_labeled_dataset_bairro
 from ml.train import train_all, train_municipality
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
@@ -32,6 +32,7 @@ def run_etl(db, codigo_ibge: str, force: bool = False) -> None:
     collect_precipitation(db, codigo_ibge, force=force)
     extract_bairro_features(db, codigo_ibge, force=force)
     build_labeled_dataset(db, codigo_ibge, force=force)
+    build_labeled_dataset_bairro(db, codigo_ibge, force=force)
 
 
 def main() -> int:

@@ -5,7 +5,14 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
-SourceKind = Literal["arcgis", "geojson_url"]
+SourceKind = Literal[
+    "arcgis",
+    "geojson_url",
+    "geojson_file",
+    "geoserver_wfs",
+    "ibge_setores_agreg",
+    "ibge_setores_individuais",
+]
 
 
 @dataclass(frozen=True)
@@ -18,6 +25,7 @@ class CtmSource:
     name_fields: tuple[str, ...]
     code_fields: tuple[str, ...] = ()
     where: str = "1=1"
+    cql_filter: str = ""
     prioridade: int = 1
     nota: str = ""
     nivel_alvo: str = "BAIXA"  # BAIXA | MEDIA
@@ -29,6 +37,13 @@ RS_STATE_BAIRROS_URL = (
     "https://iede.rs.gov.br/server/rest/services/SEPLAG/"
     "Malha_de_Bairros___Censo_Demogr%C3%A1fico_2022/MapServer/0/query"
 )
+BA_STATE_BAIRROS_URL = (
+    "https://maps.informs.conder.ba.gov.br/arcgis/rest/services/"
+    "BAHIA/BAIRRO_GEO/MapServer/0/query"
+)
+IBGE_BAIRROS_WFS_URL = "https://geoservicos.ibge.gov.br/geoserver/wfs"
+IBGE_BAIRROS_TYPE = "CGMAT:qg_2022_650_bairro_agreg"
+CAMPINAS_UTB_GEOJSON = "data/cache/ctm/3509502_campinas_utb.geojson"
 
 CTM_SOURCES: list[CtmSource] = [
     CtmSource(
@@ -45,8 +60,17 @@ CTM_SOURCES: list[CtmSource] = [
         where="1=1",
         nota="MUBDG — divisas de bairros (prefeitura); filtra nm_bai vazio no import",
     ),
-    # Campinas: camada vetorial de bairros (Hosted/Bairros) é linha, não polígono.
-    # UTB shapefile exige download manual do portal DIDT — pendente cadastro.
+    # Campinas: CATI/Bairros é linha; UTB poligonal via cache DIDT (exporta_shp id=91).
+    CtmSource(
+        codigo_ibge="3509502",
+        nome="Campinas",
+        uf="SP",
+        kind="geojson_file",
+        url=CAMPINAS_UTB_GEOJSON,
+        name_fields=("DENOMINACA", "UTB_SIGLA", "nome", "NM_BAIRRO"),
+        code_fields=("UTB_SIGLA", "cd_bairro"),
+        nota="DIDC/PD2018 — Unidades Territoriais Básicas (93 polígonos); dissolve por DENOMINACA",
+    ),
     CtmSource(
         codigo_ibge="5300108",
         nome="Brasília",
@@ -116,10 +140,7 @@ CTM_SOURCES: list[CtmSource] = [
         nome="Ilhéus",
         uf="BA",
         kind="arcgis",
-        url=(
-            "https://maps.informs.conder.ba.gov.br/arcgis/rest/services/"
-            "BAHIA/BAIRRO_GEO/MapServer/0/query"
-        ),
+        url=BA_STATE_BAIRROS_URL,
         name_fields=("NM_BAIRRO", "nm_bairro", "BAIRRO"),
         code_fields=("CD_BAIRRO",),
         where="CD_MUN='2913606'",
@@ -132,37 +153,220 @@ CTM_SOURCES: list[CtmSource] = [
         nome="Paulo Afonso",
         uf="BA",
         kind="arcgis",
-        url=(
-            "https://maps.informs.conder.ba.gov.br/arcgis/rest/services/"
-            "BAHIA/BAIRRO_GEO/MapServer/0/query"
-        ),
+        url=BA_STATE_BAIRROS_URL,
         name_fields=("NM_BAIRRO", "nm_bairro", "BAIRRO"),
         code_fields=("CD_BAIRRO",),
         where="CD_MUN='2924009'",
         nota="IDE Bahia/CONDER — serviço intermitente",
         prioridade=3,
     ),
+    CtmSource(
+        codigo_ibge="2800308",
+        nome="Aracaju",
+        uf="SE",
+        kind="geoserver_wfs",
+        url="https://fazenda.aracaju.se.gov.br/geoserver/wfs",
+        name_fields=("bairro", "nome", "NM_BAIRRO"),
+        where="Limites_Municipais:bairros_2023",
+        nota="GeoServer SEFAZ Aracaju — malha oficial de bairros (Lei 873/1982, revisão 2023)",
+        prioridade=2,
+    ),
+    CtmSource(
+        codigo_ibge="2602902",
+        nome="Cabo de Santo Agostinho",
+        uf="PE",
+        kind="geoserver_wfs",
+        url=IBGE_BAIRROS_WFS_URL,
+        name_fields=("nm_bairro", "NM_BAIRRO", "nome"),
+        code_fields=("cd_bairro",),
+        where=IBGE_BAIRROS_TYPE,
+        cql_filter="cd_mun='2602902'",
+        nota="IBGE CGM 2022 (bairro agregado) — 24 polígonos até geoportal municipal PE",
+        prioridade=4,
+    ),
+    CtmSource(
+        codigo_ibge="2806701",
+        nome="São Cristóvão",
+        uf="SE",
+        kind="geoserver_wfs",
+        url=IBGE_BAIRROS_WFS_URL,
+        name_fields=("nm_bairro", "NM_BAIRRO", "nome"),
+        code_fields=("cd_bairro",),
+        where=IBGE_BAIRROS_TYPE,
+        cql_filter="cd_mun='2806701'",
+        nota="IBGE CGM 2022 (bairro agregado) — 14 polígonos até REST municipal SE",
+        prioridade=4,
+    ),
+    # Fallback IBGE — agregação de setores censitários 2022 (prioridade 5, até CTM municipal).
+    CtmSource(
+        codigo_ibge="3143906",
+        nome="Mariana",
+        uf="MG",
+        kind="ibge_setores_agreg",
+        url="ibge://setores/2022",
+        name_fields=("NM_BAIRRO", "nm_bairro", "nome"),
+        code_fields=("CD_BAIRRO",),
+        nota="IBGE Censo 2022 — 7 bairros por agregação de setores (sem REST municipal)",
+        prioridade=5,
+    ),
+    CtmSource(
+        codigo_ibge="5208905",
+        nome="Goiás",
+        uf="GO",
+        kind="ibge_setores_agreg",
+        url="ibge://setores/2022",
+        name_fields=("NM_BAIRRO", "nm_bairro", "nome"),
+        code_fields=("CD_BAIRRO",),
+        nota="IBGE Censo 2022 — 6 bairros por agregação de setores",
+        prioridade=5,
+    ),
+    CtmSource(
+        codigo_ibge="5201108",
+        nome="Anápolis",
+        uf="GO",
+        kind="ibge_setores_agreg",
+        url="ibge://setores/2022",
+        name_fields=("NM_BAIRRO", "nm_bairro", "nome"),
+        code_fields=("CD_BAIRRO",),
+        nota="IBGE Censo 2022 — 5 bairros por agregação de setores",
+        prioridade=5,
+    ),
+    CtmSource(
+        codigo_ibge="3109006",
+        nome="Brumadinho",
+        uf="MG",
+        kind="ibge_setores_agreg",
+        url="ibge://setores/2022",
+        name_fields=("NM_BAIRRO", "nm_bairro", "nome"),
+        code_fields=("CD_BAIRRO",),
+        nota="IBGE Censo 2022 — 5 bairros por agregação de setores",
+        prioridade=5,
+    ),
+    CtmSource(
+        codigo_ibge="2407104",
+        nome="Macaíba",
+        uf="RN",
+        kind="ibge_setores_agreg",
+        url="ibge://setores/2022",
+        name_fields=("NM_BAIRRO", "nm_bairro", "nome"),
+        code_fields=("CD_BAIRRO",),
+        nota="IBGE Censo 2022 — 5 bairros por agregação de setores",
+        prioridade=5,
+    ),
+    CtmSource(
+        codigo_ibge="3303906",
+        nome="Petrópolis",
+        uf="RJ",
+        kind="ibge_setores_agreg",
+        url="ibge://setores/2022",
+        name_fields=("NM_BAIRRO", "nm_bairro", "nome"),
+        code_fields=("CD_BAIRRO",),
+        nota="IBGE Censo 2022 — 5 bairros por agregação de setores",
+        prioridade=5,
+    ),
+    CtmSource(
+        codigo_ibge="5218805",
+        nome="Rio Verde",
+        uf="GO",
+        kind="ibge_setores_agreg",
+        url="ibge://setores/2022",
+        name_fields=("NM_BAIRRO", "nm_bairro", "nome"),
+        code_fields=("CD_BAIRRO",),
+        nota="IBGE Censo 2022 — 4 bairros por agregação de setores",
+        prioridade=5,
+    ),
+    # Fallback setor a setor — quando agregação IBGE dá <4 bairros (sem REST municipal).
+    CtmSource(
+        codigo_ibge="4104907",
+        nome="Castro",
+        uf="PR",
+        kind="ibge_setores_individuais",
+        url="ibge://setores/2022",
+        name_fields=("NM_BAIRRO", "NM_DIST", "nome"),
+        code_fields=("CD_SETOR",),
+        nota="IBGE Censo 2022 — setores censitários como malha operacional (CTM municipal pendente)",
+        prioridade=6,
+    ),
+    CtmSource(
+        codigo_ibge="1721000",
+        nome="Palmas",
+        uf="TO",
+        kind="ibge_setores_individuais",
+        url="ibge://setores/2022",
+        name_fields=("NM_BAIRRO", "NM_DIST", "nome"),
+        code_fields=("CD_SETOR",),
+        nota="IBGE Censo 2022 — 733 setores (GeoPalmas/CTM oficial pendente)",
+        prioridade=6,
+    ),
+    CtmSource(
+        codigo_ibge="1702109",
+        nome="Araguaína",
+        uf="TO",
+        kind="ibge_setores_individuais",
+        url="ibge://setores/2022",
+        name_fields=("NM_BAIRRO", "NM_DIST", "nome"),
+        code_fields=("CD_SETOR",),
+        nota="IBGE Censo 2022 — setores censitários (SIGA municipal sem REST público)",
+        prioridade=6,
+    ),
+    CtmSource(
+        codigo_ibge="1400233",
+        nome="Caroebe",
+        uf="RR",
+        kind="ibge_setores_individuais",
+        url="ibge://setores/2022",
+        name_fields=("NM_BAIRRO", "NM_DIST", "nome"),
+        code_fields=("CD_SETOR",),
+        nota="IBGE Censo 2022 — setores censitários (município extenso, CTM pendente)",
+        prioridade=6,
+    ),
+    CtmSource(
+        codigo_ibge="3138203",
+        nome="Lavras",
+        uf="MG",
+        kind="ibge_setores_individuais",
+        url="ibge://setores/2022",
+        name_fields=("NM_BAIRRO", "NM_DIST", "nome"),
+        code_fields=("CD_SETOR",),
+        nota="IBGE Censo 2022 — setores censitários (geoportal municipal sem REST)",
+        prioridade=6,
+    ),
+    CtmSource(
+        codigo_ibge="1504208",
+        nome="Marabá",
+        uf="PA",
+        kind="ibge_setores_individuais",
+        url="ibge://setores/2022",
+        name_fields=("NM_BAIRRO", "NM_DIST", "nome"),
+        code_fields=("CD_SETOR",),
+        nota="IBGE Censo 2022 — setores censitários (SIG municipal em licitação)",
+        prioridade=6,
+    ),
+    CtmSource(
+        codigo_ibge="2111300",
+        nome="São Luís",
+        uf="MA",
+        kind="ibge_setores_individuais",
+        url="ibge://setores/2022",
+        name_fields=("NM_BAIRRO", "NM_DIST", "nome"),
+        code_fields=("CD_SETOR",),
+        nota="IBGE Censo 2022 — setores censitários (INCID/shapefile sob demanda)",
+        prioridade=6,
+    ),
 ]
 
-# Pesquisa de geoportais — municípios ainda sem REST público verificado (jun/2026).
+# Geoportais municipais ainda sem REST/shapefile automatizado (sondagem jul/2026).
 CTM_RESEARCH_NOTES: dict[str, str] = {
-    "3509502": "Campinas: CATI/Bairros é linha; UTB poligonal exige shapefile DIDT (exporta_shp id=91).",
-    "3143906": "Mariana: sem ArcGIS público; malha IBGE parcial (7 bairros).",
-    "5208905": "Goiás (GO): sem geoportal REST; 6 bairros IBGE + setores.",
-    "5201108": "Anápolis: Plano Diretor define 25 bairros (PDF); sem REST aberto.",
-    "3109006": "Brumadinho: sem REST municipal; 5 bairros IBGE.",
-    "2407104": "Macaíba: bairros no Plano Diretor (PDF); sem shapefile aberto.",
-    "3303906": "Petrópolis: portal cartográfico web; sem FeatureServer público.",
-    "5218805": "Rio Verde: sem REST verificado.",
-    "4104907": "Castro: sem REST verificado.",
-    "1721000": "Palmas: GeoPalmas/SEPLAN-TO (shapefile); sem ArcGIS REST estável.",
-    "1702109": "Araguaína: Topovision/SIGA (camada bairros visual); sem REST exportável.",
-    "1400233": "Caroebe: 1 bairro IBGE + 36 setores; limite municipal enorme (RR).",
-    "3138203": "Lavras: portal cidadão ArcGIS Experience; sem camada bairros REST.",
-    "1504208": "Marabá: SIG municipal em licitação (2024); sem geoportal aberto.",
-    "2111300": "São Luís: INCID/arquivodacidade — shapefile sob demanda (e-mail).",
-    "2602902": "Cabo: ArcGIS Experience Builder; shapefile comercial/OSM (~24 bairros).",
-    "2806701": "São Cristóvão: Geodados SaaS municipal; sem REST público.",
+    "1721000": (
+        "Palmas: GeoPalmas em reestruturação; SEPLAN-TO geoportal com SSL inválido; "
+        "IBGE CGM bairros agregados = 0 feições — manter setores individuais."
+    ),
+    "2111300": (
+        "São Luís: INCID só sob demanda (incid.slz@gmail.com); "
+        "IBGE CGM bairros agregados = 0 — manter setores individuais."
+    ),
+    "2913606": "Ilhéus/CONDER: maps.informs.conder.ba.gov.br offline na sondagem jul/2026.",
+    "2924009": "Paulo Afonso/CONDER: mesmo serviço BAIRRO_GEO intermitente.",
 }
 
 CTM_BY_CODE: dict[str, CtmSource] = {s.codigo_ibge: s for s in CTM_SOURCES}
@@ -194,3 +398,21 @@ CTM_TARGET_CODES: list[str] = [
     "4304606",  # Canoas
     "2806701",  # São Cristóvão
 ]
+
+
+def ctm_registry_stats() -> dict[str, int | dict[str, int]]:
+    """Contagens estáticas do registry (sem probe ao vivo)."""
+    alvo = set(CTM_TARGET_CODES)
+    cadastrados = [c for c in CTM_TARGET_CODES if c in CTM_BY_CODE]
+    por_kind: dict[str, int] = {}
+    for source in CTM_SOURCES:
+        if source.codigo_ibge in alvo:
+            por_kind[source.kind] = por_kind.get(source.kind, 0) + 1
+    return {
+        "total_alvo": len(CTM_TARGET_CODES),
+        "fontes_cadastradas": len(cadastrados),
+        "sem_fonte": len(CTM_TARGET_CODES) - len(cadastrados),
+        "fora_alvo_com_fonte": len([s for s in CTM_SOURCES if s.codigo_ibge not in alvo]),
+        "por_kind": por_kind,
+        "research_notes": len(CTM_RESEARCH_NOTES),
+    }

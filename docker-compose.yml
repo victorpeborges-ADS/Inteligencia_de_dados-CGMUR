@@ -55,13 +55,24 @@ services:
       - ML_DATA_DIR=/data/ml
       - DEM_DIR=/data/dem
       - LOCAL_DEM_DIR=/data/dem/local
+      - TILES3D_DIR=/data/3dtiles
+      - CITYMODEL_DIR=/data/citymodels
       - MAPBIOMAS_STATS_DIR=/data/mapbiomas
+      - INMET_BDMEP_DIR=/data/inmet_bdmep
+      - MERGE_CPTEC_DIR=/data/merge_cptec
+      - CEMADEN_PLUVIO_DIR=/data/cemaden_pluvio
+      - ANA_FLUVIO_DIR=/data/ana_hidroweb
+      # 20h.4 / 20h.5 — overrides oficiais (também cobertos pelo bind ./backend:/app)
+      - IDF_DIR=/app/data/idf
+      - OFFICIAL_FLOOD_DIR=/app/data/manchas_oficiais
       - REFINE_PILOT_DEM=true
+      - BOOT_PRIORITY_IBGE_CODES=2611606,2800308
+      - SEED_DEMO_MUNICIPALITIES=false
       - JOB_STORE_REDIS=true
       - OPENTOPOGRAPHY_API_KEY=${OPENTOPOGRAPHY_API_KEY:-}
       - OSRM_URL=http://osrm:5000
-      - OSRM_REGION=${OSRM_REGION:-nordeste}
-      - OSRM_COVERED_UFS=${OSRM_COVERED_UFS:-PE,AL,SE,PB,RN,CE,PI,MA}
+      - OSRM_REGION=${OSRM_REGION:-pe-se}
+      - OSRM_COVERED_UFS=${OSRM_COVERED_UFS:-PE,SE}
       - GOTIFY_URL=http://gotify:80
       - GOTIFY_TOKEN=
       - AI_CHAT_PROVIDER=${AI_CHAT_PROVIDER:-mistral}
@@ -72,6 +83,7 @@ services:
       - MISTRAL_EMBED_MODEL=${MISTRAL_EMBED_MODEL:-mistral-embed}
       - RAG_EMBEDDING_DIM=1024
       - AUTH_ENABLED=false
+      # Dev: secret default OK (boot avisa). Dev Tunnel / LAN pública → AUTH_ENABLED=true + secret >=32.
       - AUTH_JWT_SECRET=sinidu-dev-secret-trocar-em-producao
       - CORS_ORIGINS=http://localhost:3000
       - BACKUP_DIR=/data/backups
@@ -105,8 +117,16 @@ services:
       - reports_data:/data/reports
       - models_data:/data/models
       - ml_data:/data/ml
-      - dem_data:/data/dem
+      # Bind local: inclui LiDAR seed (data/dem/local/*.tif) — evita OpenTopo na 1ª simulação
+      - ./data/dem:/data/dem
+      - ./data/3dtiles:/data/3dtiles
+      - ./data/citymodels:/data/citymodels
       - ./mapbiomas:/data/mapbiomas
+      - ./scripts/s2id_nacional/downloads:/data/s2id_nacional/downloads
+      - ./scripts/inmet_bdmep/downloads:/data/inmet_bdmep
+      - ./scripts/merge_cptec/downloads:/data/merge_cptec
+      - ./scripts/cemaden_pluvio/downloads:/data/cemaden_pluvio
+      - ./scripts/ana_hidroweb/downloads:/data/ana_hidroweb
       - ibge_mesh_cache:/data/ibge
       - backups_data:/data/backups
     healthcheck:
@@ -131,11 +151,17 @@ services:
     ports:
       - "5000:5000"
     environment:
-      - OSRM_REGION=${OSRM_REGION:-nordeste}
+      - OSRM_REGION=${OSRM_REGION:-pe-se}
     volumes:
       - ./docker/osrm:/data
       - ./docker/osrm/docker-entrypoint.sh:/entrypoint.sh:ro
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- 'http://127.0.0.1:5000/route/v1/driving/-34.88,-8.05;-34.87,-8.06?overview=false' | grep -q Ok || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 45s
 
   gotify:
     image: gotify/server:latest
@@ -170,7 +196,6 @@ volumes:
   reports_data:
   models_data:
   ml_data:
-  dem_data:
   gotify_data:
   backups_data:
   ibge_mesh_cache:

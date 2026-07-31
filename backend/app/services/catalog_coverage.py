@@ -22,6 +22,12 @@ BASE_CATALOG = [
     {"id": "sirene", "nome": "SIRENE / MCTI", "grupo": "Emissoes", "camada": None},
     {"id": "inde", "nome": "INDE", "grupo": "Infraestrutura de dados espaciais", "camada": "municipio"},
     {"id": "brasil_mais", "nome": "Brasil MAIS", "grupo": "Monitoramento territorial", "camada": None},
+    {"id": "inep_censo_escolar", "nome": "INEP Censo Escolar", "grupo": "Educação", "camada": "educacao"},
+    {"id": "incra_quilombos", "nome": "INCRA Quilombos", "grupo": "Territórios especiais", "camada": "territorios_especiais"},
+    {"id": "funai_ti", "nome": "FUNAI Terras Indígenas", "grupo": "Territórios especiais", "camada": "territorios_especiais"},
+    {"id": "ibge_aglomerados", "nome": "IBGE Aglomerados Subnormais", "grupo": "Territórios especiais", "camada": "territorios_especiais"},
+    {"id": "ibge_singedlab_rs", "nome": "IBGE SINGED Lab (RS 2024)", "grupo": "Exposição oficial", "camada": "desastres"},
+    {"id": "gemeo_digital_3d", "nome": "Gêmeo digital 3D (LOD1)", "grupo": "Modelo urbano 3D", "camada": "edificacoes"},
 ]
 
 MUNICIPALITY_STATUS = {
@@ -127,6 +133,8 @@ def _snis_status(db: Session, codigo_ibge: str) -> str:
 
 
 def recommendation_for_status(status: str, nome: str):
+    if status == "Nao aplicavel":
+        return f"{nome} é produto pontual do RS — não se aplica a este município."
     if status == "Integrado":
         return f"Manter rotina de atualizacao para {nome}."
     if status == "Estimado":

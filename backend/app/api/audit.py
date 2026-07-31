@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from sqlalchemy.orm import Session
 
 from app.db import get_db
@@ -16,6 +16,8 @@ router = APIRouter()
 
 
 class AuditLogItem(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: int
     username: str
     role: str
@@ -26,9 +28,6 @@ class AuditLogItem(BaseModel):
     metadata: dict
     ip_address: str | None
     created_at: datetime
-
-    class Config:
-        from_attributes = True
 
 
 @router.get("", response_model=list[AuditLogItem])

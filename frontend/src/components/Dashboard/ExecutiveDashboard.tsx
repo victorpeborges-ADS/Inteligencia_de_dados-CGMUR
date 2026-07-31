@@ -5,11 +5,18 @@ import { api, DataCoverage, ExecutiveDiagnostic, ExecutiveDiagnosticHistoryItem,
 import { useAppStore } from '@/stores/useAppStore';
 import ActionPlanPanel from '@/components/Dashboard/ActionPlanPanel';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, LineChart, Line, CartesianGrid, Legend } from 'recharts';
-import { Users, Trees, ShieldAlert, DollarSign, Waves, FileDown, Loader2, Award, ListChecks } from 'lucide-react';
+import { Users, Trees, ShieldAlert, DollarSign, Waves, FileDown, Loader2, Award, ListChecks, Landmark } from 'lucide-react';
 import RotatingLoader, { PDF_DIAGNOSTIC_MESSAGES } from '@/components/UI/RotatingLoader';
 import TermTooltip from '@/components/UI/TermTooltip';
-import { KpiCard, PanelSection, SkeletonKpiGrid, SkeletonChart } from '@/design-system';
+import { Badge, KpiCard, PanelSection, SkeletonKpiGrid, SkeletonChart, qualityToBadgeTone } from '@/design-system';
 import ExecutiveNarrative from '@/components/Dashboard/ExecutiveNarrative';
+import RiskTrafficLightPanel from '@/components/Dashboard/RiskTrafficLightPanel';
+import {
+  UX_PROFILE_DASHBOARD_HIDDEN,
+  UX_PROFILE_HINTS,
+  UX_PROFILE_LABELS,
+  type UxProfile,
+} from '@/config/uxProfiles';
 import TerritorialRecommendations from '@/components/Dashboard/TerritorialRecommendations';
 
 const TIER_STYLE: Record<string, { bg: string; text: string; border: string }> = {
@@ -38,12 +45,15 @@ export default function ExecutiveDashboard({
   municipioLoaded,
   municipioEnsuring,
   municipioNome,
+  uxProfile = 'planejamento',
 }: {
   codigoIbge?: string;
   municipioLoaded?: boolean;
   municipioEnsuring?: boolean;
   municipioNome?: string;
+  uxProfile?: UxProfile;
 }) {
+  const hidden = new Set(UX_PROFILE_DASHBOARD_HIDDEN[uxProfile] || []);
   const [indicators, setIndicators] = useState<ExecutiveIndicators | null>(null);
   const [indices, setIndices] = useState<IndicesResponse | null>(null);
   const [coverage, setCoverage] = useState<DataCoverage | null>(null);
@@ -70,13 +80,20 @@ export default function ExecutiveDashboard({
   const [mounted, setMounted] = useState(false);
   const reportRequest = useAppStore((s) => s.reportRequest);
   const clearReportRequest = useAppStore((s) => s.clearReportRequest);
+  const mapSpatialReady = useAppStore((s) => s.mapSpatialReady);
 
   useEffect(() => {
     setMounted(true);
+  }, []);
+
+  useEffect(() => {
     const parseError = (err: unknown): string => {
       if (err instanceof Error) return err.message;
       return 'Erro desconhecido ao carregar dados';
     };
+
+    let cancelled = false;
+    let readyTimer: ReturnType<typeof setTimeout> | null = null;
 
     const loadDashboardData = async () => {
       setLoading(true);
@@ -110,12 +127,25 @@ export default function ExecutiveDashboard({
           ? 'Este município ainda não foi integrado ao banco. Abra a aba Municípios e execute o onboarding.'
           : null;
 
-      const results = await Promise.allSettled([
-        api.getExecutiveIndicators(codigoIbge),
-        api.getRiskIndices(codigoIbge),
-        api.getDataCoverage(codigoIbge),
-        api.getMunicipalMaturity(codigoIbge),
-      ]);
+      // Sequencial: evita saturar o worker único do uvicorn e bloquear a malha do mapa.
+      const settled: PromiseSettledResult<unknown>[] = [];
+      for (const task of [
+        () => api.getExecutiveIndicators(codigoIbge),
+        () => api.getRiskIndices(codigoIbge),
+        () => api.getDataCoverage(codigoIbge),
+        () => api.getMunicipalMaturity(codigoIbge),
+      ]) {
+        if (cancelled) return;
+        settled.push(await Promise.allSettled([task()]).then((r) => r[0]));
+      }
+      if (cancelled) return;
+
+      const results = settled as [
+        PromiseSettledResult<ExecutiveIndicators>,
+        PromiseSettledResult<IndicesResponse>,
+        PromiseSettledResult<DataCoverage>,
+        PromiseSettledResult<MunicipalMaturity>,
+      ];
 
       const labels = ['indicadores', 'índices IVC/IRI', 'cobertura de dados', 'maturidade'];
       const failures: string[] = [];
@@ -156,12 +186,29 @@ export default function ExecutiveDashboard({
         api.getOfficialUrbanClimate(codigoIbge),
         api.getIntegrationStatus(),
       ]).then((secondary) => {
+        if (cancelled) return;
         if (secondary[0].status === 'fulfilled') setOfficialClimate(secondary[0].value);
         if (secondary[1].status === 'fulfilled') setIntegrationStatus(secondary[1].value);
       });
     };
-    loadDashboardData();
-  }, [codigoIbge, municipioLoaded, municipioEnsuring]);
+
+    const start = () => {
+      if (cancelled) return;
+      void loadDashboardData();
+    };
+
+    // Espera a malha espacial (ou timeout longo) antes de competir pelo backend.
+    if (mapSpatialReady) {
+      start();
+    } else {
+      readyTimer = setTimeout(start, 8000);
+    }
+
+    return () => {
+      cancelled = true;
+      if (readyTimer) clearTimeout(readyTimer);
+    };
+  }, [codigoIbge, municipioLoaded, municipioEnsuring, mapSpatialReady]);
 
   useEffect(() => {
     if (!codigoIbge) {
@@ -170,23 +217,31 @@ export default function ExecutiveDashboard({
       setActionPlan(null);
       return;
     }
+    if (!mapSpatialReady) return;
+
+    let cancelled = false;
     api.getMunicipalReportHistory(codigoIbge)
-      .then(setReportHistory)
+      .then((v) => { if (!cancelled) setReportHistory(v); })
       .catch((err) => console.error('Erro ao carregar histórico de relatórios:', err));
     api.getExecutiveDiagnostic(codigoIbge)
       .then((record) => {
+        if (cancelled) return null;
         setDiagnostic(record);
         return api.getExecutiveDiagnosticHistory(codigoIbge);
       })
-      .then((history) => setDiagnosticHistory(history.items))
+      .then((history) => {
+        if (!cancelled && history) setDiagnosticHistory(history.items);
+      })
       .catch(() => {
+        if (cancelled) return;
         setDiagnostic(null);
         setDiagnosticHistory([]);
       });
     api.getActionPlan(codigoIbge)
-      .then(setActionPlan)
-      .catch(() => setActionPlan(null));
-  }, [codigoIbge]);
+      .then((v) => { if (!cancelled) setActionPlan(v); })
+      .catch(() => { if (!cancelled) setActionPlan(null); });
+    return () => { cancelled = true; };
+  }, [codigoIbge, mapSpatialReady]);
 
   const handleGenerateReport = async (force = false) => {
     if (!codigoIbge) {
@@ -345,10 +400,17 @@ export default function ExecutiveDashboard({
     });
   };
 
+  /** Moeda compacta com espaço não-quebrável (evita "bi" sozinho na linha). */
   const formatCompactCurrency = (value: number) => {
-    if (value >= 1_000_000_000) return `R$ ${(value / 1_000_000_000).toFixed(1)} bi`;
-    if (value >= 1_000_000) return `R$ ${(value / 1_000_000).toFixed(1)} mi`;
-    if (value >= 1_000) return `R$ ${(value / 1_000).toFixed(1)} mil`;
+    if (value >= 1_000_000_000) return `R$\u00A0${(value / 1_000_000_000).toFixed(1)}\u00A0bi`;
+    if (value >= 1_000_000) return `R$\u00A0${(value / 1_000_000).toFixed(1)}\u00A0mi`;
+    if (value >= 1_000) return `R$\u00A0${(value / 1_000).toFixed(1)}\u00A0mil`;
+    return formatCurrency(value);
+  };
+
+  /** PIB per capita: compacto acima de 10 mil para caber no card. */
+  const formatPerCapita = (value: number) => {
+    if (value >= 10_000) return `R$\u00A0${(value / 1_000).toFixed(1)}\u00A0mil`;
     return formatCurrency(value);
   };
 
@@ -371,15 +433,19 @@ export default function ExecutiveDashboard({
     );
   }
 
-  // Combine IVC and IRI per neighborhood for charts
-  const chartData = indices?.vulnerabilidade.map((v) => {
-    const flood = indices.inundacao.find((f) => f.bairro_nome === v.bairro_nome);
-    return {
-      name: v.bairro_nome,
-      Vulnerabilidade: v.indice_vulnerabilidade,
-      Inundaçao: flood ? flood.indice_risco_inundacao : 0
-    };
-  }) || [];
+  // Combine IVC and IRI — top 12 por IVC (mostra dispersão; antes o gráfico parecia flat)
+  const chartData = (() => {
+    const rows =
+      indices?.vulnerabilidade.map((v) => {
+        const flood = indices.inundacao.find((f) => f.bairro_nome === v.bairro_nome);
+        return {
+          name: v.bairro_nome,
+          Vulnerabilidade: v.indice_vulnerabilidade,
+          Inundaçao: flood ? flood.indice_risco_inundacao : 0,
+        };
+      }) || [];
+    return [...rows].sort((a, b) => b.Vulnerabilidade - a.Vulnerabilidade).slice(0, 12);
+  })();
 
   type DashboardCard = {
     title: string;
@@ -492,16 +558,30 @@ export default function ExecutiveDashboard({
       ano: item.ano,
       temp: item.temperatura_media ?? null,
       area: item.area_urbanizada_km2 ?? null,
+      pct: item.pct_area_municipal ?? null,
     })) || [];
   const estimatedClimateData = officialClimate?.estimated_timeline
     .map((item) => ({
       ano: item.ano,
       temp: item.temperatura_media,
       area: item.area_urbanizada_km2,
+      pct: item.pct_area_municipal ?? null,
     })) || [];
   const climateChartData = officialClimateData.length > 0 ? officialClimateData : estimatedClimateData;
   const hasMapBiomasSeries = officialClimateData.some((item) => item.area != null);
   const hasTemperatureSeries = climateChartData.some((item) => item.temp != null);
+  const urbanPctSeries = climateChartData.filter((item) => item.pct != null);
+  const urbanEvolutionNote =
+    urbanPctSeries.length >= 2
+      ? (() => {
+          const first = urbanPctSeries[0];
+          const last = urbanPctSeries[urbanPctSeries.length - 1];
+          const delta = (last.pct ?? 0) - (first.pct ?? 0);
+          return `Mancha urbana: ${first.pct}% (${first.ano}) → ${last.pct}% (${last.ano}) · ${delta >= 0 ? '+' : ''}${delta.toFixed(1)} p.p.`;
+        })()
+      : urbanPctSeries.length === 1
+        ? `Mancha urbana: ${urbanPctSeries[0].pct}% da área municipal (${urbanPctSeries[0].ano})`
+        : null;
   const isEstimatedClimateChart = !hasMapBiomasSeries && estimatedClimateData.length > 0;
   const tempLegendLabel = officialClimate?.temperatura_oficial
     ? 'Temp. média INMET (°C)'
@@ -522,10 +602,18 @@ export default function ExecutiveDashboard({
 
   const avgIvc = indices?.vulnerabilidade.length
     ? indices.vulnerabilidade.reduce((sum, row) => sum + row.indice_vulnerabilidade, 0) / indices.vulnerabilidade.length
-    : null;
+    : indicators?.media_ivc ?? null;
   const avgIri = indices?.inundacao.length
     ? indices.inundacao.reduce((sum, row) => sum + row.indice_risco_inundacao, 0) / indices.inundacao.length
-    : null;
+    : indicators?.media_iri ?? null;
+  const avgAdaptacao = indices?.vulnerabilidade.length
+    ? indices.vulnerabilidade.reduce((sum, row) => sum + row.capacidade_adaptacao, 0) / indices.vulnerabilidade.length
+    : indicators?.media_adaptacao ?? null;
+  const scoreSinidu =
+    indicators?.score_sinidu ??
+    (avgIvc != null && avgIri != null && avgAdaptacao != null
+      ? Math.round((avgIvc * 0.45 + avgIri * 0.35 + (1 - avgAdaptacao) * 0.2) * 100)
+      : null);
   const formatIndex = (value: number | null) =>
     value != null ? `${Math.round(value * 100)}` : '—';
   const alertasCard = cards.find((c) => c.title === 'Risco Territorial Ativo');
@@ -552,6 +640,12 @@ export default function ExecutiveDashboard({
         </div>
       )}
 
+      <p className="text-[10px] text-zinc-500">
+        Visão {UX_PROFILE_LABELS[uxProfile]} — {UX_PROFILE_HINTS[uxProfile]}
+      </p>
+
+      <RiskTrafficLightPanel codigoIbge={codigoIbge} />
+
       <ExecutiveNarrative
         municipioNome={municipioNome}
         uf={indicators?.uf}
@@ -564,6 +658,7 @@ export default function ExecutiveDashboard({
         avgIri={avgIri}
       />
 
+      {!hidden.has('recommendations') && (
       <TerritorialRecommendations
         indicators={indicators}
         indices={indices}
@@ -572,7 +667,9 @@ export default function ExecutiveDashboard({
         avgIvc={avgIvc}
         avgIri={avgIri}
       />
+      )}
 
+      {!hidden.has('kpis') && (
       <PanelSection
         title="Indicadores prioritários"
         tier="primary"
@@ -583,11 +680,11 @@ export default function ExecutiveDashboard({
             tier="primary"
             className="col-span-2"
             title="Score Sinidu+Clima"
-            value={indicators?.score_sinidu != null ? String(Math.round(indicators.score_sinidu)) : '—'}
+            value={scoreSinidu != null ? String(Math.round(scoreSinidu)) : '—'}
             description="Prioridade territorial composta (0–100) · maior score = maior atenção"
             icon={Award}
             iconClassName="text-indigo-300"
-            quality={indicators?.score_sinidu != null ? 'DERIVADO' : 'LACUNA'}
+            quality={scoreSinidu != null ? 'DERIVADO' : 'LACUNA'}
           />
           <KpiCard
             tier="primary"
@@ -631,6 +728,7 @@ export default function ExecutiveDashboard({
           )}
         </div>
       </PanelSection>
+      )}
 
       <div className="rounded-xl border border-indigo-500/20 bg-indigo-950/10 p-4 opacity-95">
         <div className="mb-3 flex items-start justify-between gap-3">
@@ -824,6 +922,7 @@ export default function ExecutiveDashboard({
         )}
       </div>
 
+      {!hidden.has('action_plan') && (
       <div className="rounded-xl border border-amber-500/30 bg-amber-950/15 p-4">
         <div className="mb-3 flex items-start justify-between gap-3">
           <div>
@@ -844,15 +943,17 @@ export default function ExecutiveDashboard({
         </div>
         {actionPlanError && <p className="mb-2 text-[10px] text-rose-300">{actionPlanError}</p>}
         {actionPlan ? (
-          <ActionPlanPanel plan={actionPlan} />
+          <ActionPlanPanel plan={actionPlan} onPlanChange={setActionPlan} />
         ) : (
           <p className="text-[10px] text-zinc-500">
             Nenhum plano salvo. Gere após o diagnóstico executivo ou manualmente.
           </p>
         )}
       </div>
+      )}
 
       {/* Indicadores complementares */}
+      {!hidden.has('complementary') && (
       <PanelSection title="Indicadores complementares" tier="secondary" description="Contexto demográfico, ambiental e histórico de desastres">
         <div className="grid grid-cols-2 gap-3">
           {secondaryCards.map((c) => {
@@ -911,8 +1012,9 @@ export default function ExecutiveDashboard({
           ) : null}
         </div>
       </PanelSection>
+      )}
 
-      {indicators && (
+      {!hidden.has('charts') && indicators && (
         <div className="rounded-xl border border-border bg-card/40 p-4">
           <div className="mb-3 flex items-center justify-between gap-2">
             <h4 className="text-xs font-extrabold uppercase tracking-wide text-zinc-200">Saúde Fiscal</h4>
@@ -991,12 +1093,170 @@ export default function ExecutiveDashboard({
         </div>
       )}
 
-      {indicators && indicators.pib_per_capita != null && (
-        <div className="rounded-xl border border-border bg-card/40 p-4">
-          <h4 className="mb-2 text-xs font-extrabold uppercase tracking-wide text-zinc-200">PIB Municipal</h4>
-          <p className="text-lg font-extrabold text-zinc-100">{formatCurrency(indicators.pib_per_capita)}</p>
-          <p className="text-[9px] text-emerald-300">{indicators.pib_qualidade === 'oficial' ? 'Oficial IBGE' : 'Estimado'}</p>
-        </div>
+      {!hidden.has('charts') && (indicators?.pib_per_capita != null || indicators?.pib_total_mil_reais != null || indicators?.idh != null || indicators?.atlas_uf_context) && (
+        <PanelSection
+          title="Contexto socioeconômico"
+          tier="secondary"
+          description="IBGE / Atlas DH (município) · Atlas Econômico IPEA (UF)"
+        >
+          {/* Painel lateral ~450px: lista compacta, sem grid de 3 colunas */}
+          <div className="min-w-0 divide-y divide-zinc-800/80 overflow-hidden rounded-xl border border-border bg-card/60">
+            {indicators?.pib_total_mil_reais != null && (
+              <div className="flex items-center gap-3 px-3 py-2.5">
+                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-zinc-800 bg-zinc-950/80 text-emerald-300">
+                  <DollarSign size={15} />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <span className="text-[9px] font-bold uppercase tracking-wider text-zinc-500">
+                      PIB municipal
+                    </span>
+                    {kpiQuality(indicators.pib_qualidade) && (
+                      <Badge tone={qualityToBadgeTone(kpiQuality(indicators.pib_qualidade))}>
+                        {kpiQuality(indicators.pib_qualidade)}
+                      </Badge>
+                    )}
+                  </div>
+                  <p className="text-[10px] leading-snug text-zinc-500">
+                    IBGE {indicators.pib_ano ?? 'série'} · preços de mercado
+                  </p>
+                </div>
+                <p className="shrink-0 text-right text-sm font-extrabold tabular-nums text-foreground">
+                  {formatCompactCurrency(indicators.pib_total_mil_reais * 1000)}
+                </p>
+              </div>
+            )}
+            {indicators?.pib_per_capita != null && (
+              <div className="flex items-center gap-3 px-3 py-2.5">
+                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-zinc-800 bg-zinc-950/80 text-emerald-400">
+                  <DollarSign size={15} />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <span className="text-[9px] font-bold uppercase tracking-wider text-zinc-500">
+                      PIB per capita
+                    </span>
+                    {kpiQuality(indicators.pib_qualidade) && (
+                      <Badge tone={qualityToBadgeTone(kpiQuality(indicators.pib_qualidade))}>
+                        {kpiQuality(indicators.pib_qualidade)}
+                      </Badge>
+                    )}
+                  </div>
+                  <p className="truncate text-[10px] leading-snug text-zinc-500" title={indicators.pib_fonte || undefined}>
+                    {indicators.pib_fonte || 'IBGE PIB Municipal'}
+                  </p>
+                </div>
+                <p className="shrink-0 text-right text-sm font-extrabold tabular-nums text-foreground">
+                  {formatPerCapita(indicators.pib_per_capita)}
+                </p>
+              </div>
+            )}
+            {indicators?.idh != null && (
+              <div className="flex items-center gap-3 px-3 py-2.5">
+                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-zinc-800 bg-zinc-950/80 text-sky-400">
+                  <Award size={15} />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <span className="text-[9px] font-bold uppercase tracking-wider text-zinc-500">
+                      IDH municipal
+                    </span>
+                    {kpiQuality(indicators.idh_qualidade) && (
+                      <Badge tone={qualityToBadgeTone(kpiQuality(indicators.idh_qualidade))}>
+                        {kpiQuality(indicators.idh_qualidade)}
+                      </Badge>
+                    )}
+                  </div>
+                  <p className="text-[10px] leading-snug text-zinc-500">
+                    {indicators.idh_fonte || 'Atlas DH'}
+                    {indicators.idh_ano ? ` · ${indicators.idh_ano}` : ''}
+                  </p>
+                </div>
+                <p className="shrink-0 text-right text-sm font-extrabold tabular-nums text-foreground">
+                  {indicators.idh.toFixed(3)}
+                </p>
+              </div>
+            )}
+          </div>
+
+          {indicators?.atlas_uf_context && (
+            <div className="mt-3 min-w-0 overflow-hidden rounded-xl border border-border bg-card/60 p-3">
+              <div className="flex items-center gap-2">
+                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-zinc-800 bg-zinc-950/80 text-violet-400">
+                  <Landmark size={15} />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <span className="text-[9px] font-bold uppercase tracking-wider text-zinc-500">
+                      Atlas Econômico · {indicators.atlas_uf_context.uf_sigla}
+                    </span>
+                    <Badge tone="neutral">REFERÊNCIA UF</Badge>
+                  </div>
+                  <p className="text-sm font-extrabold text-foreground">
+                    {indicators.atlas_uf_context.atividades_economicas} setores
+                  </p>
+                </div>
+              </div>
+              <p className="mt-2 text-[10px] leading-relaxed text-zinc-400">
+                {indicators.atlas_uf_context.descricao}
+              </p>
+
+              <ul className="mt-3 space-y-0 divide-y divide-zinc-800/80 overflow-hidden rounded-lg border border-zinc-800/80 bg-zinc-950/40">
+                {(indicators.atlas_uf_context.kpis || []).map((kpi) => (
+                  <li key={kpi.label} className="flex items-baseline justify-between gap-3 px-3 py-2">
+                    <span className="min-w-0 text-[10px] font-medium text-zinc-400" title={kpi.hint}>
+                      {kpi.label}
+                    </span>
+                    <span className="shrink-0 text-sm font-bold tabular-nums text-zinc-100">{kpi.valor}</span>
+                  </li>
+                ))}
+              </ul>
+
+              <p className="mt-2 text-[9px] leading-snug text-zinc-500">
+                Matrizes {indicators.atlas_uf_context.matrizes.join(' · ')} · NF-e{' '}
+                {indicators.atlas_uf_context.referencia_ano}
+              </p>
+              <a
+                href={indicators.atlas_uf_context.portal_url}
+                target="_blank"
+                rel="noreferrer"
+                className="mt-2 inline-flex w-full items-center justify-center gap-1.5 rounded-lg border border-violet-500/30 bg-violet-500/10 px-3 py-2 text-[11px] font-bold text-violet-200 hover:bg-violet-500/20"
+              >
+                Abrir Atlas Econômico IPEA
+                <span aria-hidden>↗</span>
+              </a>
+            </div>
+          )}
+          {indicators?.pib_serie && indicators.pib_serie.length >= 3 && (
+            <div className="mt-4 rounded-xl border border-zinc-800 bg-zinc-950/40 p-3">
+              <h5 className="mb-2 text-[10px] font-extrabold uppercase tracking-wide text-zinc-400">
+                Série histórica PIB municipal (mil R$)
+              </h5>
+              <div className="h-40">
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart
+                    data={indicators.pib_serie.map((p) => ({
+                      ano: String(p.ano),
+                      pib: p.valor_mil_reais / 1000,
+                    }))}
+                  >
+                    <CartesianGrid strokeDasharray="3 3" stroke="#27272a" />
+                    <XAxis dataKey="ano" tick={{ fill: '#71717a', fontSize: 9 }} />
+                    <YAxis tick={{ fill: '#71717a', fontSize: 9 }} width={42} />
+                    <Tooltip
+                      formatter={(value: number) => [`R$ ${value.toFixed(1)} bi`, 'PIB']}
+                      contentStyle={{ background: '#09090b', border: '1px solid #3f3f46', fontSize: 11 }}
+                    />
+                    <Line type="monotone" dataKey="pib" stroke="#34d399" strokeWidth={2} dot={false} />
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+              <p className="mt-1 text-[9px] text-zinc-500">
+                Fonte: IBGE SIDRA agregado 5938/37 · espelhado no Ipeadata (PIB_IBGE_5938_37)
+              </p>
+            </div>
+          )}
+        </PanelSection>
       )}
 
       {integrationStatus && (
@@ -1093,7 +1353,9 @@ export default function ExecutiveDashboard({
         <div className="bg-card/40 backdrop-blur-md border border-border p-4.5 rounded-xl flex flex-col">
           <div className="mb-3">
             <h4 className="font-extrabold text-zinc-200 text-xs uppercase tracking-wide">Vulnerabilidade por Bairro</h4>
-            <p className="text-[10px] text-zinc-400 mt-0.5">Comparação entre <TermTooltip term="IVC" /> e <TermTooltip term="IRI" /> (0 a 1.0)</p>
+            <p className="text-[10px] text-zinc-400 mt-0.5">
+              Top 12 bairros por <TermTooltip term="IVC" /> × <TermTooltip term="IRI" /> (0 a 1.0) — IVC relativo ao município
+            </p>
           </div>
           <div className="h-56 w-full text-[10px]">
             {chartData.length > 0 ? (
@@ -1133,6 +1395,9 @@ export default function ExecutiveDashboard({
                 : 'Série estimada exibida porque as fontes oficiais ainda não retornaram dados completos'}
               {climateYears.length > 0 ? ` · ${climateYears.length} anos (${climateYears[0]}–${climateYears[climateYears.length - 1]})` : ''}
             </p>
+            {urbanEvolutionNote && (
+              <p className="mt-1 text-[10px] font-semibold text-indigo-200/90">{urbanEvolutionNote}</p>
+            )}
           </div>
           {climateChartData.length > 0 ? (
             <div className="h-56 w-full text-[10px]">
@@ -1142,7 +1407,17 @@ export default function ExecutiveDashboard({
                   <XAxis dataKey="ano" stroke="#71717a" />
                   <YAxis yAxisId="left" stroke="#10b981" domain={tempDomain} />
                   <YAxis yAxisId="right" orientation="right" stroke="#6366f1" domain={areaDomain} />
-                  <Tooltip contentStyle={{ backgroundColor: '#18181b', border: '1px solid #27272a', borderRadius: '8px' }} />
+                  <Tooltip
+                    contentStyle={{ backgroundColor: '#18181b', border: '1px solid #27272a', borderRadius: '8px' }}
+                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                    formatter={(value: any, name: any, item: any) => {
+                      const pct = item?.payload?.pct;
+                      if (typeof name === 'string' && name.includes('urbanizada') && pct != null) {
+                        return [`${value} km² (${pct}% do município)`, name];
+                      }
+                      return [value, name];
+                    }}
+                  />
                   <Legend iconSize={8} />
                   {hasTemperatureSeries && (
                     <Line yAxisId="left" type="monotone" dataKey="temp" stroke="#10b981" strokeWidth={2} name={tempLegendLabel} dot={{ r: 3 }} connectNulls />

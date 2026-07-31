@@ -1,8 +1,10 @@
 """Simulação pluvial enriquecida com DEM SRTM: manchas por profundidade, curvas de nível e escoamento."""
 from __future__ import annotations
 
+import heapq
 import json
 import logging
+import os
 from pathlib import Path
 from typing import Any
 
@@ -29,7 +31,61 @@ from app.services.dem_processor import (
 # SRTM GL1 — resolução horizontal ~30 m; RMSE vertical típico ±16 m (NASA/USGS)
 SRTM_HORIZONTAL_M = 30.0
 SRTM_VERTICAL_RMSE_M = 16.0
-HYDRO_MODEL_VERSION = "2.3"
+HYDRO_MODEL_VERSION = "2.8"
+
+# 17g.1b — fatores do hidrograma triangular (subida → pico → recessão)
+HYDROGRAPH_FACTORS = (
+    0.08,
+    0.18,
+    0.32,
+    0.48,
+    0.68,
+    0.88,
+    1.0,
+    0.90,
+    0.72,
+    0.55,
+    0.38,
+    0.24,
+    0.12,
+)
+HYDROGRAPH_DURATION_H = 6.0
+HYDROGRAPH_DURATION_H_MAX = 120.0
+MAX_TIMELINE_POLYGONS_PER_BAND = 12
+# Duração de referência (h) para a calibração original do modelo (evento curto/intenso).
+# Mantém retrocompatibilidade: duracao_h == REFERENCE_DURATION_H → intensity_factor == 1.0.
+REFERENCE_DURATION_H = 1.0
+INTENSITY_FACTOR_MIN = 0.35
+INTENSITY_FACTOR_MAX = 1.0
+LANDSLIDE_INTENSITY_FACTOR_MIN = 0.55
+LANDSLIDE_INTENSITY_FACTOR_MAX = 1.25
+
+
+def _intensity_factor(duracao_h: float, *, floor: float = INTENSITY_FACTOR_MIN, ceil: float = INTENSITY_FACTOR_MAX) -> float:
+    """17g.3 — mesma lâmina (mm) espalhada em janela maior tem intensidade (mm/h) menor.
+
+    ``ratio`` é a intensidade relativa à referência de 1h (na qual o modelo foi calibrado
+    originalmente): ratio = REFERENCE_DURATION_H / duracao_h. Em duracao_h=1h, factor=1.0
+    (idêntico ao comportamento anterior à duração ajustável). Em janelas maiores (24h–7d),
+    o fator cai suavemente — mais tempo para infiltração/escoamento reduz o pico da mancha,
+    mesmo com o mesmo volume total (mm) precipitado.
+    """
+    dur = max(0.25, float(duracao_h or REFERENCE_DURATION_H))
+    ratio = REFERENCE_DURATION_H / dur
+    factor = ratio ** 0.3 if ratio > 0 else floor
+    return float(np.clip(factor, floor, ceil))
+
+
+def _hydrograph_duration_for(duracao_h: float) -> float:
+    """Janela de animação do hidrograma escala com a duração do evento de chuva."""
+    dur = max(0.25, float(duracao_h or REFERENCE_DURATION_H))
+    return float(np.clip(dur * 1.15, HYDROGRAPH_DURATION_H, HYDROGRAPH_DURATION_H_MAX))
+
+_FASE_NARRATIVA = {
+    "subida": "A mancha sobe — áreas mais baixas começam a alagar.",
+    "pico": "Pico da inundação estimada neste cenário.",
+    "recessao": "A água recua — mancha reduz (aproximação, sem routing 2D).",
+}
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +113,94 @@ D8_OFFSETS = (
     (1, -1),
     (1, 1),
 )
+
+
+def _fill_sinks(
+    elevation: np.ndarray,
+    mask: np.ndarray,
+) -> tuple[np.ndarray, dict[str, Any]]:
+    """17g.2d — Preenche depressões (Priority-Flood) para drenagem coerente no D8.
+
+    Células na borda da máscara funcionam como exutórios artificiais do recorte
+    municipal. Depressões interiores são elevadas até a cota de transbordamento.
+    """
+    rows, cols = elevation.shape
+    if not mask.any():
+        return elevation, {
+            "dem_hydro_conditioned": False,
+            "cells_filled": 0,
+            "fill_volume_cell_m": 0.0,
+            "method": "priority_flood",
+        }
+
+    mean_e = float(np.nanmean(elevation[mask]))
+    elev = np.where(mask, np.nan_to_num(elevation, nan=mean_e), np.nan)
+    filled = elev.copy()
+    visited = np.zeros((rows, cols), dtype=bool)
+    heap: list[tuple[float, int, int]] = []
+
+    rs, cs = np.where(mask)
+    for r, c in zip(rs.tolist(), cs.tolist()):
+        border = (
+            r == 0
+            or c == 0
+            or r == rows - 1
+            or c == cols - 1
+        )
+        if not border:
+            for dr, dc in D8_OFFSETS:
+                nr, nc = r + dr, c + dc
+                if not (0 <= nr < rows and 0 <= nc < cols) or not mask[nr, nc]:
+                    border = True
+                    break
+        if border:
+            h = float(elev[r, c])
+            visited[r, c] = True
+            filled[r, c] = h
+            heapq.heappush(heap, (h, r, c))
+
+    if not heap:
+        # máscara sem borda utilizável — não altera
+        return elevation, {
+            "dem_hydro_conditioned": False,
+            "cells_filled": 0,
+            "fill_volume_cell_m": 0.0,
+            "method": "priority_flood",
+            "nota": "Sem células de borda para exutório.",
+        }
+
+    while heap:
+        h, r, c = heapq.heappop(heap)
+        for dr, dc in D8_OFFSETS:
+            nr, nc = r + dr, c + dc
+            if not (0 <= nr < rows and 0 <= nc < cols):
+                continue
+            if not mask[nr, nc] or visited[nr, nc]:
+                continue
+            visited[nr, nc] = True
+            spill = max(float(elev[nr, nc]), h)
+            filled[nr, nc] = spill
+            heapq.heappush(heap, (spill, nr, nc))
+
+    # células da máscara não visitadas (ilhas) — mantém elevação original
+    unvisited = mask & ~visited
+    if unvisited.any():
+        filled = np.where(unvisited, elev, filled)
+
+    delta = np.maximum(0.0, filled - elev)
+    cells_filled = int(np.sum(mask & (delta > 1e-4)))
+    fill_volume = float(np.sum(delta[mask]))
+    out = np.where(mask, filled, elevation)
+    return out, {
+        "dem_hydro_conditioned": True,
+        "cells_filled": cells_filled,
+        "fill_volume_cell_m": round(fill_volume, 2),
+        "method": "priority_flood",
+        "nota": (
+            "Depressões preenchidas até a cota de transbordamento (borda do município = exutório). "
+            "Não substitui DEM hidrográfico oficial (MERIT-Hydro)."
+        ),
+    }
 
 
 def _compute_d8_accumulation(elevation: np.ndarray, mask: np.ndarray) -> np.ndarray:
@@ -100,6 +244,40 @@ def _normalize_masked(values: np.ndarray, mask: np.ndarray, percentile: float = 
     return np.clip(values / vmax, 0.0, 1.0)
 
 
+def _hydro_max_grid_dim() -> int:
+    try:
+        return max(128, int(os.getenv("HYDRO_MAX_GRID_DIM", "512")))
+    except ValueError:
+        return 512
+
+
+def _downsample_elevation_grid(
+    elev: np.ndarray,
+    west: float,
+    south: float,
+    res_x: float,
+    res_y: float,
+    max_dim: int | None = None,
+) -> tuple[np.ndarray, float, float, float, float]:
+    """Reduz grelha LiDAR/SRTM para o cálculo hidro (D8/manchas) sem perder o envelope."""
+    limit = max_dim if max_dim is not None else _hydro_max_grid_dim()
+    rows, cols = elev.shape
+    if max(rows, cols) <= limit:
+        return elev, west, south, res_x, res_y
+    factor = int(np.ceil(max(rows, cols) / limit))
+    new_rows = max(1, rows // factor)
+    new_cols = max(1, cols // factor)
+    trimmed = elev[: new_rows * factor, : new_cols * factor]
+    block = trimmed.reshape(new_rows, factor, new_cols, factor)
+    with np.errstate(all="ignore"):
+        down = np.nanmean(block, axis=(1, 3))
+    logger.info(
+        "DEM hidro downsample %sx%s → %sx%s (factor=%s)",
+        rows, cols, down.shape[0], down.shape[1], factor,
+    )
+    return down, west, south, res_x * factor, res_y * factor
+
+
 def _load_elevation_grid(
     db: Session,
     codigo_ibge: str,
@@ -107,6 +285,20 @@ def _load_elevation_grid(
 ) -> tuple[np.ndarray, float, float, float, float, dict[str, Any]] | None:
     meta = load_meta(codigo_ibge)
     tif = dem_dir(codigo_ibge) / "dem.tif"
+
+    # Preferir dem.tif já processado (evita re-clip do LiDAR a cada simulação fria)
+    if tif.exists():
+        try:
+            import rasterio
+
+            with rasterio.open(tif) as src:
+                elev = src.read(1).astype(np.float64)
+                west, south, east, north = src.bounds
+                res_x = (east - west) / src.width
+                res_y = (north - south) / src.height
+                return elev, west, south, res_x, res_y, meta or {}
+        except Exception as exc:
+            logger.warning("Falha ao ler DEM %s: %s", tif, exc)
 
     clip_bounds: tuple[float, float, float, float] | None = None
     try:
@@ -173,8 +365,11 @@ def _muni_raster_mask(
     res_x: float,
     res_y: float,
 ) -> np.ndarray:
-    import rasterio.features
-    from rasterio.transform import from_bounds
+    try:
+        import rasterio.features
+        from rasterio.transform import from_bounds
+    except ImportError as exc:
+        raise RuntimeError("rasterio_required") from exc
 
     rows, cols = elevation.shape
     north = south + rows * res_y
@@ -204,19 +399,25 @@ def _lon_grid(cols: int, west: float, res_x: float) -> np.ndarray:
 
 
 def _smooth_dem(elev: np.ndarray, mask: np.ndarray, passes: int = 2) -> np.ndarray:
-    """Suaviza ruído do SRTM preservando o relevo geral."""
+    """Suaviza ruído do SRTM preservando o relevo geral (convolução vetorizada)."""
     if not mask.any():
         return elev
     mean_elev = float(np.nanmean(elev[mask]))
     work = np.where(mask, np.nan_to_num(elev, nan=mean_elev), mean_elev)
-    kernel = np.array([[1, 2, 1], [2, 4, 2], [1, 2, 1]], dtype=np.float64) / 16.0
+    k = np.array([[1, 2, 1], [2, 4, 2], [1, 2, 1]], dtype=np.float64) / 16.0
     for _ in range(passes):
         padded = np.pad(work, 1, mode="edge")
-        smoothed = np.zeros_like(work)
-        for r in range(work.shape[0]):
-            for c in range(work.shape[1]):
-                smoothed[r, c] = float(np.sum(padded[r : r + 3, c : c + 3] * kernel))
-        work = smoothed
+        work = (
+            k[0, 0] * padded[:-2, :-2]
+            + k[0, 1] * padded[:-2, 1:-1]
+            + k[0, 2] * padded[:-2, 2:]
+            + k[1, 0] * padded[1:-1, :-2]
+            + k[1, 1] * padded[1:-1, 1:-1]
+            + k[1, 2] * padded[1:-1, 2:]
+            + k[2, 0] * padded[2:, :-2]
+            + k[2, 1] * padded[2:, 1:-1]
+            + k[2, 2] * padded[2:, 2:]
+        )
     return np.where(mask, work, np.nan)
 
 
@@ -550,14 +751,37 @@ def landslide_features_from_slope(
     res_y: float,
     db: Session,
     muni_id: int,
+    *,
+    chuva_antecedente_mm: float = 0.0,
+    duracao_h: float = REFERENCE_DURATION_H,
 ) -> list[dict[str, Any]]:
-    """Identifica zonas de deslizamento por declividade DEM (substitui lista hardcoded)."""
+    """Deslizamento por declividade × gatilho de chuva (evento + antecedente) — 17g.1e.
+
+    Chuva concentrada em poucas horas eleva a poropressão nas encostas muito mais rápido
+    que o mesmo volume distribuído ao longo de dias (padrão bem documentado em limiares
+    intensidade-duração de deslizamento, ex. Caine 1980) — por isso o gatilho aplica um
+    fator de intensidade sobre a chuva do evento (a antecedente já reflete a saturação
+    prévia do solo e não é reamplificada).
+    """
     lat_c = (muni_geom.bounds[1] + muni_geom.bounds[3]) / 2.0
     slope_deg = _compute_slope_degrees(elev := np.nan_to_num(elevation, nan=np.nanmean(elevation)), lat_c, res_x, res_y)
 
-    # Limiar diminui com precipitação extrema (solo saturado)
-    slope_threshold = max(12.0, SLOPE_CRITICAL_DEG - (precip_mm / 15.0))
-    landslide_mask = muni_mask & (slope_deg >= slope_threshold)
+    ant = max(0.0, float(chuva_antecedente_mm or 0.0))
+    intensity_amp = _intensity_factor(
+        duracao_h, floor=LANDSLIDE_INTENSITY_FACTOR_MIN, ceil=LANDSLIDE_INTENSITY_FACTOR_MAX,
+    )
+    # Chuva efetiva: evento (ponderado pela intensidade) + metade da antecedente (solo já saturado)
+    chuva_efetiva = float(precip_mm) * intensity_amp + 0.5 * ant
+    slope_threshold = max(10.0, SLOPE_CRITICAL_DEG - (chuva_efetiva / 12.0))
+    slope_norm = np.clip(slope_deg / 45.0, 0.0, 1.0)
+    rain_factor = float(np.clip(chuva_efetiva / 150.0, 0.0, 1.5))
+    risk_score = slope_norm * (0.35 + 0.65 * rain_factor)
+    # Proxy de fator de segurança (↓ com chuva e declividade)
+    fs = 1.40 / (1.0 + 0.011 * chuva_efetiva * np.clip(slope_deg / 28.0, 0.2, 2.5))
+
+    landslide_mask = muni_mask & (
+        (slope_deg >= slope_threshold) | ((risk_score >= 0.55) & (slope_deg >= 12.0))
+    )
     if not landslide_mask.any():
         return []
 
@@ -578,6 +802,10 @@ def landslide_features_from_slope(
     if merged.is_empty:
         return []
 
+    zone_slope = float(np.nanmean(slope_deg[landslide_mask])) if landslide_mask.any() else 0.0
+    zone_risk = float(np.nanmean(risk_score[landslide_mask])) if landslide_mask.any() else 0.0
+    zone_fs = float(np.nanmean(fs[landslide_mask])) if landslide_mask.any() else 1.0
+
     bairros = db.query(Bairro).filter(Bairro.municipio_id == muni_id).all()
     features: list[dict[str, Any]] = []
     for b in bairros:
@@ -585,7 +813,6 @@ def landslide_features_from_slope(
         zone = merged.intersection(b_geom)
         if zone.is_empty or zone.area < 1e-10:
             continue
-        pct_slope = float(np.nanmean(slope_deg[muni_mask & (slope_deg >= slope_threshold)]))
         features.append({
             "type": "Feature",
             "geometry": mapping(zone),
@@ -593,10 +820,17 @@ def landslide_features_from_slope(
                 "name": f"Risco de deslizamento — {b.nome}",
                 "layer_type": "landslide",
                 "precipitation_mm": precip_mm,
+                "chuva_antecedente_mm": round(ant, 1),
+                "chuva_efetiva_mm": round(chuva_efetiva, 1),
                 "slope_threshold_deg": round(slope_threshold, 1),
-                "mean_slope_deg": round(pct_slope, 1),
+                "mean_slope_deg": round(zone_slope, 1),
+                "risk_score": round(zone_risk, 3),
+                "factor_of_safety": round(zone_fs, 3),
+                "landslide_method": "slope_rainfall_trigger",
                 "description": (
-                    f"Encosta com declividade ≥ {slope_threshold:.0f}° sob precipitação de {precip_mm:.0f} mm."
+                    f"Encosta ≥ {slope_threshold:.0f}° com chuva efetiva {chuva_efetiva:.0f} mm "
+                    f"(evento {precip_mm:.0f} mm ×{intensity_amp:.2f} intensidade + antecedente {ant:.0f}); "
+                    f"FS≈{zone_fs:.2f}."
                 ),
             },
         })
@@ -609,7 +843,12 @@ def landslide_features_from_slope(
                 "name": "Risco de deslizamento — área crítica",
                 "layer_type": "landslide",
                 "precipitation_mm": precip_mm,
+                "chuva_antecedente_mm": round(ant, 1),
+                "chuva_efetiva_mm": round(chuva_efetiva, 1),
                 "slope_threshold_deg": round(slope_threshold, 1),
+                "risk_score": round(zone_risk, 3),
+                "factor_of_safety": round(zone_fs, 3),
+                "landslide_method": "slope_rainfall_trigger",
             },
         })
     return features
@@ -674,6 +913,12 @@ def flood_bands_geojson(
     impermeability_raster: np.ndarray | None = None,
     slope_deg: np.ndarray | None = None,
     accumulation: np.ndarray | None = None,
+    *,
+    nivel_mar_m: float = 0.0,
+    drain_removed_mm: float = 0.0,
+    rede_saturada: bool = False,
+    calib: dict[str, Any] | None = None,
+    duracao_h: float = REFERENCE_DURATION_H,
 ) -> tuple[dict[str, Any], np.ndarray]:
     """Estima manchas de alagamento por profundidade com DEM, acúmulo D8 e impermeabilização."""
     muni_mask = _muni_raster_mask(elevation, muni_geom, west, south, res_x, res_y)
@@ -691,78 +936,231 @@ def flood_bands_geojson(
         lat_c = (muni_geom.bounds[1] + muni_geom.bounds[3]) / 2.0
         slope_deg = _compute_slope_degrees(elev, lat_c, res_x, res_y)
 
-    runoff_coeff = 0.22 + 0.58 * np.clip(impermeability_raster, 0.0, 1.0)
+    # 17g.2b — escalas de calibração (default 1.0)
+    c = calib or {}
+    runoff_scale = float(c.get("runoff_scale") or 1.0)
+    rise_scale = float(c.get("rise_scale") or 1.0)
+    river_scale = float(c.get("river_boost_scale") or 1.0)
+    iri_scale = float(c.get("iri_scale") or 1.0)
+
+    runoff_coeff = (0.22 + 0.58 * np.clip(impermeability_raster, 0.0, 1.0)) * runoff_scale
+    runoff_coeff = np.clip(runoff_coeff, 0.05, 0.98)
     effective_rain_m = (precip_mm / 1000.0) * runoff_coeff
-    flood_rise_m = effective_rain_m * (5.5 + min(precip_mm / 120.0, 1.5))
+
+    # 17g.1d — sumidouro de microdrenagem (proxy SNIS): remove lâmina, mais em área urbana
+    drain_m = max(0.0, float(drain_removed_mm or 0.0)) / 1000.0
+    if drain_m > 0:
+        urban_w = 0.55 + 0.45 * np.clip(impermeability_raster, 0.0, 1.0)
+        effective_rain_m = np.maximum(0.0, effective_rain_m - drain_m * urban_w)
+
+    # 17g.3 — mesma lâmina (mm) em janela mais curta = intensidade (mm/h) maior = pico mais abrupto.
+    intensity_factor = _intensity_factor(duracao_h)
+    flood_rise_m = effective_rain_m * (5.5 + min(precip_mm / 120.0, 1.5)) * rise_scale * intensity_factor
 
     muni_elev = elev[muni_mask]
-    base_level = float(np.percentile(muni_elev, 10))
+    # 17g.1c — offset de nível do mar / storm surge eleva a cota base
+    slr = max(0.0, float(nivel_mar_m or 0.0))
+    base_level = float(np.percentile(muni_elev, 10)) + slr
     mean_rise = float(np.mean(flood_rise_m[muni_mask]))
     acc_norm = _normalize_masked(accumulation, muni_mask)
 
-    # Superfície d'água modulada por acúmulo D8 (vales e linhas de drenagem)
+    # Superfície d'água modulada por acúmulo D8 (vales e linhas de drenagem).
+    # Nota 17g.4: acúmulo (acc_norm) já eleva a superfície aqui — o TWI abaixo combina
+    # acúmulo × declividade num único índice hidrológico consolidado. Evitar reaplicar
+    # o mesmo sinal de acúmulo via um segundo multiplicador independente, que compunha
+    # com o TWI e concentrava quase toda a mancha na faixa crítica (>80 cm).
     water_surface = base_level + mean_rise * (1.0 + 0.75 * acc_norm)
     depth = np.maximum(0.0, water_surface - elev)
     depth = depth * (0.65 + 0.55 * effective_rain_m / max(float(np.mean(effective_rain_m[muni_mask])), 1e-6))
     depth = np.where(muni_mask, depth, 0.0)
 
-    depth *= 1.0 + 1.6 * np.log1p(acc_norm * 6.0) / np.log(7.0)
-    depth = np.where(muni_mask, depth, 0.0)
+    # Extravasamento por saturação da rede — reforça vales/acúmulo
+    if rede_saturada:
+        depth *= 1.0 + 0.18 * acc_norm
+        depth = np.where(muni_mask, depth, 0.0)
 
     slope_drain = np.clip(1.0 - slope_deg / 48.0, 0.22, 1.0)
     depth *= slope_drain
     depth = np.where(muni_mask, depth, 0.0)
 
-    # Índice de umidade topográfica (TWI) — reforça baixadas e planícies
+    # Índice de umidade topográfica (TWI) — único reforço de baixadas/planícies
+    # (combina acúmulo × declividade; substitui o antigo multiplicador redundante de acc_norm).
     twi = np.log1p(accumulation) - np.log1p(np.tan(np.radians(np.clip(slope_deg, 0.1, 60.0))))
     twi_norm = _normalize_masked(twi, muni_mask, percentile=96.0)
-    depth *= 1.0 + 0.65 * twi_norm
+    depth *= 0.7 + 0.6 * twi_norm
     depth = np.where(muni_mask, depth, 0.0)
 
     if iri_raster is not None:
-        depth = depth * (0.72 + 0.52 * np.clip(iri_raster, 0.0, 1.0))
+        # iri_scale desloca o peso do IRI em torno do neutro 1.0
+        iri_term = 0.72 + 0.52 * np.clip(iri_raster, 0.0, 1.0)
+        depth = depth * (1.0 + (iri_term - 1.0) * iri_scale)
         depth = np.where(muni_mask, depth, 0.0)
 
     depth = _river_depth_boost(
-        depth, muni_mask, river_shapes, west, south, res_x, res_y, precip_mm, float(np.mean(flood_rise_m[muni_mask]))
+        depth,
+        muni_mask,
+        river_shapes,
+        west,
+        south,
+        res_x,
+        res_y,
+        precip_mm,
+        float(np.mean(flood_rise_m[muni_mask])) * river_scale,
     )
     depth = np.where(depth >= 0.04, depth, 0.0)
     depth = np.where(muni_mask, depth, 0.0)
 
+    water_mean = round(float(np.mean(water_surface[muni_mask])), 2)
+    features = _flood_features_from_depth(
+        depth,
+        muni_geom,
+        muni_mask,
+        west,
+        south,
+        res_x,
+        res_y,
+        precip_mm=precip_mm,
+        water_level_m=water_mean,
+        max_polygons=MAX_FLOOD_POLYGONS_PER_BAND,
+    )
+    return {"type": "FeatureCollection", "features": features}, depth
+
+
+def _flood_features_from_depth(
+    depth: np.ndarray,
+    muni_geom,
+    muni_mask: np.ndarray,
+    west: float,
+    south: float,
+    res_x: float,
+    res_y: float,
+    *,
+    precip_mm: float,
+    water_level_m: float | None = None,
+    max_polygons: int = MAX_FLOOD_POLYGONS_PER_BAND,
+    extra_props: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
+    """Vectoriza raster de profundidade em manchas por faixa."""
     features: list[dict[str, Any]] = []
     for band_id, lo, hi, label in DEPTH_BANDS:
         shapes = _vectorize_band(depth, lo, hi, muni_mask, west, south, res_x, res_y)
         if not shapes:
             continue
-
         ranked = sorted(
             (s.intersection(muni_geom) for s in shapes if s.area >= MIN_FLOOD_POLYGON_AREA_DEG2),
             key=lambda g: g.area,
             reverse=True,
         )
-        for idx, poly in enumerate(ranked[:MAX_FLOOD_POLYGONS_PER_BAND]):
+        for idx, poly in enumerate(ranked[:max_polygons]):
             if poly.is_empty:
                 continue
             geom = poly
             if geom.geom_type == "MultiPolygon" and len(geom.geoms) == 1:
                 geom = geom.geoms[0]
+            props: dict[str, Any] = {
+                "layer_type": "flood_band",
+                "depth_band": band_id,
+                "patch_id": idx + 1,
+                "name": f"{label} — mancha {idx + 1}",
+                "precipitation_mm": precip_mm,
+                "water_level_m": water_level_m,
+                "depth_min_m": lo,
+                "depth_max_m": hi if hi < 900 else None,
+                "fill_color": FLOOD_COLORS[band_id],
+            }
+            if extra_props:
+                props.update(extra_props)
             features.append({
                 "type": "Feature",
                 "geometry": mapping(geom),
-                "properties": {
-                    "layer_type": "flood_band",
-                    "depth_band": band_id,
-                    "patch_id": idx + 1,
-                    "name": f"{label} — mancha {idx + 1}",
-                    "precipitation_mm": precip_mm,
-                    "water_level_m": round(float(np.mean(water_surface[muni_mask])), 2),
-                    "depth_min_m": lo,
-                    "depth_max_m": hi if hi < 900 else None,
-                    "fill_color": FLOOD_COLORS[band_id],
-                },
+                "properties": props,
             })
+    return features
 
-    return {"type": "FeatureCollection", "features": features}, depth
+
+def build_flood_timeline(
+    depth_peak: np.ndarray,
+    muni_geom,
+    muni_mask: np.ndarray,
+    west: float,
+    south: float,
+    res_x: float,
+    res_y: float,
+    *,
+    precip_mm: float,
+    duracao_h: float = REFERENCE_DURATION_H,
+) -> dict[str, Any]:
+    """17g.1b — Evolução da mancha por hidrograma triangular (escala do depth de pico).
+
+    Não é modelo hidrodinâmico unsteady — comunica subida/escoamento a partir
+    do mesmo run DEM, com fatores fixos ao longo da janela do hidrograma. A janela
+    escala com a duração do evento simulado (17g.3): chuva de 1h tem hidrograma curto
+    (~6h), enquanto eventos de vários dias mantêm a mancha por uma janela mais longa.
+    """
+    factors = list(HYDROGRAPH_FACTORS)
+    n = len(factors)
+    peak_index = int(factors.index(max(factors)))
+    hydrograph_duration_h = _hydrograph_duration_for(duracao_h)
+    dt = hydrograph_duration_h / max(n - 1, 1)
+    peak_max = float(np.max(depth_peak[muni_mask])) if muni_mask.any() else 0.0
+
+    steps: list[dict[str, Any]] = []
+    features_by_step: list[list[dict[str, Any]]] = []
+
+    for i, factor in enumerate(factors):
+        depth_t = np.where(muni_mask, depth_peak * float(factor), 0.0)
+        depth_t = np.where(depth_t >= 0.04, depth_t, 0.0)
+        feats = _flood_features_from_depth(
+            depth_t,
+            muni_geom,
+            muni_mask,
+            west,
+            south,
+            res_x,
+            res_y,
+            precip_mm=precip_mm,
+            water_level_m=None,
+            max_polygons=MAX_TIMELINE_POLYGONS_PER_BAND,
+            extra_props={
+                "t_index": i,
+                "t_h": round(i * dt, 2),
+                "hydro_factor": factor,
+            },
+        )
+        max_d = round(float(np.max(depth_t[muni_mask])), 2) if muni_mask.any() else 0.0
+        steps.append({
+            "t_index": i,
+            "t_h": round(i * dt, 2),
+            "factor": factor,
+            "max_depth_m": max_d,
+            "flood_patches": len(feats),
+            "fase": "subida" if i < peak_index else ("pico" if i == peak_index else "recessao"),
+            "narrativa": (
+                _FASE_NARRATIVA["subida"]
+                if i < peak_index
+                else (
+                    _FASE_NARRATIVA["pico"]
+                    if i == peak_index
+                    else _FASE_NARRATIVA["recessao"]
+                )
+            ),
+        })
+        features_by_step.append(feats)
+
+    return {
+        "n_steps": n,
+        "duration_h": round(hydrograph_duration_h, 1),
+        "peak_index": peak_index,
+        "peak_max_depth_m": round(peak_max, 2),
+        "method": "scaled_depth_hydrograph",
+        "nota": (
+            "Animação por escala do raster de profundidade de pico (hidrograma triangular). "
+            "Não simula escoamento 2D unsteady nem routing de galerias; "
+            "capacidade de rede entra como proxy SNIS/densidade (17g.1d)."
+        ),
+        "steps": steps,
+        "features_by_step": features_by_step,
+    }
 
 
 def load_flow_paths(codigo_ibge: str) -> dict[str, Any] | None:
@@ -779,10 +1177,19 @@ def enrich_rainfall_simulation(
     db: Session,
     muni: Municipio,
     precip_mm: float,
+    *,
+    impermeability_offset: float = 0.0,
+    nivel_mar_m: float = 0.0,
+    chuva_antecedente_mm: float = 0.0,
+    sea_level_meta: dict[str, Any] | None = None,
+    drain_removed_mm: float = 0.0,
+    rede_saturada: bool = False,
+    drenagem_meta: dict[str, Any] | None = None,
+    duracao_h: float = REFERENCE_DURATION_H,
 ) -> dict[str, Any]:
     """
     Retorna camadas auxiliares: manchas por profundidade (moduladas por IRI),
-    deslizamento por declividade DEM, curvas de nível, escoamento e metadados.
+    deslizamento por declividade×chuva, curvas de nível, escoamento e metadados.
     """
     risk_context = build_bairro_risk_context(db, muni.id)
     grid = _load_elevation_grid(db, muni.codigo_ibge, muni)
@@ -796,6 +1203,9 @@ def enrich_rainfall_simulation(
         }
 
     elev, west, south, res_x, res_y, meta = grid
+    elev, west, south, res_x, res_y = _downsample_elevation_grid(
+        elev, west, south, res_x, res_y,
+    )
     muni_geom = shape(json.loads(db.scalar(muni.geom.ST_AsGeoJSON())))
 
     rivers = db.query(CoberturaVegetalMapBiomas.geom).filter(
@@ -807,11 +1217,57 @@ def enrich_rainfall_simulation(
         for r in rivers
     ]
 
-    muni_mask = _muni_raster_mask(elev, muni_geom, west, south, res_x, res_y)
+    try:
+        muni_mask = _muni_raster_mask(elev, muni_geom, west, south, res_x, res_y)
+    except RuntimeError as exc:
+        if "rasterio_required" not in str(exc):
+            raise
+        return {
+            "flood_bands": None,
+            "contours": None,
+            "flow_paths": None,
+            "risk_context": risk_context,
+            "simulation_meta": {
+                "dem_available": False,
+                "method": "heuristic",
+                "iri_applied": False,
+                "motivo": "rasterio_indisponivel",
+            },
+        }
+    # 17g.2b — calibração por município
+    try:
+        from app.services.hydro_calibration_service import load_calibration
+
+        hydro_calib = load_calibration(muni.codigo_ibge, getattr(muni, "uf", None))
+    except Exception:
+        hydro_calib = {
+            "runoff_scale": 1.0,
+            "rise_scale": 1.0,
+            "river_boost_scale": 1.0,
+            "iri_scale": 1.0,
+            "source": "default",
+        }
+    # 17g.2d — hidro-condicionamento antes do D8; 21b.5 — DEM já condicionado na fonte
+    # (MERIT-Hydro/ANADEM) dispensa o Priority-Flood interno.
+    if meta.get("hydro_dem"):
+        fill_meta = {
+            "dem_hydro_conditioned": True,
+            "cells_filled": 0,
+            "fill_volume_cell_m": 0.0,
+            "method": str(meta.get("dem_source") or "hydro_dem_source"),
+            "nota": (
+                f"DEM {meta.get('dem_source', 'hidrográfico')} já hidrologicamente "
+                "condicionado na fonte — Priority-Flood interno dispensado."
+            ),
+        }
+    else:
+        elev, fill_meta = _fill_sinks(elev, muni_mask)
     iri_raster = _iri_raster_for_municipio(db, muni.id, muni_mask, west, south, res_x, res_y)
     impermeability = _impermeability_raster_for_municipio(
         db, muni.id, muni_mask, west, south, res_x, res_y,
     )
+    if impermeability_offset:
+        impermeability = np.clip(impermeability + float(impermeability_offset), 0.0, 1.0)
     lat_c = (muni_geom.bounds[1] + muni_geom.bounds[3]) / 2.0
     slope_deg = _compute_slope_degrees(elev, lat_c, res_x, res_y)
     accumulation = _compute_d8_accumulation(elev, muni_mask)
@@ -831,7 +1287,31 @@ def enrich_rainfall_simulation(
         impermeability_raster=impermeability,
         slope_deg=slope_deg,
         accumulation=accumulation,
+        nivel_mar_m=float(nivel_mar_m or 0.0),
+        drain_removed_mm=float(drain_removed_mm or 0.0),
+        rede_saturada=bool(rede_saturada),
+        calib=hydro_calib,
+        duracao_h=float(duracao_h or REFERENCE_DURATION_H),
     )
+    # 17g.1b — timeline (hidrograma) a partir do depth de pico
+    flood_timeline: dict[str, Any] | None = None
+    try:
+        if muni_mask.any() and float(np.max(depth_raster[muni_mask])) >= 0.04:
+            flood_timeline = build_flood_timeline(
+                depth_raster,
+                muni_geom,
+                muni_mask,
+                west,
+                south,
+                res_x,
+                res_y,
+                precip_mm=precip_mm,
+                duracao_h=float(duracao_h or REFERENCE_DURATION_H),
+            )
+    except Exception as exc:
+        logger.warning("Timeline de inundação falhou: %s", exc)
+        flood_timeline = None
+
     contours = contours_geojson(
         elev, west, south, res_x, res_y,
         muni_mask=muni_mask,
@@ -851,6 +1331,8 @@ def enrich_rainfall_simulation(
 
     landslide_features = landslide_features_from_slope(
         elev, muni_geom, muni_mask, precip_mm, west, south, res_x, res_y, db, muni.id,
+        chuva_antecedente_mm=float(chuva_antecedente_mm or 0.0),
+        duracao_h=float(duracao_h or REFERENCE_DURATION_H),
     )
     all_flood_features = list(flood_fc.get("features", []))
     for ls in landslide_features:
@@ -865,6 +1347,14 @@ def enrich_rainfall_simulation(
     )
     flood_features = [f for f in flood_fc.get("features", []) if f.get("properties", {}).get("layer_type") == "flood_band"]
 
+    dem_source = meta.get("dem_source", "SRTM 30m")
+    vertical_acc = meta.get("vertical_accuracy_m")
+    try:
+        vertical_acc_f = float(vertical_acc) if vertical_acc is not None else SRTM_VERTICAL_RMSE_M
+    except (TypeError, ValueError):
+        vertical_acc_f = SRTM_VERTICAL_RMSE_M
+    dem_res = contour_props.get("dem_resolution_m", round(resolution_m, 1))
+
     return {
         "flood_bands": {"type": "FeatureCollection", "features": all_flood_features},
         "contours": contours,
@@ -872,33 +1362,76 @@ def enrich_rainfall_simulation(
         "risk_context": risk_context,
         "simulation_meta": {
             "dem_available": True,
-            "dem_source": meta.get("dem_source", "SRTM 30m"),
+            "dem_source": dem_source,
             "method": "dem_pluvial_d8_twi",
             "model_version": HYDRO_MODEL_VERSION,
             "iri_applied": True,
             "impermeability_applied": True,
             "flow_accumulation_applied": True,
             "twi_applied": True,
+            "dem_hydro_conditioned": bool(fill_meta.get("dem_hydro_conditioned")),
+            "dem_fill_sinks": fill_meta,
+            "calibration": {
+                "runoff_scale": hydro_calib.get("runoff_scale"),
+                "rise_scale": hydro_calib.get("rise_scale"),
+                "river_boost_scale": hydro_calib.get("river_boost_scale"),
+                "iri_scale": hydro_calib.get("iri_scale"),
+                "source": hydro_calib.get("source"),
+                "version": hydro_calib.get("version"),
+                "hit_rate": hydro_calib.get("hit_rate"),
+                "nota": hydro_calib.get("nota"),
+            },
             "flood_patches": len(flood_features),
-            "landslide_method": "dem_slope",
+            "landslide_method": "slope_rainfall_trigger",
             "landslide_zones": len(landslide_features),
+            "chuva_antecedente_mm": round(float(chuva_antecedente_mm or 0.0), 1),
+            "nivel_mar_m": round(float(nivel_mar_m or 0.0), 3),
+            "nivel_mar": sea_level_meta,
+            "drenagem_urbana": drenagem_meta,
             "contour_interval_m": contour_props.get("interval_m", interval),
             "contour_count": contour_props.get("contour_count", len(contours.get("features", []))),
-            "dem_resolution_m": contour_props.get("dem_resolution_m", round(resolution_m, 1)),
-            "vertical_accuracy_m": SRTM_VERTICAL_RMSE_M,
+            "dem_resolution_m": dem_res,
+            "vertical_accuracy_m": vertical_acc_f,
             "altitude_min_m": stats.get("altitude_min_m"),
             "altitude_max_m": stats.get("altitude_max_m"),
             "altitude_media_m": stats.get("altitude_media_m"),
             "declividade_media_graus": stats.get("declividade_media_graus"),
             "pct_declividade_critica": round(crit_slope_pct, 2),
             "precipitation_mm": precip_mm,
+            "duracao_h": round(float(duracao_h or REFERENCE_DURATION_H), 2),
+            "intensidade_mm_h": round(float(precip_mm) / max(0.25, float(duracao_h or REFERENCE_DURATION_H)), 2),
+            "intensity_factor": round(_intensity_factor(duracao_h), 3),
+            "hydrograph_duration_h": (
+                flood_timeline.get("duration_h") if flood_timeline else round(_hydrograph_duration_for(duracao_h), 1)
+            ),
             "max_depth_m": round(float(np.max(depth_raster[muni_mask])), 2) if muni_mask.any() else 0,
             "mean_impermeability": round(float(np.mean(impermeability[muni_mask])), 3) if muni_mask.any() else None,
+            "impermeability_offset": float(impermeability_offset) if impermeability_offset else 0.0,
             "max_flow_accumulation": int(np.max(accumulation[muni_mask])) if muni_mask.any() else 0,
+            "flood_timeline": (
+                {k: v for k, v in flood_timeline.items() if k != "features_by_step"}
+                if flood_timeline
+                else None
+            ),
+            "flood_timeline_features": (
+                flood_timeline.get("features_by_step") if flood_timeline else None
+            ),
             "precision_note": (
-                f"DEM {meta.get('dem_source', 'SRTM 30m')} (~{round(resolution_m)} m); "
+                f"DEM {dem_source} (~{round(float(dem_res) if dem_res is not None else resolution_m)} m); "
                 f"isolinhas a cada {contour_props.get('interval_m', interval)} m; "
-                f"incerteza vertical ±{SRTM_VERTICAL_RMSE_M:.0f} m."
+                f"incerteza vertical ±{vertical_acc_f:.0f} m."
+                + (
+                    f" DEM hidro-corrigido ({fill_meta.get('cells_filled', 0)} células preenchidas)."
+                    if fill_meta.get("dem_hydro_conditioned")
+                    else ""
+                )
+                + (f" Nível do mar +{float(nivel_mar_m):.2f} m." if float(nivel_mar_m or 0) > 0 else "")
+                + (
+                    f" Drenagem proxy −{float((drenagem_meta or {}).get('removido_mm') or 0):.0f} mm"
+                    + (" (rede saturada)." if (drenagem_meta or {}).get("saturada") else ".")
+                    if (drenagem_meta or {}).get("aplicado")
+                    else ""
+                )
             ),
         },
     }

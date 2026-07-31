@@ -18,6 +18,7 @@ from app.schemas import (
 )
 from app.seed_demo_municipalities import RENDA_REFERENCIA_MENSAL
 from app.services.analytical_engine import AnalyticalEngine
+from app.services.heat_simulator import run_heat_island_simulation
 from app.data_connectors.mapbiomas_collector import vegetation_coverage_percent
 
 UF_REGION = {
@@ -244,7 +245,23 @@ class MitigationPlanner:
         if scenario_type == "Waterproofing":
             return AnalyticalEngine.run_impermeabilizacao_simulation(db, municipio.id, input_value)
         if scenario_type == "VegetationLoss":
-            return AnalyticalEngine.run_perda_vegetacao_simulation(db, municipio.id, input_value)
+            result = run_heat_island_simulation(
+                db,
+                municipio.id,
+                perda_vegetal_pct=input_value,
+                impermeabilizacao_extra_pct=0.0,
+            )
+            result["scenario_type"] = "VegetationLoss"
+            result["input_value"] = input_value
+            return result
+        if scenario_type == "HeatIsland":
+            return run_heat_island_simulation(
+                db,
+                municipio.id,
+                temperatura_pico_c=input_value,
+                perda_vegetal_pct=30.0,
+                impermeabilizacao_extra_pct=15.0,
+            )
         if scenario_type == "DrainageDeficit":
             return AnalyticalEngine.run_drenagem_simulation(db, municipio.id, input_value)
         raise ValueError(f"Unsupported scenario_type: {scenario_type}")
@@ -255,6 +272,7 @@ class MitigationPlanner:
             "ExtremeRainfall": "Chuva extrema",
             "Waterproofing": "Aumento de impermeabilização",
             "VegetationLoss": "Perda de cobertura vegetal",
+            "HeatIsland": "Ilha de calor urbana",
             "DrainageDeficit": "Déficit de drenagem",
         }.get(scenario_type, scenario_type)
 
@@ -264,6 +282,7 @@ class MitigationPlanner:
             "ExtremeRainfall": "mm",
             "Waterproofing": "% de área impermeável adicional",
             "VegetationLoss": "% de perda de cobertura verde",
+            "HeatIsland": "°C de pico previsto",
             "DrainageDeficit": "% de déficit operacional de drenagem",
         }.get(scenario_type, "")
 
@@ -275,6 +294,7 @@ class MitigationPlanner:
             "ExtremeRainfall": (80, 120, 180),
             "Waterproofing": (25, 50, 80),
             "VegetationLoss": (25, 50, 75),
+            "HeatIsland": (34, 38, 42),
             "DrainageDeficit": (30, 60, 85),
         }.get(scenario_type, (25, 50, 80))
         moderate, high, critical = value_threshold
@@ -314,7 +334,7 @@ class MitigationPlanner:
                 ))
             return actions
 
-        if scenario_type == "VegetationLoss":
+        if scenario_type in {"VegetationLoss", "HeatIsland"}:
             actions = [
                 MitigationAction(
                     horizonte="Resposta de adaptação",
@@ -389,7 +409,7 @@ class MitigationPlanner:
 
     @staticmethod
     def _own_municipal_evidence(db: Session, municipio: Municipio, scenario_type: str) -> List[MitigationEvidence]:
-        if scenario_type == "VegetationLoss":
+        if scenario_type in {"VegetationLoss", "HeatIsland"}:
             return []
         rows = db.query(HistoricoDesastreS2ID).filter(
             HistoricoDesastreS2ID.municipio_id == municipio.id,

@@ -142,6 +142,46 @@ def load_simulated_infrastructure(db: Session, muni_id: int):
         
     db.commit()
 
+
+def load_simulated_roads_only(db: Session, muni_id: int) -> int:
+    """Insere só vias arteriais do Recife (não apaga equipamentos)."""
+    roads = [
+        {
+            "nome": "Avenida Agamenon Magalhães", "sub": "via_arterial",
+            "coords": [[-34.8988, -8.0712], [-34.8943, -8.0575], [-34.8892, -8.0441], [-34.8837, -8.0264]]
+        },
+        {
+            "nome": "Avenida Norte Miguel Arraes de Alencar", "sub": "via_arterial",
+            "coords": [[-34.8781, -8.0504], [-34.8911, -8.0412], [-34.9056, -8.0305], [-34.9288, -8.0162]]
+        },
+        {
+            "nome": "Avenida Boa Viagem", "sub": "via_coletora",
+            "coords": [[-34.8814, -8.0831], [-34.8988, -8.1189], [-34.9022, -8.1362], [-34.9082, -8.1524]]
+        },
+        {
+            "nome": "Avenida Caxangá", "sub": "via_arterial",
+            "coords": [[-34.9099, -8.0628], [-34.9254, -8.0567], [-34.9452, -8.0487], [-34.9691, -8.0381]]
+        },
+        {
+            "nome": "Avenida Mascarenhas de Morais", "sub": "via_arterial",
+            "coords": [[-34.9082, -8.0934], [-34.9094, -8.1154], [-34.9142, -8.1381], [-34.9212, -8.1598]]
+        },
+    ]
+    n = 0
+    for r in roads:
+        ls = LineString(r["coords"])
+        db.add(
+            InfraestruturaUrbana(
+                municipio_id=muni_id,
+                tipo="via",
+                nome=r["nome"],
+                subgrupo=r["sub"],
+                geom=f"SRID=4326;{ls.wkt}",
+            )
+        )
+        n += 1
+    return n
+
 def run_osm_etl(db: Session, muni_id: int):
     logger.info("Starting OpenStreetMap ETL pipeline...")
     db.query(InfraestruturaUrbana).filter(InfraestruturaUrbana.municipio_id == muni_id).delete()

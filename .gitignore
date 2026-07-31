@@ -40,3 +40,32 @@ docker/osrm/*.osm.pbf
 docker/osrm/*.osm.pbf.partial
 *.osrm
 *.osrm.*
+
+# Assets pesados / capturas locais (não versionar)
+video sinudu/
+mapbiomas/
+data/dem/
+data/3dtiles/
+auditoria_municipios_*.csv
+backend/data/cache/
+
+# Apresentações geradas / embutidas (manter só *.source.html no git)
+docs/apresentacao-assets/
+docs/apresentacao-*-keynote.html
+docs/apresentacao-*-keynote-light.html
+!docs/apresentacao-*-keynote.source.html
+!docs/apresentacao-*-keynote-light.source.html
+docs/*.pdf
+docs/*.docx
+docs/panorama-sinidu-gestor.pdf
+
+# Modelos ML treinados (regeneráveis; meta.json pode versionar se útil)
+backend/ml/artifacts/*.pkl
+backend/ml/artifacts/_build/
+backend/ml/artifacts/_ml_data/
+
+# Relatório gerado pelos scripts Avaliar-SINIDU.*
+scripts/avaliacao_ultimo_relatorio.txt
+
+# CEMADEN snapshots — JSON bruto (CSV fica versionável)
+scripts/cemaden_pluvio/downloads/*_raw.json

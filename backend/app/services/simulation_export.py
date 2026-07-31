@@ -1,11 +1,13 @@
-"""Exportação de simulações territoriais — GeoJSON e PDF para oficina."""
+"""Exportação de simulações territoriais — GeoJSON, KMZ e PDF para oficina."""
 
 from __future__ import annotations
 
 import json
+import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from xml.sax.saxutils import escape as xml_escape
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
@@ -13,6 +15,36 @@ from app.config import settings
 from app.models import Municipio
 
 TEMPLATE_DIR = Path(__file__).resolve().parent.parent / "reports" / "templates"
+
+# Cores KML (aabbggrr) por tipo de camada / faixa
+_KML_COLORS = {
+    "simulation": "9900aaff",
+    "flood_band": "9900aaff",
+    "contour": "cc888888",
+    "flow_path": "ff00ffff",
+    "heat": "990000ff",
+    "bairro_afetado": "6600ffaa",
+    "ponto_contingencia": "ff00ffff",
+    "default": "9900ffff",
+}
+_DEPTH_COLORS = {
+    "superficial": "6600ff00",
+    "leve": "9900ffff",
+    "moderada": "9900aaff",
+    "severa": "990000ff",
+    "critica": "cc0000ff",
+    "alta": "990000ff",
+}
+
+_FOLDER_BY_LAYER = {
+    "simulation": "mancha",
+    "flood_band": "mancha",
+    "contour": "curvas_nivel",
+    "flow_path": "escoamento",
+    "bairro_afetado": "bairros_afetados",
+    "ponto_contingencia": "pontos_contingencia",
+    "heat": "calor",
+}
 
 
 def simulation_export_dir() -> Path:
@@ -36,6 +68,7 @@ def build_simulation_geojson(
     muni: Municipio,
     *,
     comparison: dict[str, Any] | None = None,
+    extra_features: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Empacota manchas, curvas, escoamento e metadados em um FeatureCollection."""
     features: list[dict[str, Any]] = []
@@ -64,7 +97,16 @@ def build_simulation_geojson(
     _append_fc(simulation.get("contours"), "contour")
     _append_fc(simulation.get("flow_paths"), "flow_path")
 
+    for feat in extra_features or []:
+        if isinstance(feat, dict) and feat.get("geometry"):
+            features.append(feat)
+
     meta = simulation.get("simulation_meta") or {}
+    folders = sorted({
+        str((f.get("properties") or {}).get("folder") or (f.get("properties") or {}).get("layer_type") or "outros")
+        for f in features
+        if isinstance(f, dict)
+    })
     return {
         "type": "FeatureCollection",
         "name": f"sinidu_simulacao_{muni.codigo_ibge}",
@@ -79,10 +121,120 @@ def build_simulation_geojson(
             "simulation_meta": meta,
             "comparison_delta": comparison,
             "feature_count": len(features),
+            "folders": folders,
+            "package": "20e2_kmz_completo",
             "crs_note": "EPSG:4326 — WGS84",
         },
         "features": features,
     }
+
+
+def collect_kmz_package_features(db: Any, muni: Municipio, simulation: dict[str, Any]) -> list[dict[str, Any]]:
+    """Bairros afetados + pontos de contingência (se houver) — 20e.2."""
+    from app.models import Bairro, ContingencyPlan
+
+    features: list[dict[str, Any]] = []
+    names: list[str] = []
+    raw_bairros = simulation.get("affected_bairros") or []
+    if isinstance(raw_bairros, list):
+        for item in raw_bairros:
+            if isinstance(item, str) and item.strip():
+                names.append(item.strip())
+            elif isinstance(item, dict):
+                n = item.get("nome") or item.get("bairro") or item.get("name")
+                if n:
+                    names.append(str(n).strip())
+    meta = simulation.get("simulation_meta") if isinstance(simulation.get("simulation_meta"), dict) else {}
+    for key in ("bairros_afetados", "affected_neighborhoods"):
+        extra = meta.get(key)
+        if isinstance(extra, list):
+            for item in extra:
+                if isinstance(item, str) and item.strip():
+                    names.append(item.strip())
+                elif isinstance(item, dict) and (item.get("nome") or item.get("bairro")):
+                    names.append(str(item.get("nome") or item.get("bairro")).strip())
+
+    # dedupe preserving order
+    seen: set[str] = set()
+    uniq = []
+    for n in names:
+        key = n.casefold()
+        if key not in seen:
+            seen.add(key)
+            uniq.append(n)
+
+    if uniq and getattr(muni, "id", None) is not None:
+        bairros = (
+            db.query(Bairro)
+            .filter(Bairro.municipio_id == muni.id, Bairro.nome.in_(uniq))
+            .all()
+        )
+        by_name = {str(b.nome).casefold(): b for b in bairros}
+        for name in uniq:
+            b = by_name.get(name.casefold())
+            geom = None
+            if b is not None and b.geom is not None:
+                try:
+                    gjson = db.scalar(b.geom.ST_AsGeoJSON())
+                    geom = json.loads(gjson) if gjson else None
+                except Exception:
+                    geom = None
+            if not geom:
+                # Sem polígono: placemark texto via ponto nulo não ajuda — skip geometry
+                continue
+            features.append({
+                "type": "Feature",
+                "geometry": geom,
+                "properties": {
+                    "layer_type": "bairro_afetado",
+                    "folder": "bairros_afetados",
+                    "nome": b.nome if b else name,
+                    "municipio": muni.nome,
+                    "codigo_ibge": muni.codigo_ibge,
+                },
+            })
+
+    if getattr(muni, "id", None) is not None:
+        plan = (
+            db.query(ContingencyPlan)
+            .filter(
+                ContingencyPlan.municipio_id == muni.id,
+                ContingencyPlan.status == "ATIVO",
+            )
+            .order_by(ContingencyPlan.updated_at.desc())
+            .first()
+        )
+        pontos = (plan.pontos_apoio if plan else None) or []
+        if isinstance(pontos, list):
+            for idx, ponto in enumerate(pontos):
+                if not isinstance(ponto, dict):
+                    continue
+                coords = None
+                if isinstance(ponto.get("geometry"), dict) and ponto["geometry"].get("type") == "Point":
+                    coords = ponto["geometry"].get("coordinates")
+                elif isinstance(ponto.get("coordinates"), (list, tuple)) and len(ponto["coordinates"]) >= 2:
+                    coords = ponto["coordinates"]
+                elif ponto.get("lng") is not None and ponto.get("lat") is not None:
+                    coords = [float(ponto["lng"]), float(ponto["lat"])]
+                elif ponto.get("lon") is not None and ponto.get("lat") is not None:
+                    coords = [float(ponto["lon"]), float(ponto["lat"])]
+                if not coords or len(coords) < 2:
+                    continue
+                features.append({
+                    "type": "Feature",
+                    "geometry": {"type": "Point", "coordinates": [float(coords[0]), float(coords[1])]},
+                    "properties": {
+                        "layer_type": "ponto_contingencia",
+                        "folder": "pontos_contingencia",
+                        "nome": ponto.get("nome") or f"Ponto {idx + 1}",
+                        "tipo": ponto.get("tipo"),
+                        "fonte": ponto.get("fonte"),
+                        "municipio": muni.nome,
+                        "codigo_ibge": muni.codigo_ibge,
+                    },
+                })
+
+    return features
 
 
 def save_simulation_geojson(
@@ -97,6 +249,220 @@ def save_simulation_geojson(
     filename = f"simulacao_{muni.codigo_ibge}_{slug}_{ts}.geojson"
     path = simulation_export_dir() / filename
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    return path
+
+
+def _kml_color_for_props(props: dict[str, Any]) -> str:
+    depth = str(props.get("depth_band") or props.get("heat_band") or "").lower()
+    if depth in _DEPTH_COLORS:
+        return _DEPTH_COLORS[depth]
+    layer = str(props.get("layer_type") or "default")
+    return _KML_COLORS.get(layer, _KML_COLORS["default"])
+
+
+def _ring_coords_kml(ring: list[Any]) -> str:
+    parts: list[str] = []
+    for pt in ring:
+        if not isinstance(pt, (list, tuple)) or len(pt) < 2:
+            continue
+        lon, lat = float(pt[0]), float(pt[1])
+        alt = float(pt[2]) if len(pt) > 2 and pt[2] is not None else 0.0
+        parts.append(f"{lon},{lat},{alt}")
+    return " ".join(parts)
+
+
+def _geometry_to_kml(geom: dict[str, Any] | None) -> str:
+    """Converte geometria GeoJSON (EPSG:4326) em fragmento KML."""
+    if not geom or not isinstance(geom, dict):
+        return ""
+    gtype = geom.get("type")
+    coords = geom.get("coordinates")
+    if not gtype or coords is None:
+        return ""
+
+    if gtype == "Point":
+        if not isinstance(coords, (list, tuple)) or len(coords) < 2:
+            return ""
+        lon, lat = float(coords[0]), float(coords[1])
+        alt = float(coords[2]) if len(coords) > 2 and coords[2] is not None else 0.0
+        return f"<Point><coordinates>{lon},{lat},{alt}</coordinates></Point>"
+
+    if gtype == "LineString":
+        return (
+            "<LineString><tessellate>1</tessellate>"
+            f"<coordinates>{_ring_coords_kml(coords)}</coordinates></LineString>"
+        )
+
+    if gtype == "Polygon":
+        if not coords:
+            return ""
+        outer = _ring_coords_kml(coords[0])
+        inners = "".join(
+            "<innerBoundaryIs><LinearRing>"
+            f"<coordinates>{_ring_coords_kml(ring)}</coordinates>"
+            "</LinearRing></innerBoundaryIs>"
+            for ring in coords[1:]
+        )
+        return (
+            "<Polygon><tessellate>1</tessellate>"
+            f"<outerBoundaryIs><LinearRing><coordinates>{outer}</coordinates></LinearRing></outerBoundaryIs>"
+            f"{inners}</Polygon>"
+        )
+
+    if gtype == "MultiPoint":
+        return "".join(
+            _geometry_to_kml({"type": "Point", "coordinates": c}) for c in coords or []
+        )
+
+    if gtype == "MultiLineString":
+        parts = [
+            _geometry_to_kml({"type": "LineString", "coordinates": line})
+            for line in coords or []
+        ]
+        joined = "".join(p for p in parts if p)
+        return f"<MultiGeometry>{joined}</MultiGeometry>" if joined else ""
+
+    if gtype == "MultiPolygon":
+        parts = [
+            _geometry_to_kml({"type": "Polygon", "coordinates": poly})
+            for poly in coords or []
+        ]
+        joined = "".join(p for p in parts if p)
+        return f"<MultiGeometry>{joined}</MultiGeometry>" if joined else ""
+
+    if gtype == "GeometryCollection":
+        parts = [_geometry_to_kml(g) for g in geom.get("geometries") or [] if isinstance(g, dict)]
+        joined = "".join(p for p in parts if p)
+        return f"<MultiGeometry>{joined}</MultiGeometry>" if joined else ""
+
+    return ""
+
+
+def _placemark_name(props: dict[str, Any], idx: int) -> str:
+    for key in ("name", "nome", "bairro", "label", "depth_band", "heat_band", "layer_type"):
+        val = props.get(key)
+        if val not in (None, ""):
+            return str(val)
+    return f"feature_{idx + 1}"
+
+
+def _placemark_description(props: dict[str, Any], collection_props: dict[str, Any]) -> str:
+    rows = [
+        f"<tr><td><b>{xml_escape(str(k))}</b></td><td>{xml_escape(str(v))}</td></tr>"
+        for k, v in props.items()
+        if v is not None and not isinstance(v, (dict, list))
+    ]
+    meta_bits = []
+    for key in ("municipio", "codigo_ibge", "scenario_type", "input_value"):
+        if collection_props.get(key) is not None:
+            meta_bits.append(f"{key}={collection_props[key]}")
+    header = xml_escape(" · ".join(meta_bits)) if meta_bits else "Sinidu+Clima"
+    body = "".join(rows) if rows else "<tr><td colspan='2'>Sem atributos</td></tr>"
+    return (
+        f"<![CDATA[<div><p>{header}</p>"
+        f"<table border='1' cellpadding='3'>{body}</table></div>]]>"
+    )
+
+
+def build_simulation_kml(
+    simulation: dict[str, Any],
+    muni: Municipio,
+    *,
+    comparison: dict[str, Any] | None = None,
+    extra_features: list[dict[str, Any]] | None = None,
+) -> str:
+    """Gera documento KML 2.2 com pastas (mancha, bairros, contingência)."""
+    fc = build_simulation_geojson(
+        simulation, muni, comparison=comparison, extra_features=extra_features
+    )
+    coll_props = fc.get("properties") or {}
+    name = xml_escape(str(fc.get("name") or f"sinidu_{muni.codigo_ibge}"))
+    desc = xml_escape(
+        f"Simulação Sinidu+Clima — {muni.nome}/{muni.uf} — "
+        f"{coll_props.get('scenario_type')} ({coll_props.get('input_value')}) — pacote 20e.2"
+    )
+
+    folders: dict[str, list[str]] = {}
+    for idx, feat in enumerate(fc.get("features") or []):
+        if not isinstance(feat, dict):
+            continue
+        geom_kml = _geometry_to_kml(feat.get("geometry") if isinstance(feat.get("geometry"), dict) else None)
+        if not geom_kml:
+            continue
+        props = dict(feat.get("properties") or {})
+        layer = str(props.get("layer_type") or "default")
+        folder_name = str(props.get("folder") or _FOLDER_BY_LAYER.get(layer, "outros"))
+        color = _kml_color_for_props(props)
+        pm_name = xml_escape(_placemark_name(props, idx))
+        pm_desc = _placemark_description(props, coll_props)
+        gtype = (feat.get("geometry") or {}).get("type")
+        is_line = gtype in {"LineString", "MultiLineString"}
+        is_point = gtype == "Point"
+        if is_point:
+            style = (
+                f"<Style><IconStyle><color>{color}</color><scale>1.1</scale></IconStyle>"
+                f"<LabelStyle><scale>0.8</scale></LabelStyle></Style>"
+            )
+        elif is_line:
+            style = (
+                f"<Style><LineStyle><color>{color}</color><width>2</width></LineStyle>"
+                f"<PolyStyle><color>{color}</color><fill>0</fill><outline>1</outline></PolyStyle></Style>"
+            )
+        else:
+            style = (
+                f"<Style><LineStyle><color>ffffffff</color><width>1</width></LineStyle>"
+                f"<PolyStyle><color>{color}</color><fill>1</fill><outline>1</outline></PolyStyle></Style>"
+            )
+        folders.setdefault(folder_name, []).append(
+            f"<Placemark><name>{pm_name}</name><description>{pm_desc}</description>"
+            f"{style}{geom_kml}</Placemark>"
+        )
+
+    folder_order = [
+        "mancha",
+        "curvas_nivel",
+        "escoamento",
+        "bairros_afetados",
+        "pontos_contingencia",
+        "calor",
+        "outros",
+    ]
+    ordered_names = [n for n in folder_order if n in folders] + [
+        n for n in folders if n not in folder_order
+    ]
+    folder_xml = []
+    for fname in ordered_names:
+        body = "".join(folders[fname])
+        folder_xml.append(
+            f"<Folder><name>{xml_escape(fname)}</name>{body}</Folder>"
+        )
+
+    return (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<kml xmlns="http://www.opengis.net/kml/2.2">\n'
+        f"<Document><name>{name}</name><description>{desc}</description>\n"
+        f"{''.join(folder_xml)}\n"
+        "</Document></kml>\n"
+    )
+
+
+def save_simulation_kmz(
+    simulation: dict[str, Any],
+    muni: Municipio,
+    *,
+    comparison: dict[str, Any] | None = None,
+    extra_features: list[dict[str, Any]] | None = None,
+) -> Path:
+    """Gera KMZ (ZIP com doc.kml) compatível com Google Earth / QGIS / ArcGIS."""
+    kml = build_simulation_kml(
+        simulation, muni, comparison=comparison, extra_features=extra_features
+    )
+    ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    slug = _slug_scenario(str(simulation.get("scenario_type", "sim")))
+    filename = f"simulacao_{muni.codigo_ibge}_{slug}_{ts}.kmz"
+    path = simulation_export_dir() / filename
+    with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("doc.kml", kml.encode("utf-8"))
     return path
 
 

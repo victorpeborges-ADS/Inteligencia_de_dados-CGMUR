@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import datetime
+from app.timeutil import utc_now
 from typing import Any
 
 from sqlalchemy.orm import Session
@@ -298,7 +298,7 @@ def compute_maturity(db: Session, codigo_ibge: str) -> dict[str, Any]:
             f"Score {score:.0f}/100 ({tier}). "
             f"{len(faltantes)} fonte(s) ausente(s), {len(parciais)} parcial(is)/estimada(s)."
         ),
-        "calculado_em": datetime.datetime.utcnow().isoformat(),
+        "calculado_em": utc_now().isoformat(),
     }
 
 
@@ -308,7 +308,7 @@ def persist_maturity(db: Session, codigo_ibge: str) -> dict[str, Any]:
     if seed:
         seed.maturity_score = result["score"]
         seed.completeness_score = result["completeness_score"]
-        seed.updated_at = datetime.datetime.utcnow()
+        seed.updated_at = utc_now()
         lacunas = list(seed.lacunas or [])
         for f in result["fontes_faltantes"]:
             key = f"fonte_{f['id']}"

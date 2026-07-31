@@ -51,11 +51,14 @@ def test_water_proximity_empty_water(monkeypatch):
     assert score == 0.25
 
 
-def test_safe_unary_union_invalid_geometries():
-    from shapely.geometry import Polygon
+def test_percentile_ranks_spreads_values():
+    ranks = AnalyticalEngine._percentile_ranks([10.0, 20.0, 30.0, 40.0])
+    assert ranks[0] == 0.0
+    assert ranks[-1] == 1.0
+    assert ranks[1] < ranks[2]
 
-    bowtie = Polygon([(0, 0), (2, 2), (2, 0), (0, 2), (0, 0)])
-    assert not bowtie.is_valid
-    merged = AnalyticalEngine._safe_unary_union([bowtie, box(3, 3, 4, 4)])
-    assert merged is not None
-    assert merged.area > 0
+
+def test_percentile_ranks_handles_ties():
+    ranks = AnalyticalEngine._percentile_ranks([5.0, 5.0, 10.0])
+    assert ranks[0] == ranks[1]
+    assert ranks[2] == 1.0

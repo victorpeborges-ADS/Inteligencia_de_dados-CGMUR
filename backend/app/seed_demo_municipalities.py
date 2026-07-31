@@ -1,3 +1,4 @@
+from app.timeutil import utc_now
 import datetime
 import requests
 from sqlalchemy.orm import Session
@@ -317,7 +318,7 @@ def ensure_demo_municipalities(db: Session):
             municipio_id=muni.id,
             nivel_alerta="ALTO",
             descricao=f"Alerta demonstrativo Sinidu+Clima para risco urbano em {cfg['nome']}.",
-            data_alerta=datetime.datetime.utcnow(),
+            data_alerta=utc_now(),
             geom=f"SRID=4326;{alert_poly.wkt}",
         ))
 

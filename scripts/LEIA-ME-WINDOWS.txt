@@ -1,0 +1,32 @@
+SINIDU - Launchers Windows
+=========================
+
+Problema comum: se o .bat foi salvo com finais de linha Linux (LF),
+o Windows mostra erros como "'izar' nao e reconhecido...".
+Estes arquivos estao em CRLF (formato Windows).
+
+COMO USAR (recomendado)
+-----------------------
+1. Clone/abra o projeto no Windows.
+2. Rode os .bat de dentro da pasta:
+     ...\sinidu mvp\scripts\Abrir-SINIDU.bat
+     ...\sinidu mvp\scripts\Atualizar-SINIDU.bat
+     ...\sinidu mvp\scripts\Avaliar-SINIDU.bat
+
+ATALHO NA AREA DE TRABALHO
+--------------------------
+Se quiser copiar os .bat para a Area de Trabalho, copie TAMBEM:
+  - _sinidu_find_project.bat
+  - SINIDU_DIR.txt  (crie a partir de SINIDU_DIR.txt.example)
+
+SINIDU_DIR.txt deve ter UMA unica linha, sem comentarios, exemplo:
+  C:\Users\vic\MCID\sinidu mvp
+
+Arquivos na Area de Trabalho:
+  Abrir-SINIDU.bat
+  Atualizar-SINIDU.bat
+  Avaliar-SINIDU.bat
+  _sinidu_find_project.bat
+  SINIDU_DIR.txt
+
+Requisitos: Docker Desktop + Git for Windows.

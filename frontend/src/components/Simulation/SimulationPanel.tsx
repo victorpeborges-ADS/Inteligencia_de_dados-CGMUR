@@ -1,13 +1,15 @@
 'use client';
 
-import { useState, useEffect } from 'react';
-import { api, MitigationPlan, RainfallComparison, SimulationInterpret, SimulationOutput, SlopeInterpretation } from '@/utils/api';
-import { Play, RotateCcw, AlertTriangle, HelpCircle, Thermometer, Droplet, FileText, Waves, Layers, Mountain, Activity, Sparkles, Copy, ClipboardCheck, Droplets } from 'lucide-react';
+import { useState, useEffect, useRef } from 'react';
+import { api, HeatLstComparison, MitigationPlan, RainfallComparison, SimulationInterpret, SimulationOutput, SlopeInterpretation } from '@/utils/api';
+import { Play, RotateCcw, AlertTriangle, HelpCircle, Thermometer, Droplet, FileText, Waves, Layers, Mountain, Droplets, ExternalLink, ChevronDown, ChevronRight, Info } from 'lucide-react';
+import { georedusMunicipioUrl } from '@/config/georedus';
 import PredictiveAnalysis from './PredictiveAnalysis';
-import RotatingLoader, { INTERPRETATION_MESSAGES, SIMULATION_MESSAGES } from '@/components/UI/RotatingLoader';
-import TermTooltip from '@/components/UI/TermTooltip';
-import SimulationNextSteps from './SimulationNextSteps';
+import RotatingLoader, { SIMULATION_MESSAGES } from '@/components/UI/RotatingLoader';
 import { EmptyState } from '@/design-system';
+import Badge from '@/design-system/components/Badge';
+import SimulationResults from './SimulationResults';
+import { formatDuration, isVolumeSimulation } from './simulationFormat';
 
 export type SimOverlayOptions = {
   showFlood: boolean;
@@ -21,21 +23,38 @@ export const DEFAULT_SIM_OVERLAYS: SimOverlayOptions = {
   showFlow: true,
 };
 
-function isVolumeSimulation(geojson: unknown): boolean {
-  const features = (geojson as { features?: Array<{ properties?: Record<string, unknown> }> })?.features;
-  if (!features?.length) return false;
-  return features.some(
-    (f) =>
-      f.properties?.layer_type === 'flood_band'
-      || f.properties?.depth_band
-      || f.properties?.temp_increase_celsius != null,
-  );
+// 17g.3 — escala de tempo do evento simulado: 1h a 7 dias (índices mapeiam para minutos).
+const DURATION_STEPS_MIN = [60, 120, 180, 360, 720, 1440, 2160, 2880, 4320, 7200, 10080];
+
+function durationStepIndex(min: number): number {
+  let best = 0;
+  let bestDelta = Infinity;
+  DURATION_STEPS_MIN.forEach((v, i) => {
+    const delta = Math.abs(v - min);
+    if (delta < bestDelta) {
+      bestDelta = delta;
+      best = i;
+    }
+  });
+  return best;
 }
+
+export type SimulationTab = 'waterproofing' | 'heat_island' | 'rainfall' | 'drainage' | 'mitigation' | 'climate_extra';
 
 interface SimulationProps {
   onSimulate: (payload: SimulationOutput | any) => void;
   onClear: () => void;
   onSimulatingChange?: (simulating: boolean) => void;
+  onFloodClockChange?: (clock: {
+    t_h: number;
+    fase: string;
+    narrativa: string;
+    playing: boolean;
+    max_depth_m: number | null;
+    flood_patches: number | null;
+    has_features: boolean;
+    duration_h: number;
+  } | null) => void;
   codigoIbge?: string;
   municipioNome?: string;
   municipioLoaded?: boolean;
@@ -51,6 +70,7 @@ export default function SimulationPanel({
   onSimulate,
   onClear,
   onSimulatingChange,
+  onFloodClockChange,
   codigoIbge,
   municipioNome,
   municipioLoaded,
@@ -61,21 +81,71 @@ export default function SimulationPanel({
   onCrossRiskLayers,
   mapMode3dActive = false,
 }: SimulationProps) {
-  const [activeTab, setActiveTab] = useState<'waterproofing' | 'veg_loss' | 'rainfall' | 'drainage' | 'predictive'>('rainfall');
+  const [activeTab, setActiveTab] = useState<SimulationTab>('rainfall');
+  const [contingencyNotice, setContingencyNotice] = useState<{ tone: 'ok' | 'error'; message: string } | null>(null);
+  const [limitsOpen, setLimitsOpen] = useState(true);
   const [waterproofingPct, setWaterproofingPct] = useState(25);
-  const [vegLossPct, setVegLossPct] = useState(40);
-  const [rainfallMm, setRainfallMm] = useState(120);
+  const [heatPeakTempC, setHeatPeakTempC] = useState(36);
+  // Mudança líquida de cobertura vegetal: negativo = desmatamento, positivo = arborização
+  const [heatVegChangePct, setHeatVegChangePct] = useState(20);
+  const [heatImpermExtraPct, setHeatImpermExtraPct] = useState(15);
+  const [heatShadePct, setHeatShadePct] = useState(0);
+  const [heatVentPct, setHeatVentPct] = useState(0);
+  const [rainfallMm, setRainfallMm] = useState(105);
+  const [rainSlider, setRainSlider] = useState({ min: 20, max: 350, step: 5 });
+  const [rainDurationMin, setRainDurationMin] = useState(60);
+  const [rainAnchors, setRainAnchors] = useState<
+    Array<{
+      id: string;
+      label: string;
+      data: string;
+      precipitacao_mm: number;
+      duracao_h: number;
+      antecedente_mm: number;
+      bairros: string[];
+      fonte: string;
+      url?: string;
+      nota?: string;
+    }>
+  >([]);
+  const [showMlScore, setShowMlScore] = useState(false);
+  const [idfTr, setIdfTr] = useState<number | null>(null);
+  const [idfCurves, setIdfCurves] = useState<
+    Array<{ periodo_retorno_anos: number; duracao_min: number; precipitacao_mm: number; label: string }>
+  >([]);
+  const [idfFonte, setIdfFonte] = useState<string | null>(null);
+  const [seaCoastal, setSeaCoastal] = useState(false);
+  const [seaScenarios, setSeaScenarios] = useState<Array<{ id: string; label: string; nivel_mar_m: number }>>([]);
+  const [seaScenario, setSeaScenario] = useState('atual');
+  const [antecedentMm, setAntecedentMm] = useState(0);
+  const [showRainAdvanced, setShowRainAdvanced] = useState(false);
+  const [aplicarDrenagem, setAplicarDrenagem] = useState(true);
+  const [drainageCapMmH, setDrainageCapMmH] = useState(18);
+  const [drainageFonte, setDrainageFonte] = useState<string | null>(null);
   const [compareRainfall, setCompareRainfall] = useState(true);
   const [baselineRainfallMm, setBaselineRainfallMm] = useState(80);
   const [rainfallComparison, setRainfallComparison] = useState<RainfallComparison | null>(null);
+  const [heatLstComparison, setHeatLstComparison] = useState<HeatLstComparison | null>(null);
+  const [lstCompareLoading, setLstCompareLoading] = useState(false);
   const [drainageDeficitPct, setDrainageDeficitPct] = useState(45);
+  const [climateModo, setClimateModo] = useState<'seca' | 'arbovirus'>('seca');
+  const [climatePrecip72, setClimatePrecip72] = useState(15);
+  const [climateTempC, setClimateTempC] = useState(28);
+  const [climatePrecip7d, setClimatePrecip7d] = useState(45);
+  const [mitigationMode, setMitigationMode] = useState<'solar' | 'green_roof' | 'green_heat' | 'shadow' | 'compare'>('solar');
+  const [greenRoofPct, setGreenRoofPct] = useState(30);
+  const [greenRoofRainMm, setGreenRoofRainMm] = useState(100);
+  const [greenHeatArborPct, setGreenHeatArborPct] = useState(25);
+  const [greenHeatPeakC, setGreenHeatPeakC] = useState(36);
+  const [shadowHour, setShadowHour] = useState(14);
+  const [compareTipo, setCompareTipo] = useState<'telhado_verde' | 'infraverde_calor' | 'solar'>('telhado_verde');
   
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<SimulationOutput | null>(null);
   const [planLoading, setPlanLoading] = useState(false);
   const [contingencyLoading, setContingencyLoading] = useState(false);
   const [mitigationPlan, setMitigationPlan] = useState<MitigationPlan | null>(null);
-  const [exportLoading, setExportLoading] = useState<'geojson' | 'pdf' | null>(null);
+  const [exportLoading, setExportLoading] = useState<'geojson' | 'pdf' | 'kmz' | null>(null);
   const [simInterpret, setSimInterpret] = useState<SimulationInterpret | null>(null);
   const [slopeInterpret, setSlopeInterpret] = useState<SlopeInterpretation | null>(null);
   const [analysisLoading, setAnalysisLoading] = useState(false);
@@ -86,6 +156,180 @@ export default function SimulationPanel({
   const [simError, setSimError] = useState<string | null>(null);
   const [simProgress, setSimProgress] = useState<{ progress: number; stage_label?: string } | null>(null);
   const [demStatus, setDemStatus] = useState<'idle' | 'warming' | 'ready' | 'error'>('idle');
+  const [floodTIndex, setFloodTIndex] = useState(0);
+  const [floodPlaying, setFloodPlaying] = useState(false);
+  const [floodLoop, setFloodLoop] = useState(true);
+  const [floodSpeedMs, setFloodSpeedMs] = useState(500);
+  const floodPlayRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [calibBusy, setCalibBusy] = useState(false);
+  const [calibMsg, setCalibMsg] = useState<string | null>(null);
+
+  const publishFloodClock = (
+    data: SimulationOutput | null,
+    tIndex: number,
+    playing: boolean,
+  ) => {
+    if (!onFloodClockChange) return;
+    const timeline = data?.simulation_meta?.flood_timeline;
+    if (!timeline) {
+      onFloodClockChange(null);
+      return;
+    }
+    const step = timeline.steps[tIndex] || timeline.steps[timeline.peak_index];
+    const hasFeatures = Boolean(data?.simulation_meta?.flood_timeline_features?.length);
+    onFloodClockChange({
+      t_h: step?.t_h ?? 0,
+      fase: step?.fase || '—',
+      narrativa:
+        step?.narrativa
+        || (step?.fase === 'pico'
+          ? 'Pico da inundação estimada neste cenário.'
+          : step?.fase === 'subida'
+            ? 'A mancha sobe — áreas mais baixas começam a alagar.'
+            : 'A água recua — mancha reduz (aproximação, sem routing 2D).'),
+      playing,
+      max_depth_m: step?.max_depth_m ?? null,
+      flood_patches: step?.flood_patches ?? null,
+      has_features: hasFeatures,
+      duration_h: timeline.duration_h,
+    });
+  };
+
+  const applyFloodTimelineFrame = (data: SimulationOutput, tIndex: number, playing = floodPlaying) => {
+    const timeline = data.simulation_meta?.flood_timeline;
+    const byStep = data.simulation_meta?.flood_timeline_features;
+    publishFloodClock(data, tIndex, playing);
+    if (!timeline || !byStep?.length) return;
+    const idx = Math.max(0, Math.min(tIndex, byStep.length - 1));
+    const floodFeats = byStep[idx] || [];
+    const landslides = (data.geometry?.features || []).filter(
+      (f: { properties?: { layer_type?: string } }) => f?.properties?.layer_type === 'landslide',
+    );
+    onSimulate({
+      ...data,
+      geometry: {
+        type: 'FeatureCollection',
+        features: [...floodFeats, ...landslides],
+      },
+    });
+  };
+
+  useEffect(() => {
+    if (!result?.simulation_meta?.flood_timeline) {
+      setFloodPlaying(false);
+      onFloodClockChange?.(null);
+      return;
+    }
+    const peak = result.simulation_meta.flood_timeline.peak_index ?? 0;
+    setFloodTIndex(peak);
+    setFloodPlaying(false);
+    publishFloodClock(result, peak, false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [result]);
+
+  useEffect(() => {
+    if (floodPlayRef.current) {
+      clearInterval(floodPlayRef.current);
+      floodPlayRef.current = null;
+    }
+    if (!floodPlaying || !result?.simulation_meta?.flood_timeline) return;
+    const n = result.simulation_meta.flood_timeline.n_steps;
+    floodPlayRef.current = setInterval(() => {
+      setFloodTIndex((prev) => {
+        let next = prev + 1;
+        if (next >= n) {
+          if (!floodLoop) {
+            setFloodPlaying(false);
+            publishFloodClock(result, prev, false);
+            return prev;
+          }
+          next = 0;
+        }
+        applyFloodTimelineFrame(result, next, true);
+        return next;
+      });
+    }, floodSpeedMs);
+    return () => {
+      if (floodPlayRef.current) clearInterval(floodPlayRef.current);
+      floodPlayRef.current = null;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [floodPlaying, result, floodSpeedMs, floodLoop]);
+
+  useEffect(() => {
+    if (!codigoIbge) {
+      setIdfCurves([]);
+      setIdfFonte(null);
+      setIdfTr(null);
+      setSeaCoastal(false);
+      setSeaScenarios([]);
+      setSeaScenario('atual');
+      setDrainageFonte(null);
+      return;
+    }
+    let cancelled = false;
+    api
+      .getIdfCurves(codigoIbge)
+      .then((cat) => {
+        if (cancelled) return;
+        // Preferir 24h (série diária APAC/INMET) quando existir; senão 60 min.
+        const preferDur = (cat.curvas || []).some((c) => c.duracao_min === 1440) ? 1440 : (cat.default_duracao_min || 60);
+        const curves = (cat.curvas || []).filter((c) => c.duracao_min === preferDur);
+        setIdfCurves(curves.length ? curves : (cat.curvas || []).filter((c) => c.duracao_min === 60));
+        setIdfFonte(cat.fonte);
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setIdfCurves([]);
+          setIdfFonte(null);
+        }
+      });
+    api
+      .getRainfallAnchors(codigoIbge)
+      .then((cat) => {
+        if (cancelled) return;
+        setRainAnchors(cat.anchors || []);
+        if (cat.slider) {
+          setRainSlider({
+            min: Math.round(cat.slider.min_mm),
+            max: Math.round(cat.slider.max_mm),
+            step: Math.round(cat.slider.step_mm) || 5,
+          });
+          if (cat.slider.default_mm != null) {
+            setRainfallMm((prev) => (prev === 105 || prev === 120 ? Math.round(cat.slider.default_mm) : prev));
+          }
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setRainAnchors([]);
+      });
+    api
+      .getSeaLevelScenarios(codigoIbge)
+      .then((sl) => {
+        if (cancelled) return;
+        setSeaCoastal(Boolean(sl.costeiro));
+        setSeaScenarios(sl.cenarios_disponiveis || []);
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setSeaCoastal(false);
+          setSeaScenarios([]);
+        }
+      });
+    api
+      .getDrainageCapacity(codigoIbge, rainfallMm, 60)
+      .then((d) => {
+        if (cancelled) return;
+        if (d.capacidade_mm_h != null) setDrainageCapMmH(Math.round(d.capacidade_mm_h));
+        setDrainageFonte(d.fonte || null);
+      })
+      .catch(() => {
+        if (!cancelled) setDrainageFonte(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [codigoIbge]);
 
   useEffect(() => {
     if (!codigoIbge) {
@@ -141,9 +385,9 @@ export default function SimulationPanel({
     }
   };
 
-  const simulationTipo = (): 'chuva' | 'asfalto' | 'vegetacao' | 'drenagem' => {
+  const simulationTipo = (): 'chuva' | 'asfalto' | 'vegetacao' | 'drenagem' | 'calor' => {
     if (activeTab === 'waterproofing') return 'asfalto';
-    if (activeTab === 'veg_loss') return 'vegetacao';
+    if (activeTab === 'heat_island' || activeTab === 'climate_extra') return 'calor';
     if (activeTab === 'drainage') return 'drenagem';
     return 'chuva';
   };
@@ -161,7 +405,11 @@ export default function SimulationPanel({
         ].filter(Boolean) as string[],
   });
 
-  const runInterpret = async (data: SimulationOutput, comparison: RainfallComparison | null) => {
+  const runInterpret = async (
+    data: SimulationOutput,
+    comparison: RainfallComparison | null,
+    lstComparison: HeatLstComparison | null = null,
+  ) => {
     if (!codigoIbge) return;
     setAnalysisLoading(true);
     setSimInterpret(null);
@@ -176,6 +424,7 @@ export default function SimulationPanel({
         resultado_simulacao: data,
         resultado_referencia: comparison?.baseline,
         comparacao_delta: comparison?.delta,
+        lst_comparison: lstComparison ?? undefined,
       });
       setSimInterpret(interpret);
       const meta = data.simulation_meta;
@@ -200,34 +449,119 @@ export default function SimulationPanel({
     setSlopeInterpret(null);
     setInterpretError(null);
     setRainfallComparison(null);
+    setHeatLstComparison(null);
     try {
       let data: SimulationOutput;
       let comparison: RainfallComparison | null = null;
+      let lstComparison: HeatLstComparison | null = null;
       const onJobProgress = (p: { progress: number; stage_label?: string }) => {
         setSimProgress({ progress: p.progress, stage_label: p.stage_label });
       };
 
       if (activeTab === 'waterproofing') {
         data = await api.simulateWaterproofing(waterproofingPct, codigoIbge);
-      } else if (activeTab === 'veg_loss') {
-        data = await api.simulateVegetationLoss(vegLossPct, codigoIbge);
+      } else if (activeTab === 'climate_extra') {
+        data = await api.simulateClimateModule({
+          codigoIbge,
+          modo: climateModo,
+          ...(climateModo === 'seca'
+            ? { precip72hMm: climatePrecip72, precipEsperada72hMm: 25 }
+            : { temperaturaMediaC: climateTempC, precip7dMm: climatePrecip7d }),
+        });
+      } else if (activeTab === 'heat_island') {
+        data = await api.simulateHeatIsland({
+          temperaturaPicoC: heatPeakTempC,
+          perdaVegetalPct: heatVegChangePct < 0 ? -heatVegChangePct : 0,
+          ganhoVegetalPct: heatVegChangePct > 0 ? heatVegChangePct : 0,
+          impermeabilizacaoExtraPct: heatImpermExtraPct,
+          sombreamentoPct: heatShadePct,
+          corredoresVentoPct: heatVentPct,
+          codigoIbge,
+        });
+        setLstCompareLoading(true);
+        try {
+          lstComparison = await api.compareHeatLst(data, codigoIbge);
+          setHeatLstComparison(lstComparison);
+        } catch (lstErr) {
+          console.error('LST comparison failed:', lstErr);
+          setHeatLstComparison(null);
+        } finally {
+          setLstCompareLoading(false);
+        }
       } else if (activeTab === 'drainage') {
         data = await api.simulateDrainageDeficit(drainageDeficitPct, codigoIbge);
+      } else if (activeTab === 'mitigation') {
+        if (mitigationMode === 'solar') {
+          data = await api.simulateSolarRooftop(codigoIbge) as SimulationOutput;
+        } else if (mitigationMode === 'green_roof') {
+          data = await api.simulateGreenRoof({
+            codigoIbge,
+            precipitacaoMm: greenRoofRainMm,
+            telhadoVerdePct: greenRoofPct,
+          }) as SimulationOutput;
+        } else if (mitigationMode === 'green_heat') {
+          data = await api.simulateGreenInfraHeat({
+            codigoIbge,
+            temperaturaPicoC: greenHeatPeakC,
+            arborizacaoPct: greenHeatArborPct,
+          }) as SimulationOutput;
+        } else if (mitigationMode === 'shadow') {
+          data = await api.simulateShadowInsolation({
+            codigoIbge,
+            horaLocal: shadowHour,
+          }) as SimulationOutput;
+        } else {
+          data = await api.compareInterventions({
+            codigoIbge,
+            tipo: compareTipo,
+            precipitacaoMm: greenRoofRainMm,
+            telhadoVerdePct: greenRoofPct,
+            temperaturaPicoC: greenHeatPeakC,
+            arborizacaoPct: greenHeatArborPct,
+          }) as SimulationOutput;
+        }
       } else if (compareRainfall) {
         comparison = await api.compareRainfallScenariosAsync(
           rainfallMm,
           baselineRainfallMm,
           codigoIbge,
           onJobProgress,
+          rainDurationMin,
         );
         setRainfallComparison(comparison);
         data = comparison.scenario;
       } else {
-        data = await api.simulateExtremeRainfallAsync(rainfallMm, codigoIbge, onJobProgress);
+        data = await api.simulateExtremeRainfallAsync(
+          rainfallMm,
+          codigoIbge,
+          onJobProgress,
+          {
+            ...(idfTr != null ? { periodoRetornoAnos: idfTr } : {}),
+            duracaoMin: rainDurationMin,
+            ...(seaCoastal && seaScenario !== 'atual' ? { cenarioNivelMar: seaScenario } : {}),
+            chuvaAntecedenteMm: antecedentMm,
+            aplicarDrenagem,
+            drainageCapacityMmH: aplicarDrenagem ? drainageCapMmH : undefined,
+          },
+        );
       }
       setResult(data);
-      onSimulate(data);
-      void runInterpret(data, compareRainfall && activeTab === 'rainfall' ? comparison : null);
+      if (data?.geometry?.features?.length || (data as { features?: unknown[] })?.features?.length) {
+        const peak = data.simulation_meta?.flood_timeline?.peak_index;
+        if (peak != null && data.simulation_meta?.flood_timeline_features?.length) {
+          setFloodTIndex(peak);
+          applyFloodTimelineFrame(data, peak);
+        } else {
+          onSimulate(data);
+        }
+      } else {
+        setSimError('Simulação concluída, mas sem manchas para exibir no mapa.');
+      }
+      void runInterpret(
+        data,
+        compareRainfall && activeTab === 'rainfall' ? comparison : null,
+        activeTab === 'heat_island' ? lstComparison : null,
+      );
     } catch (err) {
       console.error('Error running simulation:', err);
       setSimError(err instanceof Error ? err.message : 'Falha na simulação pluvial.');
@@ -271,6 +605,23 @@ export default function SimulationPanel({
     }
   };
 
+  const handleExportKmz = async () => {
+    if (!result) return;
+    setExportLoading('kmz');
+    try {
+      const meta = await api.exportSimulationKmz(
+        result,
+        codigoIbge,
+        rainfallComparison?.delta,
+      );
+      await api.downloadReport(meta.download_url, meta.nome_arquivo);
+    } catch (err) {
+      console.error('Export KMZ failed:', err);
+    } finally {
+      setExportLoading(null);
+    }
+  };
+
   const handleReset = () => {
     setResult(null);
     setMitigationPlan(null);
@@ -278,6 +629,7 @@ export default function SimulationPanel({
     setSlopeInterpret(null);
     setInterpretError(null);
     setRainfallComparison(null);
+    setHeatLstComparison(null);
     onClear();
   };
 
@@ -332,7 +684,7 @@ export default function SimulationPanel({
     setContingencyLoading(true);
     try {
       const cenario =
-        activeTab === 'drainage' || activeTab === 'rainfall' ? 'INUNDACAO' : activeTab === 'veg_loss' ? 'DESLIZAMENTO' : 'MULTIPLO';
+        activeTab === 'drainage' || activeTab === 'rainfall' ? 'INUNDACAO' : activeTab === 'heat_island' ? 'CALOR' : 'MULTIPLO';
       await api.generateContingencyFromSimulation({
         codigo_ibge: codigoIbge,
         cenario_tipo: cenario,
@@ -340,9 +692,16 @@ export default function SimulationPanel({
         buffer_m: 500,
         simulacao_ref: { scenario: result.scenario_type, input: result.input_value },
       });
-      alert('Plano de contingência gerado como rascunho. Abra a aba Contingência para editar.');
+      setContingencyNotice({
+        tone: 'ok',
+        message: 'Plano de contingência gerado como rascunho. Abra a aba Contingência para editar.',
+      });
     } catch (err) {
       console.error('Error generating contingency plan:', err);
+      setContingencyNotice({
+        tone: 'error',
+        message: err instanceof Error ? err.message : 'Falha ao gerar o plano de contingência.',
+      });
     } finally {
       setContingencyLoading(false);
     }
@@ -350,6 +709,25 @@ export default function SimulationPanel({
 
   return (
     <div className="flex flex-col gap-5 p-1">
+      {contingencyNotice && (
+        <div
+          className={`flex items-start gap-2 rounded-lg border px-3 py-2 text-[11px] ${
+            contingencyNotice.tone === 'ok'
+              ? 'border-emerald-700/50 bg-emerald-950/30 text-emerald-100'
+              : 'border-rose-700/50 bg-rose-950/30 text-rose-100'
+          }`}
+        >
+          <span className="flex-1">{contingencyNotice.message}</span>
+          <button
+            type="button"
+            onClick={() => setContingencyNotice(null)}
+            className="shrink-0 opacity-70 hover:opacity-100"
+            aria-label="Dispensar aviso"
+          >
+            ✕
+          </button>
+        </div>
+      )}
       {codigoIbge && (
         <div className="rounded-lg border border-sky-800/50 bg-sky-950/30 px-3 py-2">
           <div className="flex flex-wrap items-center justify-between gap-2">
@@ -395,126 +773,337 @@ export default function SimulationPanel({
           {lidarMessage && <p className="mt-2 text-[10px] text-sky-100">{lidarMessage}</p>}
         </div>
       )}
-      {/* Simulation Selector tabs */}
-      <div className="grid grid-cols-5 gap-1 bg-zinc-950 p-1 rounded-lg border border-border">
-        {(['rainfall', 'predictive', 'waterproofing', 'veg_loss', 'drainage'] as const).map((tab) => (
+      {/* Simulation Selector tabs — Chuva unifica mancha DEM + score preditivo */}
+      <div className="grid grid-cols-6 gap-1 bg-zinc-950 p-1 rounded-lg border border-border">
+        {(['rainfall', 'waterproofing', 'heat_island', 'climate_extra', 'drainage', 'mitigation'] as const).map((tab) => (
           <button
             key={tab}
-            onClick={() => { setActiveTab(tab); setResult(null); setMitigationPlan(null); setSimInterpret(null); setInterpretError(null); if (tab !== 'predictive') onClear(); }}
-            className={`py-1.5 px-1 rounded text-[9px] font-bold uppercase tracking-wider transition-all ${
+            onClick={() => { setActiveTab(tab); setResult(null); setMitigationPlan(null); setSimInterpret(null); setInterpretError(null); onClear(); }}
+            className={`py-1.5 px-0.5 rounded text-[8px] font-bold uppercase tracking-wider transition-all ${
               activeTab === tab 
                 ? 'bg-card text-indigo-400 border border-zinc-800' 
                 : 'text-zinc-400 hover:text-zinc-200'
             }`}
           >
-            {tab === 'rainfall' ? 'Chuva' : tab === 'predictive' ? 'Preditiva' : tab === 'waterproofing' ? 'Asfalto' : tab === 'veg_loss' ? 'Vegetação' : 'Drenagem'}
+            {tab === 'rainfall' ? 'Chuva' : tab === 'waterproofing' ? 'Asfalto' : tab === 'heat_island' ? 'Calor' : tab === 'climate_extra' ? 'Seca/Arb' : tab === 'drainage' ? 'Drenagem' : 'Mitigar'}
           </button>
         ))}
       </div>
 
+      {/* 20h.2 — limites metodológicos sempre visíveis na aba Simulações */}
+      <div className="rounded-xl border border-amber-500/30 bg-amber-950/20 px-3 py-2.5">
+          <button
+            type="button"
+            onClick={() => setLimitsOpen((v) => !v)}
+            className="flex w-full items-center justify-between gap-2 text-left"
+          >
+            <span className="flex items-center gap-1.5 text-[10px] font-extrabold uppercase tracking-wider text-amber-200">
+              <Info size={12} />
+              Limites metodológicos · triagem ≠ laudo
+            </span>
+            {limitsOpen ? <ChevronDown size={14} className="text-amber-300" /> : <ChevronRight size={14} className="text-amber-300" />}
+          </button>
+          {limitsOpen && (
+            <div className="mt-2 grid gap-2 sm:grid-cols-2">
+              <div>
+                <p className="text-[9px] font-bold uppercase tracking-wide text-emerald-300/90">O que é</p>
+                <ul className="mt-1 list-disc space-y-0.5 pl-4 text-[10px] leading-relaxed text-zinc-300">
+                  <li>Triagem territorial para priorizar bairros e ensaiar contingência</li>
+                  <li>Estimativa com DEM, chuva/cenário e proxies de uso do solo</li>
+                  <li>Selo de qualidade visível (Oficial · Observado · Estimado · Derivado)</li>
+                </ul>
+              </div>
+              <div>
+                <p className="text-[9px] font-bold uppercase tracking-wide text-rose-300/90">O que não é</p>
+                <ul className="mt-1 list-disc space-y-0.5 pl-4 text-[10px] leading-relaxed text-zinc-300">
+                  <li>Laudo de engenharia, perícia ou projeto executivo</li>
+                  <li>HEC-RAS / SWMM / hidrodinâmica 2D completa</li>
+                  <li>Alerta oficial CEMADEN / Defesa Civil</li>
+                  <li>Metodologia oficial ANA/CPRM/IDF (salvo selo Oficial explícito)</li>
+                </ul>
+              </div>
+            </div>
+          )}
+        </div>
+
       {/* Simulator Forms */}
       <div className="bg-card/40 backdrop-blur-md border border-border p-4 rounded-xl">
-        {activeTab === 'predictive' && (
-          <PredictiveAnalysis
-            codigoIbge={codigoIbge}
-            municipioNome={municipioNome}
-            municipioLoaded={municipioLoaded}
-            onPredict={onSimulate}
-            onClear={onClear}
-          />
-        )}
-
         {activeTab === 'rainfall' && (
           <div className="flex flex-col gap-4">
             <div className="rounded-lg border border-sky-500/25 bg-gradient-to-br from-sky-950/40 to-zinc-950/60 p-3">
-              <div className="flex items-start justify-between gap-2">
+              <div className="flex flex-wrap items-start justify-between gap-2">
                 <div>
                   <h4 className="font-extrabold text-sm text-zinc-100 flex items-center gap-1.5">
-                    <Droplet size={16} className="text-accent-sky" /> Modelo Pluvial Territorial
+                    <Droplet size={16} className="text-accent-sky" /> Onde alaga se chover forte?
                   </h4>
-                  <p className="text-[10px] text-sky-200/70 mt-1 uppercase tracking-wider font-bold">
-                    <TermTooltip term="SRTM" label="DEM SRTM" /> · Curvas de nível · Manchas por profundidade
+                  <p className="mt-1.5 text-[11px] leading-relaxed text-zinc-400">
+                    Um único fluxo: volume de chuva (IDF + eventos históricos APAC/CEMADEN/imprensa) →
+                    mancha DEM no mapa, população atingida, deslizamento, mobilidade e tempo de escoamento.
+                    Score multi-horizonte (ML) fica opcional abaixo — mesmo cenário.
                   </p>
                 </div>
-                <span className="shrink-0 rounded-md border border-sky-500/30 bg-sky-500/10 px-2 py-1 text-[9px] font-bold text-sky-200">
-                  v{displayedModelVersion}
-                </span>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-3 gap-2">
-              <div className="rounded-lg border border-zinc-800 bg-zinc-950/70 p-2 text-center">
-                <span className="block text-[8px] font-bold uppercase tracking-wider text-zinc-500">Precipitação</span>
-                <span className="text-lg font-extrabold text-sky-300">{rainfallMm}</span>
-                <span className="text-[9px] text-zinc-500"> mm</span>
-              </div>
-              <div className="rounded-lg border border-zinc-800 bg-zinc-950/70 p-2 text-center">
-                <span className="block text-[8px] font-bold uppercase tracking-wider text-zinc-500">Resolução</span>
-                <span className="text-lg font-extrabold text-lime-300">30</span>
-                <span className="text-[9px] text-zinc-500"> m</span>
-              </div>
-              <div className="rounded-lg border border-zinc-800 bg-zinc-950/70 p-2 text-center">
-                <span className="block text-[8px] font-bold uppercase tracking-wider text-zinc-500">Faixas</span>
-                <span className="text-lg font-extrabold text-indigo-300">3</span>
-                <span className="text-[9px] text-zinc-500"> prof.</span>
+                <Badge tone="derived">Simulação · Derivado</Badge>
               </div>
             </div>
 
             <div className="flex flex-col gap-2">
               <div className="flex justify-between text-xs text-zinc-300">
-                <span className="flex items-center gap-1"><Activity size={12} className="text-sky-400" /> Intensidade pluviométrica</span>
+                <span className="font-semibold">Quanto chove neste cenário?</span>
                 <span className="font-bold text-accent-sky">{rainfallMm} mm</span>
               </div>
+              {idfCurves.length > 0 && (
+                <div className="flex flex-col gap-1.5">
+                  <p className="text-[11px] text-zinc-400">
+                    Atalhos IDF{idfFonte ? ` · ${idfFonte}` : ''} (quanto mais raro, mais mm)
+                  </p>
+                  <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-4">
+                    {idfCurves.map((c) => {
+                      const active = idfTr === c.periodo_retorno_anos;
+                      const label =
+                        c.periodo_retorno_anos === 2
+                          ? 'Frequente'
+                          : c.periodo_retorno_anos === 10
+                            ? 'Forte'
+                            : c.periodo_retorno_anos === 25
+                              ? 'Muito forte'
+                              : 'Extrema';
+                      return (
+                        <button
+                          key={c.periodo_retorno_anos}
+                          type="button"
+                          title={`Evento que ocorre em média 1 vez a cada ${c.periodo_retorno_anos} anos · ${c.duracao_min} min`}
+                          onClick={() => {
+                            setIdfTr(c.periodo_retorno_anos);
+                            setRainfallMm(Math.round(c.precipitacao_mm));
+                            setRainDurationMin(DURATION_STEPS_MIN[durationStepIndex(c.duracao_min)]);
+                          }}
+                          className={`rounded-lg border px-2 py-2 text-left transition ${
+                            active
+                              ? 'border-sky-400/50 bg-sky-500/20 text-sky-100'
+                              : 'border-zinc-700 bg-zinc-950/70 text-zinc-300 hover:border-zinc-500'
+                          }`}
+                        >
+                          <span className="block text-[11px] font-bold">{label}</span>
+                          <span className="block text-[10px] text-zinc-400">
+                            ~{Math.round(c.precipitacao_mm)} mm · 1/{c.periodo_retorno_anos} anos
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+              {rainAnchors.length > 0 && (
+                <div className="flex flex-col gap-1.5">
+                  <p className="text-[11px] text-zinc-400">
+                    Eventos históricos documentados (calibram o volume — não são a mancha)
+                  </p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {rainAnchors.map((a) => {
+                      const active = Math.abs(rainfallMm - a.precipitacao_mm) <= 8;
+                      return (
+                        <button
+                          key={a.id}
+                          type="button"
+                          title={a.nota || a.fonte}
+                          onClick={() => {
+                            setIdfTr(null);
+                            setRainfallMm(Math.round(a.precipitacao_mm));
+                            setRainDurationMin(DURATION_STEPS_MIN[durationStepIndex(a.duracao_h * 60)]);
+                            setAntecedentMm(Math.round(a.antecedente_mm));
+                            setShowRainAdvanced(true);
+                          }}
+                          className={`rounded-full border px-2.5 py-1 text-[10px] font-semibold transition ${
+                            active
+                              ? 'border-amber-400/50 bg-amber-500/20 text-amber-100'
+                              : 'border-zinc-700 bg-zinc-950/70 text-zinc-300 hover:border-amber-500/40'
+                          }`}
+                        >
+                          {a.label} · {Math.round(a.precipitacao_mm)} mm/{formatDuration(a.duracao_h * 60)}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
               <input
                 type="range"
-                min="40"
-                max="250"
-                step="10"
-                value={rainfallMm}
-                onChange={(e) => setRainfallMm(Number(e.target.value))}
-                onPointerDown={() => {}}
-                onPointerUp={() => {
-                  if (activeTab === 'rainfall' && codigoIbge && municipioLoaded !== false) {
-                    void handleSimulate();
-                  }
+                min={rainSlider.min}
+                max={rainSlider.max}
+                step={rainSlider.step}
+                value={Math.min(rainSlider.max, Math.max(rainSlider.min, rainfallMm))}
+                onChange={(e) => {
+                  setIdfTr(null);
+                  setRainfallMm(Number(e.target.value));
                 }}
                 className="w-full h-1.5 bg-zinc-800 rounded-lg appearance-none cursor-pointer accent-sky-500"
               />
-              <div className="flex justify-between text-[8px] text-zinc-600 font-mono">
-                <span>40 mm</span>
-                <span>150 mm (Q100 ref.)</span>
-                <span>250 mm</span>
+              <div className="flex justify-between text-[9px] text-zinc-600">
+                <span>{rainSlider.min} mm</span>
+                <span className="text-zinc-500">passo {rainSlider.step} mm · ajuste e clique em Rodar Simulação</span>
+                <span>{rainSlider.max} mm</span>
               </div>
             </div>
 
-            <div className="rounded-lg border border-zinc-800 bg-zinc-950/50 p-3 space-y-3">
-              <label className="flex items-center justify-between gap-2 cursor-pointer">
-                <span className="text-[10px] font-bold text-zinc-300 uppercase tracking-wide">Comparar com referência</span>
-                <input
-                  type="checkbox"
-                  checked={compareRainfall}
-                  onChange={(e) => setCompareRainfall(e.target.checked)}
-                  className="accent-sky-500"
-                />
-              </label>
-              {compareRainfall && (
-                <div className="flex flex-col gap-1.5">
-                  <div className="flex justify-between text-[10px] text-zinc-400">
-                    <span>Referência (mm)</span>
-                    <span className="font-bold text-zinc-200">{baselineRainfallMm} mm</span>
+            <div className="flex flex-col gap-2 rounded-lg border border-violet-500/25 bg-violet-950/10 p-2.5">
+              <div className="flex flex-wrap items-baseline justify-between gap-1">
+                <span className="text-xs font-semibold text-zinc-300">
+                  Em quanto tempo cai essa chuva?
+                </span>
+                <span className="font-bold text-violet-300">
+                  {formatDuration(rainDurationMin)}
+                  <span className="ml-1.5 font-normal text-[10px] text-zinc-500">
+                    ≈ {(rainfallMm / (rainDurationMin / 60)).toFixed(rainDurationMin >= 1440 ? 1 : 0)} mm/h
+                  </span>
+                </span>
+              </div>
+              <p className="text-[10px] leading-relaxed text-zinc-500">
+                Mesmos {rainfallMm} mm concentrados em 1h formam mancha muito mais abrupta que
+                espalhados em vários dias — a duração muda intensidade, mancha, deslizamento e hidrograma.
+              </p>
+              <input
+                type="range"
+                min={0}
+                max={DURATION_STEPS_MIN.length - 1}
+                step={1}
+                value={durationStepIndex(rainDurationMin)}
+                onChange={(e) => setRainDurationMin(DURATION_STEPS_MIN[Number(e.target.value)])}
+                className="w-full h-1.5 bg-zinc-800 rounded-lg appearance-none cursor-pointer accent-violet-500"
+              />
+              <div className="flex justify-between text-[9px] text-zinc-600">
+                <span>1 h (flash)</span>
+                <span>24 h</span>
+                <span>7 dias (sustentada)</span>
+              </div>
+            </div>
+
+            <div className="rounded-lg border border-zinc-800 bg-zinc-950/50">
+              <button
+                type="button"
+                onClick={() => setShowRainAdvanced((v) => !v)}
+                className="flex w-full items-center justify-between px-3 py-2.5 text-left"
+              >
+                <span className="text-[11px] font-semibold text-zinc-300">
+                  Opções avançadas
+                  {(seaCoastal && seaScenario !== 'atual') || antecedentMm > 0 || !aplicarDrenagem ? (
+                    <span className="ml-1.5 text-[9px] font-normal text-sky-400/80">· ativas</span>
+                  ) : null}
+                </span>
+                <span className="text-zinc-500">{showRainAdvanced ? '−' : '+'}</span>
+              </button>
+              {showRainAdvanced && (
+                <div className="space-y-3 border-t border-zinc-800 px-3 py-3">
+                  {seaCoastal && seaScenarios.length > 0 && (
+                    <div className="space-y-1.5">
+                      <p className="text-[11px] font-semibold text-zinc-200">Mar mais alto (cidade costeira)</p>
+                      <p className="text-[10px] leading-snug text-zinc-500">
+                        Simula maré meteórica ou elevação futura do mar — a água sobe a partir de uma cota mais alta e a mancha de alagamento cresce nas áreas baixas.
+                      </p>
+                      <select
+                        value={seaScenario}
+                        onChange={(e) => setSeaScenario(e.target.value)}
+                        className="w-full rounded-md border border-zinc-700 bg-zinc-950 px-2 py-1.5 text-[11px] text-zinc-200"
+                      >
+                        {seaScenarios.map((s) => (
+                          <option key={s.id} value={s.id}>
+                            {s.label}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+
+                  <div className="space-y-1.5">
+                    <label className="flex items-center justify-between gap-2 cursor-pointer">
+                      <div>
+                        <span className="block text-[11px] font-semibold text-zinc-200">Rede de drenagem (proxy)</span>
+                        <span className="block text-[10px] text-zinc-500">
+                          Remove parte da água como se galerias/bueiros absorvessem a chuva (SNIS/densidade). Não é inventário de rede.
+                          {drainageFonte ? ` · fonte ${drainageFonte}` : ''}
+                        </span>
+                      </div>
+                      <input
+                        type="checkbox"
+                        checked={aplicarDrenagem}
+                        onChange={(e) => setAplicarDrenagem(e.target.checked)}
+                        className="accent-cyan-500"
+                      />
+                    </label>
+                    {aplicarDrenagem && (
+                      <>
+                        <div className="flex justify-between text-[11px]">
+                          <span className="text-zinc-400">Capacidade da rede</span>
+                          <span className="text-cyan-300">{drainageCapMmH} mm/h</span>
+                        </div>
+                        <input
+                          type="range"
+                          min="8"
+                          max="50"
+                          step="1"
+                          value={drainageCapMmH}
+                          onChange={(e) => setDrainageCapMmH(Number(e.target.value))}
+                          className="w-full h-1.5 bg-zinc-800 rounded-lg appearance-none cursor-pointer accent-cyan-500"
+                        />
+                        <div className="flex justify-between text-[9px] text-zinc-600">
+                          <span>Rede frágil</span>
+                          <span>Rede robusta</span>
+                        </div>
+                      </>
+                    )}
                   </div>
-                  <input
-                    type="range"
-                    min="40"
-                    max="150"
-                    step="10"
-                    value={baselineRainfallMm}
-                    onChange={(e) => setBaselineRainfallMm(Number(e.target.value))}
-                    className="w-full h-1.5 bg-zinc-800 rounded-lg appearance-none cursor-pointer accent-zinc-500"
-                  />
-                  <p className="text-[9px] text-zinc-500">
-                    Cenário atual ({rainfallMm} mm) será comparado com a referência para calcular delta de área, população e profundidade.
-                  </p>
+
+                  <div className="space-y-1.5">
+                    <div className="flex justify-between text-[11px]">
+                      <span className="font-semibold text-zinc-200">Solo já molhado (dias anteriores)</span>
+                      <span className="text-amber-300">{antecedentMm} mm</span>
+                    </div>
+                    <p className="text-[10px] leading-snug text-zinc-500">
+                      Se choveu antes, o solo satura e encostas escorregam com mais facilidade. Ajuste para ver risco de deslizamento além do alagamento.
+                    </p>
+                    <input
+                      type="range"
+                      min="0"
+                      max="200"
+                      step="10"
+                      value={antecedentMm}
+                      onChange={(e) => setAntecedentMm(Number(e.target.value))}
+                      className="w-full h-1.5 bg-zinc-800 rounded-lg appearance-none cursor-pointer accent-amber-500"
+                    />
+                    <div className="flex justify-between text-[9px] text-zinc-600">
+                      <span>Solo seco</span>
+                      <span>Solo saturado</span>
+                    </div>
+                  </div>
+
+                  <label className="flex items-center justify-between gap-2 cursor-pointer pt-1">
+                    <div>
+                      <span className="block text-[11px] font-semibold text-zinc-200">Comparar com outro volume</span>
+                      <span className="block text-[10px] text-zinc-500">Mostra a diferença (área e gente afetada) entre dois totais de chuva.</span>
+                    </div>
+                    <input
+                      type="checkbox"
+                      checked={compareRainfall}
+                      onChange={(e) => setCompareRainfall(e.target.checked)}
+                      className="accent-sky-500"
+                    />
+                  </label>
+                  {compareRainfall && (
+                    <div className="flex flex-col gap-1.5">
+                      <div className="flex justify-between text-[10px] text-zinc-400">
+                        <span>Referência</span>
+                        <span className="font-bold text-zinc-200">{baselineRainfallMm} mm</span>
+                      </div>
+                      <input
+                        type="range"
+                        min="40"
+                        max="150"
+                        step="10"
+                        value={baselineRainfallMm}
+                        onChange={(e) => setBaselineRainfallMm(Number(e.target.value))}
+                        className="w-full h-1.5 bg-zinc-800 rounded-lg appearance-none cursor-pointer accent-zinc-500"
+                      />
+                    </div>
+                  )}
                 </div>
               )}
             </div>
@@ -546,16 +1135,48 @@ export default function SimulationPanel({
                 Proxy territorial para planejamento — não substitui modelagem hidrodinâmica 2D/HEC-RAS.
               </p>
             </div>
+
+            <div className="rounded-lg border border-violet-500/25 bg-violet-950/10">
+              <button
+                type="button"
+                onClick={() => setShowMlScore((v) => !v)}
+                className="flex w-full items-center justify-between px-3 py-2.5 text-left"
+              >
+                <span className="text-[11px] font-semibold text-violet-200">
+                  Score preditivo multi-horizonte (ML) — opcional
+                </span>
+                <span className="text-zinc-500">{showMlScore ? '−' : '+'}</span>
+              </button>
+              {showMlScore && (
+                <div className="border-t border-violet-500/20 px-3 py-3">
+                  <PredictiveAnalysis
+                    embedded
+                    codigoIbge={codigoIbge}
+                    municipioNome={municipioNome}
+                    municipioLoaded={municipioLoaded}
+                    precipEventMm={rainfallMm}
+                    antecedentMm={antecedentMm}
+                    onPredict={onSimulate}
+                    onClear={onClear}
+                  />
+                </div>
+              )}
+            </div>
           </div>
         )}
 
         {activeTab === 'waterproofing' && (
           <div className="flex flex-col gap-4">
             <div>
-              <h4 className="font-extrabold text-sm text-zinc-200 flex items-center gap-1.5">
-                <AlertTriangle size={16} className="text-accent-sky" /> Aumento de Impermeabilização
-              </h4>
-              <p className="text-[11px] text-zinc-400 mt-1">Expansão de pavimentação asfáltica e escoamento superficial.</p>
+              <div className="flex flex-wrap items-start justify-between gap-2">
+                <div>
+                  <h4 className="font-extrabold text-sm text-zinc-200 flex items-center gap-1.5">
+                    <AlertTriangle size={16} className="text-accent-sky" /> Aumento de Impermeabilização
+                  </h4>
+                  <p className="text-[11px] text-zinc-400 mt-1">Expansão de pavimentação asfáltica e escoamento superficial.</p>
+                </div>
+                <Badge tone="derived">Simulação · Derivado</Badge>
+              </div>
             </div>
             <div className="flex flex-col gap-2">
               <div className="flex justify-between text-xs text-zinc-300">
@@ -590,41 +1211,280 @@ export default function SimulationPanel({
           </div>
         )}
 
-        {activeTab === 'veg_loss' && (
+        {activeTab === 'heat_island' && (
           <div className="flex flex-col gap-4">
-            <div>
-              <h4 className="font-extrabold text-sm text-zinc-200 flex items-center gap-1.5">
-                <Thermometer size={16} className="text-accent-rose" /> Perda de Cobertura Vegetal
-              </h4>
-              <p className="text-[11px] text-zinc-400 mt-1">Redução de áreas florestadas e impacto no microclima.</p>
+            <div className="rounded-lg border border-rose-500/25 bg-gradient-to-br from-rose-950/40 to-zinc-950/60 p-3">
+              <div className="flex items-start justify-between gap-2">
+                <div>
+                  <h4 className="font-extrabold text-sm text-zinc-100 flex items-center gap-1.5">
+                    <Thermometer size={16} className="text-rose-400" /> Ilha de Calor Urbana
+                  </h4>
+                  <p className="text-[10px] text-rose-200/70 mt-1 uppercase tracking-wider font-bold">
+                    MapBiomas · INMET · IVC · densidade por bairro
+                  </p>
+                </div>
+                <span className="shrink-0 rounded-md border border-rose-500/30 bg-rose-500/10 px-2 py-1 text-[9px] font-bold text-rose-200">
+                  v{displayedModelVersion}
+                </span>
+              </div>
+              <div className="mt-3 flex flex-wrap gap-2">
+                <Badge tone="derived">Cenário Sinidu · Derivado</Badge>
+                {codigoIbge ? (
+                  <a
+                    href={georedusMunicipioUrl(codigoIbge)}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1 rounded-md border border-sky-500/35 bg-sky-500/10 px-2 py-1 text-[9px] font-bold uppercase tracking-wide text-sky-200 transition hover:bg-sky-500/20"
+                    title="Ative a camada LST observada no mapa ou abra o GeoReDUS para o município"
+                  >
+                    LST GeoReDUS · Observado
+                    <ExternalLink size={10} />
+                  </a>
+                ) : (
+                  <Badge tone="info">LST observada · Observado</Badge>
+                )}
+              </div>
             </div>
+
+            <div className="grid grid-cols-3 gap-2">
+              <div className="rounded-lg border border-zinc-800 bg-zinc-950/70 p-2 text-center">
+                <span className="block text-[8px] font-bold uppercase tracking-wider text-zinc-500">Pico previsto</span>
+                <span className="text-lg font-extrabold text-rose-300">{heatPeakTempC}</span>
+                <span className="text-[9px] text-zinc-500"> °C</span>
+              </div>
+              <div className="rounded-lg border border-zinc-800 bg-zinc-950/70 p-2 text-center">
+                <span className="block text-[8px] font-bold uppercase tracking-wider text-zinc-500">
+                  {heatVegChangePct >= 0 ? 'Arborização' : 'Desmatamento'}
+                </span>
+                <span className={`text-lg font-extrabold ${heatVegChangePct >= 0 ? 'text-lime-300' : 'text-rose-300'}`}>
+                  {heatVegChangePct > 0 ? '+' : ''}{heatVegChangePct}
+                </span>
+                <span className="text-[9px] text-zinc-500"> %</span>
+              </div>
+              <div className="rounded-lg border border-zinc-800 bg-zinc-950/70 p-2 text-center">
+                <span className="block text-[8px] font-bold uppercase tracking-wider text-zinc-500">Asfalto extra</span>
+                <span className="text-lg font-extrabold text-amber-300">{heatImpermExtraPct}</span>
+                <span className="text-[9px] text-zinc-500"> %</span>
+              </div>
+            </div>
+
             <div className="flex flex-col gap-2">
               <div className="flex justify-between text-xs text-zinc-300">
-                <span>Remoção da Cobertura Verde</span>
-                <span className="font-bold text-accent-rose">-{vegLossPct}%</span>
+                <span>Temperatura de pico prevista</span>
+                <span className="font-bold text-rose-300">{heatPeakTempC}°C</span>
               </div>
               <input
                 type="range"
-                min="10"
-                max="100"
-                step="5"
-                value={vegLossPct}
-                onChange={(e) => setVegLossPct(Number(e.target.value))}
-                className="w-full h-1 bg-zinc-800 rounded-lg appearance-none cursor-pointer accent-rose-500"
+                min="28"
+                max="46"
+                step="1"
+                value={heatPeakTempC}
+                onChange={(e) => setHeatPeakTempC(Number(e.target.value))}
+                className="w-full h-1.5 bg-zinc-800 rounded-lg appearance-none cursor-pointer accent-rose-500"
               />
-              <span className="text-[9px] text-zinc-500 italic">Calcula o efeito de ilha de calor decorrente de desmatamento local.</span>
+              <div className="flex justify-between text-[8px] text-zinc-600 font-mono">
+                <span>28 °C</span>
+                <span>36 °C (onda típica)</span>
+                <span>46 °C</span>
+              </div>
+              <span className="text-[9px] text-zinc-500 italic">
+                Informe a temperatura máxima prevista (previsão do tempo). Os bairros mais
+                impermeabilizados chegam a esse pico somado à intensidade da ilha de calor.
+              </span>
             </div>
+
+            <div className="flex flex-col gap-2">
+              <div className="flex justify-between text-xs text-zinc-300">
+                <span>Cobertura vegetal (desmatar ↔ arborizar)</span>
+                <span className={`font-bold ${heatVegChangePct >= 0 ? 'text-lime-300' : 'text-rose-300'}`}>
+                  {heatVegChangePct > 0 ? '+' : ''}{heatVegChangePct}%
+                </span>
+              </div>
+              <input
+                type="range"
+                min="-60"
+                max="60"
+                step="5"
+                value={heatVegChangePct}
+                onChange={(e) => setHeatVegChangePct(Number(e.target.value))}
+                className={`w-full h-1.5 bg-zinc-800 rounded-lg appearance-none cursor-pointer ${heatVegChangePct >= 0 ? 'accent-lime-500' : 'accent-rose-500'}`}
+              />
+              <div className="flex justify-between text-[8px] text-zinc-600 font-mono">
+                <span>-60% desmatar</span>
+                <span>0 atual</span>
+                <span>+60% arborizar</span>
+              </div>
+              <span className="text-[9px] text-zinc-500 italic">
+                Positivo simula arborização, telhados verdes e novos parques — converte
+                superfície impermeável em vegetada e reduz a ilha de calor.
+              </span>
+            </div>
+
+            <div className="flex flex-col gap-2">
+              <div className="flex justify-between text-xs text-zinc-300">
+                <span>Impermeabilização urbana adicional</span>
+                <span className="font-bold text-amber-300">{heatImpermExtraPct}%</span>
+              </div>
+              <input
+                type="range"
+                min="0"
+                max="50"
+                step="5"
+                value={heatImpermExtraPct}
+                onChange={(e) => setHeatImpermExtraPct(Number(e.target.value))}
+                className="w-full h-1.5 bg-zinc-800 rounded-lg appearance-none cursor-pointer accent-amber-500"
+              />
+            </div>
+
+            <div className="flex flex-col gap-2">
+              <div className="flex justify-between text-xs text-zinc-300">
+                <span>Sombreamento adicional (edifícios / dossel)</span>
+                <span className="font-bold text-sky-300">{heatShadePct}%</span>
+              </div>
+              <p className="text-[9px] text-zinc-500">
+                Combina altura média das edificações com intervenção (toldos, galerias, fachadas). Reduz o ΔT da ilha de calor.
+              </p>
+              <input
+                type="range"
+                min="0"
+                max="80"
+                step="5"
+                value={heatShadePct}
+                onChange={(e) => setHeatShadePct(Number(e.target.value))}
+                className="w-full h-1.5 bg-zinc-800 rounded-lg appearance-none cursor-pointer accent-sky-500"
+              />
+            </div>
+
+            <div className="flex flex-col gap-2">
+              <div className="flex justify-between text-xs text-zinc-300">
+                <span>Corredores de vento / espaço aberto</span>
+                <span className="font-bold text-cyan-300">{heatVentPct}%</span>
+              </div>
+              <p className="text-[9px] text-zinc-500">
+                Aberturas e vias alinhadas ao vento — proxy por tecido urbano aberto + intervenção. Atenua o calor de dossel.
+              </p>
+              <input
+                type="range"
+                min="0"
+                max="80"
+                step="5"
+                value={heatVentPct}
+                onChange={(e) => setHeatVentPct(Number(e.target.value))}
+                className="w-full h-1.5 bg-zinc-800 rounded-lg appearance-none cursor-pointer accent-cyan-500"
+              />
+            </div>
+
             <div className="rounded-lg border border-rose-500/20 bg-rose-950/10 p-3">
               <h5 className="mb-2 flex items-center gap-1.5 text-[10px] font-extrabold uppercase tracking-wide text-rose-200">
-                <HelpCircle size={13} /> Metodologia da vegetação
+                <HelpCircle size={13} /> Metodologia
               </h5>
               <p className="text-[10px] leading-relaxed text-zinc-400">
-                A simulação usa a cobertura vegetal e a área urbana para estimar a expansão de ilhas de calor quando há
-                perda de cobertura vegetal. O percentual informado amplia a zona térmica e estima a população dentro da área afetada.
+                Modelo temperatura-driven: a partir do pico previsto, a intensidade da ilha de calor (ΔT) de cada
+                bairro deriva da impermeabilização e vegetação (MapBiomas) e da densidade populacional, seguindo
+                a relação de Oke (1982), e é amplificada pela severidade da onda de calor. Sombreamento por
+                edificações e corredores de vento atenuam o ΔT. Arborizar converte superfície impermeável em vegetada.
+                O IVC prioriza a exposição da população vulnerável.
               </p>
               <p className="mt-2 text-[9px] italic leading-relaxed text-zinc-500">
-                Resultado demonstrativo: serve para priorizar arborização, corredores verdes e proteção de remanescentes,
-                não substitui inventário arbóreo ou medição microclimática de campo.
+                Proxy territorial — não substitui LST, ray-tracing de sombra nem estudo de vento de campo.
+              </p>
+            </div>
+          </div>
+        )}
+
+        {activeTab === 'climate_extra' && (
+          <div className="flex flex-col gap-4">
+            <div>
+              <h4 className="font-extrabold text-zinc-100 text-sm">Seca e arbovírus (proxy)</h4>
+              <p className="text-[11px] text-zinc-400 mt-1">
+                Módulos climáticos extras: estresse hídrico e condições ambientais favoráveis a Aedes — sem incidência epidemiológica.
+              </p>
+            </div>
+
+            <div className="grid grid-cols-2 gap-1 rounded-lg border border-zinc-800 bg-zinc-950 p-1">
+              <button
+                type="button"
+                onClick={() => setClimateModo('seca')}
+                className={`rounded px-2 py-1.5 text-[10px] font-bold uppercase ${
+                  climateModo === 'seca' ? 'bg-amber-500/20 text-amber-100' : 'text-zinc-500'
+                }`}
+              >
+                Estresse hídrico
+              </button>
+              <button
+                type="button"
+                onClick={() => setClimateModo('arbovirus')}
+                className={`rounded px-2 py-1.5 text-[10px] font-bold uppercase ${
+                  climateModo === 'arbovirus' ? 'bg-rose-500/20 text-rose-100' : 'text-zinc-500'
+                }`}
+              >
+                Proxy arbovírus
+              </button>
+            </div>
+
+            {climateModo === 'seca' ? (
+              <div className="space-y-2">
+                <div className="flex justify-between text-[11px]">
+                  <span className="font-semibold text-zinc-200">Chuva recente (72h)</span>
+                  <span className="text-amber-300">{climatePrecip72} mm</span>
+                </div>
+                <p className="text-[10px] text-zinc-500">
+                  Menos chuva que o esperado → maior estresse, pior onde há muita impermeabilização e pouca vegetação.
+                </p>
+                <input
+                  type="range"
+                  min="0"
+                  max="80"
+                  step="5"
+                  value={climatePrecip72}
+                  onChange={(e) => setClimatePrecip72(Number(e.target.value))}
+                  className="w-full h-1.5 bg-zinc-800 rounded-lg appearance-none cursor-pointer accent-amber-500"
+                />
+              </div>
+            ) : (
+              <div className="space-y-3">
+                <div className="space-y-1.5">
+                  <div className="flex justify-between text-[11px]">
+                    <span className="font-semibold text-zinc-200">Temperatura média</span>
+                    <span className="text-rose-300">{climateTempC} °C</span>
+                  </div>
+                  <p className="text-[10px] text-zinc-500">Ótimo Aedes ~28 °C (faixa útil 18–34 °C).</p>
+                  <input
+                    type="range"
+                    min="18"
+                    max="36"
+                    step="1"
+                    value={climateTempC}
+                    onChange={(e) => setClimateTempC(Number(e.target.value))}
+                    className="w-full h-1.5 bg-zinc-800 rounded-lg appearance-none cursor-pointer accent-rose-500"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <div className="flex justify-between text-[11px]">
+                    <span className="font-semibold text-zinc-200">Chuva recente (proxy 7d)</span>
+                    <span className="text-sky-300">{climatePrecip7d} mm</span>
+                  </div>
+                  <p className="text-[10px] text-zinc-500">
+                    Água parada pós-chuva × drenagem fraca × habitat urbano (impermeável / baixa vegetação).
+                  </p>
+                  <input
+                    type="range"
+                    min="0"
+                    max="150"
+                    step="5"
+                    value={climatePrecip7d}
+                    onChange={(e) => setClimatePrecip7d(Number(e.target.value))}
+                    className="w-full h-1.5 bg-zinc-800 rounded-lg appearance-none cursor-pointer accent-sky-500"
+                  />
+                </div>
+              </div>
+            )}
+
+            <div className="rounded-lg border border-amber-500/20 bg-amber-950/10 p-3">
+              <p className="text-[10px] leading-relaxed text-zinc-400">
+                {climateModo === 'seca'
+                  ? 'Índice municipal 0–100 por déficit de precipitação × cobertura do solo (MapBiomas). Não é SPEI/SPI oficial.'
+                  : 'Proxy ambiental (temperatura × água parada × habitat). Não estima casos de dengue/zika nem substitui vigilância epidemiológica.'}
               </p>
             </div>
           </div>
@@ -632,11 +1492,14 @@ export default function SimulationPanel({
 
         {activeTab === 'drainage' && (
           <div className="flex flex-col gap-4">
-            <div>
-              <h4 className="font-extrabold text-sm text-zinc-200 flex items-center gap-1.5">
-                <Waves size={16} className="text-cyan-400" /> Déficit de Drenagem Urbana
-              </h4>
-              <p className="text-[11px] text-zinc-400 mt-1">Estima exposição territorial a falhas operacionais da drenagem.</p>
+            <div className="flex flex-wrap items-start justify-between gap-2">
+              <div>
+                <h4 className="font-extrabold text-sm text-zinc-200 flex items-center gap-1.5">
+                  <Waves size={16} className="text-cyan-400" /> Déficit de Drenagem Urbana
+                </h4>
+                <p className="text-[11px] text-zinc-400 mt-1">Estima exposição territorial a falhas operacionais da drenagem.</p>
+              </div>
+              <Badge tone="derived">Simulação · Derivado</Badge>
             </div>
             <div className="flex flex-col gap-2">
               <div className="flex justify-between text-xs text-zinc-300">
@@ -671,7 +1534,171 @@ export default function SimulationPanel({
           </div>
         )}
 
-        {activeTab !== 'predictive' && loading && activeTab === 'rainfall' && (
+        {activeTab === 'mitigation' && (
+          <div className="flex flex-col gap-4">
+            <div className="grid grid-cols-2 gap-1 rounded-lg border border-zinc-800 bg-zinc-950 p-1 sm:grid-cols-5">
+              {([
+                ['solar', 'Solar'],
+                ['green_roof', 'Telhado verde'],
+                ['green_heat', 'Verde × calor'],
+                ['shadow', 'Sombra'],
+                ['compare', 'Comparar'],
+              ] as const).map(([id, label]) => (
+                <button
+                  key={id}
+                  type="button"
+                  onClick={() => { setMitigationMode(id); setResult(null); }}
+                  className={`rounded px-2 py-1.5 text-[9px] font-bold uppercase ${
+                    mitigationMode === id
+                      ? 'border border-lime-500/30 bg-lime-500/20 text-lime-200'
+                      : 'text-zinc-400'
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+
+            {mitigationMode === 'solar' && (
+              <div className="rounded-lg border border-amber-500/20 bg-amber-950/10 p-3 space-y-2">
+                <h4 className="text-sm font-extrabold text-zinc-100">Potencial solar (LOD1)</h4>
+                <p className="text-[10px] leading-relaxed text-zinc-400">
+                  Estima kWp e geração anual a partir da área de footprint × HSP local.
+                </p>
+              </div>
+            )}
+
+            {mitigationMode === 'green_roof' && (
+              <div className="space-y-3">
+                <div className="flex flex-col gap-2">
+                  <div className="flex justify-between text-xs text-zinc-300">
+                    <span>Telhados convertidos em verdes</span>
+                    <span className="font-bold text-lime-300">{greenRoofPct}%</span>
+                  </div>
+                  <input
+                    type="range"
+                    min="0"
+                    max="100"
+                    step="5"
+                    value={greenRoofPct}
+                    onChange={(e) => setGreenRoofPct(Number(e.target.value))}
+                    className="w-full h-1.5 bg-zinc-800 rounded-lg appearance-none cursor-pointer accent-lime-500"
+                  />
+                </div>
+                <div className="flex flex-col gap-2">
+                  <div className="flex justify-between text-xs text-zinc-300">
+                    <span>Chuva de referência</span>
+                    <span className="font-bold text-sky-300">{greenRoofRainMm} mm</span>
+                  </div>
+                  <input
+                    type="range"
+                    min="40"
+                    max="250"
+                    step="10"
+                    value={greenRoofRainMm}
+                    onChange={(e) => setGreenRoofRainMm(Number(e.target.value))}
+                    className="w-full h-1.5 bg-zinc-800 rounded-lg appearance-none cursor-pointer accent-sky-500"
+                  />
+                </div>
+              </div>
+            )}
+
+            {mitigationMode === 'green_heat' && (
+              <div className="space-y-3">
+                <div className="flex flex-col gap-2">
+                  <div className="flex justify-between text-xs text-zinc-300">
+                    <span>Arborização / parques</span>
+                    <span className="font-bold text-lime-300">+{greenHeatArborPct}%</span>
+                  </div>
+                  <input
+                    type="range"
+                    min="0"
+                    max="60"
+                    step="5"
+                    value={greenHeatArborPct}
+                    onChange={(e) => setGreenHeatArborPct(Number(e.target.value))}
+                    className="w-full h-1.5 bg-zinc-800 rounded-lg appearance-none cursor-pointer accent-lime-500"
+                  />
+                </div>
+                <div className="flex flex-col gap-2">
+                  <div className="flex justify-between text-xs text-zinc-300">
+                    <span>Pico de temperatura</span>
+                    <span className="font-bold text-rose-300">{greenHeatPeakC} °C</span>
+                  </div>
+                  <input
+                    type="range"
+                    min="28"
+                    max="46"
+                    step="1"
+                    value={greenHeatPeakC}
+                    onChange={(e) => setGreenHeatPeakC(Number(e.target.value))}
+                    className="w-full h-1.5 bg-zinc-800 rounded-lg appearance-none cursor-pointer accent-rose-500"
+                  />
+                </div>
+                <p className="text-[9px] text-zinc-500 italic">
+                  Compara ΔT da ilha de calor sem vs com ganho de vegetação.
+                </p>
+              </div>
+            )}
+
+            {mitigationMode === 'shadow' && (
+              <div className="space-y-3">
+                <div className="flex flex-col gap-2">
+                  <div className="flex justify-between text-xs text-zinc-300">
+                    <span>Hora do dia (local)</span>
+                    <span className="font-bold text-amber-300">{shadowHour}h</span>
+                  </div>
+                  <input
+                    type="range"
+                    min="6"
+                    max="18"
+                    step="1"
+                    value={shadowHour}
+                    onChange={(e) => setShadowHour(Number(e.target.value))}
+                    className="w-full h-1.5 bg-zinc-800 rounded-lg appearance-none cursor-pointer accent-amber-500"
+                  />
+                </div>
+                <p className="text-[9px] text-zinc-500 italic">
+                  Insolação por edifício (posição solar × sombra de vizinhos mais altos).
+                </p>
+              </div>
+            )}
+
+            {mitigationMode === 'compare' && (
+              <div className="space-y-3">
+                <p className="text-[10px] text-zinc-400">Escolha a intervenção para ver antes/depois:</p>
+                <div className="grid grid-cols-3 gap-1">
+                  {([
+                    ['telhado_verde', 'Telhado'],
+                    ['infraverde_calor', 'Calor'],
+                    ['solar', 'Solar'],
+                  ] as const).map(([id, label]) => (
+                    <button
+                      key={id}
+                      type="button"
+                      onClick={() => setCompareTipo(id)}
+                      className={`rounded border px-2 py-1.5 text-[9px] font-bold uppercase ${
+                        compareTipo === id
+                          ? 'border-indigo-500/40 bg-indigo-500/20 text-indigo-200'
+                          : 'border-zinc-800 text-zinc-500'
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+                {compareTipo === 'telhado_verde' && (
+                  <p className="text-[9px] text-zinc-500">Usa {greenRoofPct}% telhados · {greenRoofRainMm} mm</p>
+                )}
+                {compareTipo === 'infraverde_calor' && (
+                  <p className="text-[9px] text-zinc-500">Usa +{greenHeatArborPct}% vegetação · {greenHeatPeakC} °C</p>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
+        {loading && activeTab === 'rainfall' && (
           <div className="mt-4 rounded-lg border border-sky-500/30 bg-sky-950/20 p-3 space-y-2">
             {simProgress && (
               <>
@@ -694,7 +1721,7 @@ export default function SimulationPanel({
           <p className="mt-2 rounded-lg border border-rose-800/50 bg-rose-950/30 px-3 py-2 text-[10px] text-rose-200">{simError}</p>
         )}
 
-        {activeTab !== 'predictive' && !result && !loading && (
+        {!result && !loading && (
           <EmptyState
             icon={Droplets}
             compact
@@ -708,8 +1735,7 @@ export default function SimulationPanel({
           />
         )}
 
-        {/* Action buttons — ocultos na aba preditiva (tem botão próprio) */}
-        {activeTab !== 'predictive' && (
+        {/* Action buttons */}
         <div className="flex gap-2 mt-5 border-t border-zinc-800 pt-4">
           <button
             onClick={handleSimulate}
@@ -728,8 +1754,7 @@ export default function SimulationPanel({
             Limpar
           </button>
         </div>
-        )}
-        {activeTab !== 'predictive' && result && (
+        {result && (
           <button
             onClick={handleGenerateMitigationPlan}
             disabled={planLoading}
@@ -739,7 +1764,7 @@ export default function SimulationPanel({
             {planLoading ? 'Gerando plano...' : 'Gerar Plano de Ação Sugerido'}
           </button>
         )}
-        {activeTab !== 'predictive' && result && (
+        {result && (
           <button
             onClick={handleGenerateContingency}
             disabled={contingencyLoading}
@@ -751,558 +1776,50 @@ export default function SimulationPanel({
         )}
       </div>
 
-      {/* Simulator Results */}
-      {result && onView3D && onFocusWorkshop && onCrossRiskLayers && (
-        <SimulationNextSteps
-          scenarioLabel={
-            activeTab === 'rainfall'
-              ? `${rainfallMm} mm${compareRainfall ? ` vs ${baselineRainfallMm} mm` : ''}`
-              : result.scenario_type || 'Simulação'
-          }
-          isVolumeSim={isVolumeSimulation(result.geometry)}
-          auto3dApplied={mapMode3dActive && isVolumeSimulation(result.geometry)}
-          fromCache={result.from_cache}
-          onView3D={onView3D}
-          onFocusWorkshop={onFocusWorkshop}
-          onCrossRiskLayers={onCrossRiskLayers}
-          onExportPdf={handleExportPdf}
-          exportPdfLoading={exportLoading === 'pdf'}
-        />
-      )}
-
-      {result && (
-        <div className="bg-card/40 border border-border p-4 rounded-xl flex flex-col gap-4 animate-fadeIn">
-          <div className="flex items-start justify-between gap-2">
-            <div>
-              <h4 className="font-extrabold text-zinc-200 text-xs uppercase tracking-wide">Resultados da Simulação</h4>
-              {result.simulation_meta?.dem_available && (
-                <p className="mt-0.5 text-[9px] text-lime-400/80 font-mono">
-                  DEM: {result.simulation_meta.dem_source} · Δh max {result.simulation_meta.max_depth_m} m
-                  {result.simulation_meta.flood_patches != null && (
-                    <> · {result.simulation_meta.flood_patches} manchas</>
-                  )}
-                  {result.from_cache && (
-                    <span className="ml-1 text-sky-300">· cache</span>
-                  )}
-                </p>
-              )}
-            </div>
-            {result.simulation_meta?.method && (
-              <span className="rounded border border-indigo-500/30 bg-indigo-500/10 px-2 py-0.5 text-[8px] font-bold uppercase text-indigo-200">
-                {result.simulation_meta.method}
-                {result.simulation_meta.model_version && (
-                  <> · v{result.simulation_meta.model_version}</>
-                )}
-              </span>
-            )}
-          </div>
-          <div className="flex flex-wrap gap-2">
-            <button
-              type="button"
-              onClick={handleExportGeojson}
-              disabled={exportLoading !== null}
-              className="rounded-lg border border-lime-500/30 bg-lime-950/20 px-3 py-1.5 text-[10px] font-bold uppercase text-lime-200 hover:bg-lime-950/40 disabled:opacity-50"
-            >
-              {exportLoading === 'geojson' ? 'Exportando…' : 'Exportar GeoJSON'}
-            </button>
-            <button
-              type="button"
-              onClick={handleExportPdf}
-              disabled={exportLoading !== null}
-              className="rounded-lg border border-sky-500/30 bg-sky-950/20 px-3 py-1.5 text-[10px] font-bold uppercase text-sky-200 hover:bg-sky-950/40 disabled:opacity-50"
-            >
-              {exportLoading === 'pdf' ? 'Gerando PDF…' : 'PDF para oficina'}
-            </button>
-          </div>
-          <div className="h-px bg-zinc-800 w-full" />
-
-          {(analysisLoading || simInterpret || interpretError) && (
-            <div
-              id="interpretacao-ia"
-              className="animate-fadeIn rounded-xl border border-zinc-800 border-l-4 border-l-[#1D9E75] bg-card/40 p-4 flex flex-col gap-3"
-            >
-              <div className="flex items-center justify-between gap-2">
-                <h4 className="font-extrabold text-zinc-200 text-xs uppercase tracking-wide flex items-center gap-1.5">
-                  <Sparkles size={14} className="text-[#1D9E75]" />
-                  Interpretação Sinidu·IA
-                </h4>
-                {simInterpret && (
-                  <div className="flex flex-wrap items-center gap-1.5">
-                    {simInterpret.from_cache && (
-                      <span className="rounded border border-sky-500/30 bg-sky-950/30 px-2 py-0.5 text-[8px] font-bold uppercase text-sky-200">
-                        cache
-                      </span>
-                    )}
-                    <span className="rounded border border-teal-500/30 bg-teal-950/30 px-2 py-0.5 text-[8px] font-bold uppercase text-teal-200">
-                      Modelo: {simInterpret.ai_provider === 'deterministic' ? 'Regras' : simInterpret.ai_provider || 'Mistral'}
-                    </span>
-                  </div>
-                )}
-              </div>
-
-              {analysisLoading && (
-                <div className="space-y-2">
-                  <RotatingLoader messages={INTERPRETATION_MESSAGES} className="text-teal-200" />
-                  <div className="h-3 w-full animate-pulse rounded bg-zinc-800/80" />
-                  <div className="h-3 w-5/6 animate-pulse rounded bg-zinc-800/60" />
-                </div>
-              )}
-
-              {interpretError && !analysisLoading && (
-                <div className="rounded border border-rose-500/30 bg-rose-950/20 p-2">
-                  <p className="text-[10px] text-rose-200">{interpretError}</p>
-                  <button
-                    type="button"
-                    onClick={() => void runInterpret(result, rainfallComparison)}
-                    className="mt-2 text-[9px] font-bold uppercase text-rose-300 underline"
-                  >
-                    Tentar novamente
-                  </button>
-                </div>
-              )}
-
-              {simInterpret && !analysisLoading && (
-                <>
-                  <div>
-                    <span className="text-[9px] font-bold uppercase tracking-wider text-teal-400">Resumo</span>
-                    <p className="mt-1 text-[11px] leading-relaxed text-zinc-200">{simInterpret.resumo_executivo}</p>
-                  </div>
-
-                  {simInterpret.areas_criticas.length > 0 && (
-                    <div>
-                      <span className="text-[9px] font-bold uppercase tracking-wider text-teal-400">Áreas críticas</span>
-                      <ul className="mt-1 space-y-0.5">
-                        {simInterpret.areas_criticas.map((a) => (
-                          <li key={a} className="text-[10px] text-zinc-300">• {a}</li>
-                        ))}
-                      </ul>
-                    </div>
-                  )}
-
-                  {simInterpret.equipamentos_em_risco.length > 0 && (
-                    <div>
-                      <span className="text-[9px] font-bold uppercase tracking-wider text-teal-400">Equipamentos em risco</span>
-                      <ul className="mt-1 space-y-0.5">
-                        {simInterpret.equipamentos_em_risco.slice(0, 4).map((e) => (
-                          <li key={e} className="text-[10px] text-amber-200/90">• {e}</li>
-                        ))}
-                      </ul>
-                    </div>
-                  )}
-
-                  {simInterpret.comparacao_historica && (
-                    <p className="text-[10px] text-zinc-400">
-                      <span className="text-zinc-500">≈ Histórico:</span> {simInterpret.comparacao_historica}
-                    </p>
-                  )}
-
-                  {simInterpret.interpretacao_diferencial && (
-                    <div className="rounded border border-indigo-500/25 bg-indigo-950/20 p-2">
-                      <span className="text-[9px] font-bold uppercase text-indigo-300">Comparação vs referência</span>
-                      <p className="mt-1 text-[10px] leading-relaxed text-indigo-100/90">
-                        {simInterpret.interpretacao_diferencial}
-                      </p>
-                    </div>
-                  )}
-
-                  {simInterpret.recomendacoes_imediatas.length > 0 && (
-                    <div>
-                      <span className="text-[9px] font-bold uppercase tracking-wider text-emerald-400">Recomendações</span>
-                      <ul className="mt-1 space-y-0.5">
-                        {simInterpret.recomendacoes_imediatas.map((r) => (
-                          <li key={r} className="text-[10px] text-emerald-200/90">→ {r}</li>
-                        ))}
-                      </ul>
-                    </div>
-                  )}
-
-                  {slopeInterpret && (
-                    <div className="rounded border border-rose-500/25 bg-rose-950/15 p-2">
-                      <span className="text-[9px] font-bold uppercase text-rose-300">
-                        Encostas · {slopeInterpret.nivel_suscetibilidade} · COBRADE {slopeInterpret.referencia_cobrade}
-                      </span>
-                      <p className="mt-1 text-[10px] leading-relaxed text-rose-100/80">{slopeInterpret.interpretacao_ia}</p>
-                    </div>
-                  )}
-
-                  <p className="text-[8px] italic text-zinc-600">{simInterpret.disclaimer}</p>
-
-                  <div className="flex flex-wrap gap-2 pt-1">
-                    <button
-                      type="button"
-                      onClick={handleIncludeInReport}
-                      disabled={exportLoading === 'pdf'}
-                      className="flex items-center gap-1 rounded-lg border border-teal-600/40 bg-teal-950/30 px-2.5 py-1.5 text-[9px] font-bold uppercase text-teal-200 hover:bg-teal-900/40 disabled:opacity-50"
-                    >
-                      <FileText size={11} />
-                      {exportLoading === 'pdf' ? 'Gerando…' : 'Incluir no Relatório PDF'}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={handleCopyInterpret}
-                      className="flex items-center gap-1 rounded-lg border border-zinc-700 px-2.5 py-1.5 text-[9px] font-bold uppercase text-zinc-300 hover:bg-zinc-900"
-                    >
-                      {copyOk ? <ClipboardCheck size={11} className="text-teal-400" /> : <Copy size={11} />}
-                      {copyOk ? 'Copiado' : 'Copiar'}
-                    </button>
-                  </div>
-                </>
-              )}
-            </div>
-          )}
-
-          {rainfallComparison && activeTab === 'rainfall' && (
-            <div className="rounded-lg border border-amber-500/25 bg-amber-950/15 p-3">
-              <span className="text-[9px] font-extrabold uppercase tracking-wider text-amber-200 block mb-2">
-                Delta vs referência ({rainfallComparison.delta.baseline_mm} mm → {rainfallComparison.delta.scenario_mm} mm)
-              </span>
-              <div className="grid grid-cols-2 gap-2 text-[10px]">
-                <div className="rounded border border-zinc-800 bg-zinc-950/60 p-2">
-                  <span className="text-zinc-500 block">Área adicional</span>
-                  <strong className="text-amber-200">+{rainfallComparison.delta.affected_area_km2} km²</strong>
-                </div>
-                <div className="rounded border border-zinc-800 bg-zinc-950/60 p-2">
-                  <span className="text-zinc-500 block">População adicional</span>
-                  <strong className="text-amber-200">+{rainfallComparison.delta.affected_population.toLocaleString()} hab</strong>
-                </div>
-                <div className="rounded border border-zinc-800 bg-zinc-950/60 p-2">
-                  <span className="text-zinc-500 block">Δ profundidade máx.</span>
-                  <strong className="text-amber-200">+{rainfallComparison.delta.max_depth_m} m</strong>
-                </div>
-                <div className="rounded border border-zinc-800 bg-zinc-950/60 p-2">
-                  <span className="text-zinc-500 block">Novos bairros</span>
-                  <strong className="text-amber-200">{rainfallComparison.delta.bairros_novos.length}</strong>
-                </div>
-              </div>
-              {rainfallComparison.delta.bairros_novos.length > 0 && (
-                <p className="mt-2 text-[9px] text-zinc-400">
-                  Novos bairros expostos: {rainfallComparison.delta.bairros_novos.slice(0, 8).join(', ')}
-                  {rainfallComparison.delta.bairros_novos.length > 8 ? '…' : ''}
-                </p>
-              )}
-            </div>
-          )}
-
-          <div className="grid grid-cols-2 gap-3">
-            <div className="bg-zinc-950/60 p-2.5 rounded-lg border border-zinc-800">
-              <span className="text-[9px] text-zinc-400 font-bold uppercase tracking-wider block">Área Afetada</span>
-              <span className="text-sm font-extrabold text-zinc-200">{result.affected_area_km2} km²</span>
-            </div>
-            <div className="bg-zinc-950/60 p-2.5 rounded-lg border border-zinc-800">
-              <span className="text-[9px] text-zinc-400 font-bold uppercase tracking-wider block">Impacto Estimado</span>
-              <span className="text-sm font-extrabold text-accent-rose">
-                {result.scenario_type === 'VegetationLoss' 
-                  ? `+${result.impact_value}°C` 
-                  : `${result.impact_value.toLocaleString()} hab`}
-              </span>
-            </div>
-          </div>
-
-          {result.simulation_meta?.dem_available && (
-            <div className="grid grid-cols-3 gap-2">
-              <div className="rounded-lg border border-lime-500/20 bg-lime-950/10 p-2 text-center">
-                <span className="block text-[8px] uppercase text-zinc-500">Resolução DEM</span>
-                <span className="text-xs font-bold text-lime-300">
-                  ~{result.simulation_meta.dem_resolution_m ?? 30} m
-                </span>
-              </div>
-              <div className="rounded-lg border border-lime-500/20 bg-lime-950/10 p-2 text-center">
-                <span className="block text-[8px] uppercase text-zinc-500">Isolinhas</span>
-                <span className="text-xs font-bold text-lime-300">
-                  {result.simulation_meta.contour_interval_m} m
-                  {result.simulation_meta.contour_count != null && (
-                    <span className="block text-[8px] font-normal text-zinc-500">
-                      {result.simulation_meta.contour_count} curvas
-                    </span>
-                  )}
-                </span>
-              </div>
-              <div className="rounded-lg border border-lime-500/20 bg-lime-950/10 p-2 text-center">
-                <span className="block text-[8px] uppercase text-zinc-500">Incerteza vertical</span>
-                <span className="text-xs font-bold text-lime-300">
-                  ±{result.simulation_meta.vertical_accuracy_m ?? 16} m
-                </span>
-              </div>
-            </div>
-          )}
-
-          {result.simulation_meta?.precision_note && (
-            <p className="text-[9px] leading-relaxed text-zinc-500 italic">
-              {result.simulation_meta.precision_note}
-            </p>
-          )}
-
-          {result.simulation_meta?.dem_available && (
-            <div className="grid grid-cols-3 gap-2">
-              <div className="rounded-lg border border-zinc-800 bg-zinc-950/40 p-2 text-center">
-                <span className="block text-[8px] uppercase text-zinc-500">Cota mín.</span>
-                <span className="text-xs font-bold text-zinc-300">{result.simulation_meta.altitude_min_m} m</span>
-              </div>
-              <div className="rounded-lg border border-zinc-800 bg-zinc-950/40 p-2 text-center">
-                <span className="block text-[8px] uppercase text-zinc-500">Cota média</span>
-                <span className="text-xs font-bold text-zinc-300">{result.simulation_meta.altitude_media_m} m</span>
-              </div>
-              <div className="rounded-lg border border-zinc-800 bg-zinc-950/40 p-2 text-center">
-                <span className="block text-[8px] uppercase text-zinc-500">Cota máx.</span>
-                <span className="text-xs font-bold text-zinc-300">{result.simulation_meta.altitude_max_m} m</span>
-              </div>
-            </div>
-          )}
-
-          {result.scenario_type === 'ExtremeRainfall' && result.simulation_meta?.flow_accumulation_applied && (
-            <div className="grid grid-cols-3 gap-2">
-              <div className="rounded-lg border border-sky-500/20 bg-sky-950/10 p-2 text-center">
-                <span className="block text-[8px] uppercase text-zinc-500">Acúmulo D8</span>
-                <span className="text-xs font-bold text-sky-300">{result.simulation_meta.max_flow_accumulation ?? '—'}</span>
-              </div>
-              <div className="rounded-lg border border-sky-500/20 bg-sky-950/10 p-2 text-center">
-                <span className="block text-[8px] uppercase text-zinc-500">Impermeab.</span>
-                <span className="text-xs font-bold text-sky-300">
-                  {result.simulation_meta.mean_impermeability != null
-                    ? `${Math.round(result.simulation_meta.mean_impermeability * 100)}%`
-                    : '—'}
-                </span>
-              </div>
-              <div className="rounded-lg border border-sky-500/20 bg-sky-950/10 p-2 text-center">
-                <span className="block text-[8px] uppercase text-zinc-500">Bairros</span>
-                <span className="text-xs font-bold text-sky-300">
-                  {result.simulation_meta.bairros_atingidos_count ?? result.affected_bairros.length}
-                </span>
-              </div>
-            </div>
-          )}
-
-          {(result.contours?.features?.length > 0 || result.flow_paths?.features?.length > 0) && (
-            <div className="rounded-lg border border-zinc-800 bg-zinc-950/40 p-2.5">
-              <span className="text-[9px] text-zinc-400 font-bold uppercase tracking-wider block mb-1.5">Visibilidade no mapa</span>
-              <div className="flex flex-wrap gap-2 mb-2">
-                {(
-                  [
-                    { key: 'showFlood' as const, label: 'Manchas de alagamento', activeClass: 'border-sky-500/40 bg-sky-500/15 text-sky-200' },
-                    { key: 'showContours' as const, label: 'Curvas de nível', activeClass: 'border-lime-500/40 bg-lime-500/15 text-lime-200' },
-                    { key: 'showFlow' as const, label: 'Escoamento D8', activeClass: 'border-cyan-500/40 bg-cyan-500/15 text-cyan-200' },
-                  ] as const
-                ).map(({ key, label, activeClass }) => {
-                  const active = overlayOptions[key];
-                  return (
-                    <button
-                      key={key}
-                      type="button"
-                      onClick={() => onOverlayChange({ ...overlayOptions, [key]: !active })}
-                      className={`rounded-full border px-2 py-0.5 text-[9px] transition ${
-                        active ? activeClass : 'border-zinc-700 bg-zinc-900 text-zinc-500 line-through'
-                      }`}
-                    >
-                      {label}
-                    </button>
-                  );
-                })}
-              </div>
-              <span className="text-[9px] text-zinc-400 font-bold uppercase tracking-wider block mb-1.5">Camadas geradas</span>
-              <div className="flex flex-wrap gap-2">
-                {result.geometry?.features?.length > 0 && (
-                  <span className="rounded-full border border-sky-500/30 bg-sky-500/10 px-2 py-0.5 text-[9px] text-sky-200">
-                    {result.geometry.features.length} mancha(s)
-                  </span>
-                )}
-                {result.contours?.features?.length > 0 && (
-                  <span className="rounded-full border border-lime-500/30 bg-lime-500/10 px-2 py-0.5 text-[9px] text-lime-200">
-                    {result.contours.features.length} curvas de nível
-                  </span>
-                )}
-                {result.flow_paths?.features?.length > 0 && (
-                  <span className="rounded-full border border-cyan-500/30 bg-cyan-500/10 px-2 py-0.5 text-[9px] text-cyan-200">
-                    {result.flow_paths.features.length} vetores escoamento
-                  </span>
-                )}
-              </div>
-            </div>
-          )}
-
-          <div>
-            <span className="text-[9px] text-zinc-400 font-bold uppercase tracking-wider block mb-1">Métricas de Consequência</span>
-            <p className="text-xs text-zinc-300 bg-zinc-950/40 p-2 border border-zinc-800/80 rounded italic">
-              {result.metric_impact}: {result.scenario_type === 'VegetationLoss' 
-                ? `Elevação térmica superficial projetada em +${result.impact_value}°C nas áreas desprovidas de cobertura.` 
-                : `Aproximadamente ${result.affected_population.toLocaleString()} cidadãos residem nos setores inundáveis afetados.`}
-            </p>
-          </div>
-
-          {result.affected_bairros.length > 0 && (
-            <div>
-              <span className="text-[9px] text-zinc-400 font-bold uppercase tracking-wider block mb-1">Bairros Atingidos</span>
-              <div className="flex flex-wrap gap-1">
-                {(result.simulation_meta?.bairros_exposicao?.length
-                  ? result.simulation_meta.bairros_exposicao.map((row) => (
-                      <span
-                        key={row.bairro}
-                        className="text-[9px] bg-zinc-950 border border-zinc-800 text-zinc-300 py-0.5 px-2 rounded-full font-medium"
-                        title={`${row.populacao_exposta.toLocaleString()} hab expostos`}
-                      >
-                        {row.bairro} · {row.exposicao_pct}%
-                      </span>
-                    ))
-                  : result.affected_bairros.map((b) => (
-                      <span key={b} className="text-[9px] bg-zinc-950 border border-zinc-800 text-zinc-300 py-0.5 px-2 rounded-full font-medium">
-                        {b}
-                      </span>
-                    )))}
-              </div>
-            </div>
-          )}
-
-          {result.risk_context && result.risk_context.length > 0 && (
-            <div>
-              <span className="text-[9px] text-zinc-400 font-bold uppercase tracking-wider block mb-1.5">
-                Contexto IVC × IRI (top 5)
-              </span>
-              <div className="flex flex-col gap-1">
-                {result.risk_context.slice(0, 5).map((row) => (
-                  <div key={row.bairro} className="flex items-center justify-between rounded border border-zinc-800 bg-zinc-950/50 px-2 py-1">
-                    <span className="text-[10px] text-zinc-300 font-medium">{row.bairro}</span>
-                    <span className="text-[9px] font-mono text-indigo-300">
-                      IVC {row.ivc.toFixed(2)} · IRI {row.iri.toFixed(2)}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-        </div>
-      )}
-
-      {mitigationPlan && (
-        <div className="bg-card/40 border border-emerald-500/25 p-4 rounded-xl flex flex-col gap-4 animate-fadeIn">
-          <div>
-            <h4 className="font-extrabold text-zinc-200 text-xs uppercase tracking-wide">Plano de Ação Sugerido</h4>
-            <p className="mt-1 text-[10px] text-zinc-400">
-              Severidade <strong className="text-emerald-300">{mitigationPlan.severidade}</strong> para {mitigationPlan.evento.tipo}
-              {` (${mitigationPlan.evento.valor_entrada ?? mitigationPlan.evento.precipitacao_mm} ${mitigationPlan.evento.unidade || 'mm'})`},
-              {` ${mitigationPlan.evento.area_afetada_km2} km²`} e {mitigationPlan.evento.populacao_afetada.toLocaleString('pt-BR')} pessoa(s) exposta(s).
-            </p>
-          </div>
-
-          <div>
-            <span className="text-[9px] text-zinc-400 font-bold uppercase tracking-wider block mb-2">Ações proporcionais ao evento</span>
-            <div className="flex flex-col gap-2">
-              {mitigationPlan.acoes_tecnicas_padrao.map((item, idx) => (
-                <div key={`${item.horizonte}-${idx}`} className="rounded-lg border border-zinc-800 bg-zinc-950/50 p-2.5">
-                  <div className="text-[10px] font-extrabold text-emerald-300">{item.horizonte}</div>
-                  <p className="mt-1 text-[11px] leading-relaxed text-zinc-200">{item.acao}</p>
-                  <p className="mt-1 text-[9px] leading-relaxed text-zinc-500">{item.justificativa} {item.proporcionalidade}</p>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          <div>
-            <span className="text-[9px] text-zinc-400 font-bold uppercase tracking-wider block mb-2">Experiências do município</span>
-            {mitigationPlan.experiencias_municipais.length > 0 ? (
-              <div className="flex flex-col gap-2">
-                {mitigationPlan.experiencias_municipais.map((item) => (
-                  <div key={item.titulo} className="rounded-lg border border-zinc-800 bg-zinc-950/40 p-2">
-                    <strong className="text-[10px] text-zinc-200">{item.titulo}</strong>
-                    <p className="mt-1 text-[10px] leading-relaxed text-zinc-400">{item.descricao}</p>
-                    <p className="mt-1 text-[9px] text-zinc-600">Fonte: {item.fonte}</p>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <p className="rounded-lg border border-zinc-800 bg-zinc-950/40 p-2 text-[10px] text-zinc-500">
-                Sem experiências municipais verificáveis para este tipo de evento.
-              </p>
-            )}
-          </div>
-
-          <div>
-            <span className="text-[9px] text-zinc-400 font-bold uppercase tracking-wider block mb-2">Municípios e casos análogos</span>
-            {mitigationPlan.municipios_analogos.length > 0 ? (
-              <div className="flex flex-wrap gap-1.5">
-                {mitigationPlan.municipios_analogos.map((item) => (
-                  <span key={item.codigo_ibge} className="rounded-full border border-indigo-500/30 bg-indigo-500/10 px-2 py-1 text-[9px] font-bold text-indigo-200">
-                    {item.nome}-{item.uf}: {(item.coeficiente_similaridade * 100).toFixed(0)}%
-                  </span>
-                ))}
-              </div>
-            ) : (
-              <p className="rounded-lg border border-zinc-800 bg-zinc-950/40 p-2 text-[10px] text-zinc-500">
-                Não foram encontrados municípios análogos suficientes com os dados disponíveis.
-              </p>
-            )}
-            {mitigationPlan.casos_analogos.length === 0 && (
-              <p className="mt-2 rounded-lg border border-amber-500/20 bg-amber-950/10 p-2 text-[10px] text-amber-200/80">
-                Campo de casos análogos vazio: não há solução e resultado verificáveis por fonte oficial nesta versão do banco.
-              </p>
-            )}
-          </div>
-
-          <div>
-            <span className="text-[9px] text-zinc-400 font-bold uppercase tracking-wider block mb-2">Plano Diretor: pode fazer / não pode fazer</span>
-            <div className="grid grid-cols-1 gap-2">
-              <div className="rounded-lg border border-emerald-500/20 bg-emerald-950/10 p-2">
-                <strong className="text-[10px] text-emerald-200">Pode priorizar, se compatível</strong>
-                {mitigationPlan.diretrizes_plano_diretor.length > 0 ? (
-                  mitigationPlan.diretrizes_plano_diretor.map((item, idx) => (
-                    <p key={`${item.descricao}-${idx}`} className="mt-1 text-[10px] leading-relaxed text-zinc-400">{item.descricao} <span className="text-zinc-600">({item.fonte})</span></p>
-                  ))
-                ) : (
-                  <p className="mt-1 text-[10px] text-zinc-500">Sem diretriz específica extraída de fonte oficial legível.</p>
-                )}
-              </div>
-              <div className="rounded-lg border border-rose-500/20 bg-rose-950/10 p-2">
-                <strong className="text-[10px] text-rose-200">Não deve / depende de validação legal</strong>
-                {mitigationPlan.restricoes_plano_diretor.length > 0 ? (
-                  mitigationPlan.restricoes_plano_diretor.map((item, idx) => (
-                    <p key={`${item.descricao}-${idx}`} className="mt-1 text-[10px] leading-relaxed text-zinc-400">{item.descricao} <span className="text-zinc-600">({item.fonte})</span></p>
-                  ))
-                ) : (
-                  <p className="mt-1 text-[10px] text-zinc-500">Sem restrição específica extraída de fonte oficial legível.</p>
-                )}
-              </div>
-            </div>
-          </div>
-
-          {mitigationPlan.capacidade_investimento && (
-            <div>
-              <span className="text-[9px] text-zinc-400 font-bold uppercase tracking-wider block mb-2">Capacidade de Investimento</span>
-              <div className="rounded-lg border border-indigo-500/20 bg-indigo-950/10 p-3 flex flex-col gap-2">
-                <p className="text-[10px] text-zinc-300">
-                  CAPAG: <strong>{mitigationPlan.capacidade_investimento.nota_capag || 'não informada'}</strong>
-                  {' · '}IVC médio: <strong>{mitigationPlan.capacidade_investimento.media_ivc?.toFixed(2) ?? '—'}</strong>
-                </p>
-                {mitigationPlan.capacidade_investimento.alertas.map((item, idx) => (
-                  <p key={`${item}-${idx}`} className="text-[10px] font-semibold text-amber-300">{item}</p>
-                ))}
-                <div>
-                  <strong className="text-[10px] text-indigo-200">Fontes de financiamento compatíveis</strong>
-                  <ul className="mt-1 list-disc pl-4 text-[10px] text-zinc-400">
-                    {mitigationPlan.capacidade_investimento.fontes_financiamento_sugeridas.map((item) => (
-                      <li key={item}>{item}</li>
-                    ))}
-                  </ul>
-                </div>
-                {mitigationPlan.capacidade_investimento.observacao && (
-                  <p className="text-[9px] italic text-zinc-500">{mitigationPlan.capacidade_investimento.observacao}</p>
-                )}
-              </div>
-            </div>
-          )}
-
-          <div>
-            <span className="text-[9px] text-zinc-400 font-bold uppercase tracking-wider block mb-2">Fontes e lacunas</span>
-            <div className="flex flex-col gap-1">
-              {mitigationPlan.fontes_consultadas.map((item) => (
-                <p key={item.titulo} className="text-[9px] text-zinc-500">
-                  {item.titulo}: <span className="text-zinc-400">{item.status}</span>
-                </p>
-              ))}
-              {mitigationPlan.lacunas.map((item, idx) => (
-                <p key={`${item}-${idx}`} className="text-[9px] text-amber-300/80">Lacuna: {item}</p>
-              ))}
-            </div>
-          </div>
-        </div>
-      )}
+      <SimulationResults
+        result={result}
+        mitigationPlan={mitigationPlan}
+        simInterpret={simInterpret}
+        slopeInterpret={slopeInterpret}
+        analysisLoading={analysisLoading}
+        interpretError={interpretError}
+        copyOk={copyOk}
+        exportLoading={exportLoading}
+        rainfallComparison={rainfallComparison}
+        heatLstComparison={heatLstComparison}
+        lstCompareLoading={lstCompareLoading}
+        activeTab={activeTab}
+        rainfallMm={rainfallMm}
+        compareRainfall={compareRainfall}
+        baselineRainfallMm={baselineRainfallMm}
+        floodTIndex={floodTIndex}
+        floodPlaying={floodPlaying}
+        floodLoop={floodLoop}
+        floodSpeedMs={floodSpeedMs}
+        calibBusy={calibBusy}
+        calibMsg={calibMsg}
+        codigoIbge={codigoIbge}
+        overlayOptions={overlayOptions}
+        onOverlayChange={onOverlayChange}
+        mapMode3dActive={mapMode3dActive}
+        onView3D={onView3D}
+        onFocusWorkshop={onFocusWorkshop}
+        onCrossRiskLayers={onCrossRiskLayers}
+        setFloodPlaying={setFloodPlaying}
+        setFloodTIndex={setFloodTIndex}
+        setFloodSpeedMs={setFloodSpeedMs}
+        setFloodLoop={setFloodLoop}
+        setCalibBusy={setCalibBusy}
+        setCalibMsg={setCalibMsg}
+        applyFloodTimelineFrame={applyFloodTimelineFrame}
+        runInterpret={runInterpret}
+        handleExportGeojson={handleExportGeojson}
+        handleExportKmz={handleExportKmz}
+        handleExportPdf={handleExportPdf}
+        handleIncludeInReport={handleIncludeInReport}
+        handleCopyInterpret={handleCopyInterpret}
+        simulationTipo={simulationTipo}
+      />
     </div>
   );
 }

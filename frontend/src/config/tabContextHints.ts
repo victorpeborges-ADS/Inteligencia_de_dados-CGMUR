@@ -20,31 +20,31 @@ export const TAB_CONTEXT_HINTS: Partial<Record<ActiveTab, TabContextHintConfig>>
   },
   catalog: {
     title: 'Catálogo de dados',
-    body: 'Consulte maturidade por fonte (IBGE, S2ID, CEMADEN…) e identifique lacunas antes de relatórios oficiais.',
+    body: 'Consulte maturidade por fonte (IBGE, S2ID, CEMADEN…) e identifique lacunas antes de exportar relatórios para decisão municipal.',
     ctaTab: 'dashboard',
     ctaLabel: 'Ver painel',
   },
   simulation: {
-    title: 'Simulações territoriais',
-    body: 'Chuva extrema (120 mm) ativa volume 3D no mapa. Após rodar, use o card “Próximos passos” e Modo Focus (F).',
+    title: 'Onde alaga se chover forte?',
+    body: 'Escolha um volume de chuva (ou TR) e rode. Resultado = estimativa territorial (selo Derivado/Estimado) — não é metodologia oficial ANA/CEMADEN/CPRM nem laudo. Leia o painel de limites e a nota metodológica.',
     ctaTab: 'contingency',
     ctaLabel: 'Plano de contingência',
   },
   monitoring: {
     title: 'Monitor operacional',
-    body: 'Alertas CEMADEN em tempo real. Ative contingência direto da timeline quando o nível subir para Laranja/Vermelho.',
+    body: 'Alertas CEMADEN em tempo real. Em Laranja/Vermelho, abra a contingência. O score Sinidu é triagem — não substitui o alerta oficial.',
     ctaTab: 'contingency',
     ctaLabel: 'Abrir contingência',
   },
   contingency: {
-    title: 'Contingência e Defesa Civil',
-    body: 'Monte rotas, abrigos e comunicação a partir de simulações ou alertas. Exporte o plano para operação.',
+    title: 'Do alerta à ação de campo',
+    body: 'Defina zonas, abrigos, contatos 24h e recursos. O protocolo COBRADE diz quem faz o quê em cada nível de alerta.',
     ctaTab: 'simulation',
     ctaLabel: 'Simular cenário',
   },
   assistant: {
-    title: 'Assistente municipal',
-    body: 'Pergunte com o IBGE selecionado — respostas citam fontes oficiais (IBGE, S2ID, CAPAG). Ideal para dúvidas pontuais.',
+    title: 'Agente Sinidu · Modo Normativo',
+    body: 'Legislação e RAG (Lei 12.608, COBRADE, manuais). Dados operacionais do município ficam no FAB Agente Sinidu · Operacional (canto inferior direito).',
   },
   cases: {
     title: 'Casos de referência',
@@ -52,7 +52,7 @@ export const TAB_CONTEXT_HINTS: Partial<Record<ActiveTab, TabContextHintConfig>>
   },
   audit: {
     title: 'Auditoria',
-    body: 'Rastreie geração de PDFs, diagnósticos e comparações — útil para homologação MCID e prestação de contas.',
+    body: 'Rastreie geração de PDFs, diagnósticos e comparações — útil para prestação de contas e revisão interna (não confunde com homologação de metodologia de engenharia).',
   },
   system: {
     title: 'Sistema',

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from app.timeutil import utc_now
 import calendar
 import datetime
 import logging
@@ -46,18 +47,18 @@ def _cache_get(key: str) -> dict[str, Any] | None:
     if not row:
         return None
     ts, payload = row
-    if datetime.datetime.utcnow() - ts > CACHE_TTL:
+    if utc_now() - ts > CACHE_TTL:
         _scenario_cache.pop(key, None)
         return None
     return payload
 
 
 def _cache_set(key: str, payload: dict[str, Any]) -> None:
-    _scenario_cache[key] = (datetime.datetime.utcnow(), payload)
+    _scenario_cache[key] = (utc_now(), payload)
 
 
 def _monitoring_snapshot(db: Session, codigo_ibge: str) -> dict[str, Any]:
-    since = datetime.datetime.utcnow() - datetime.timedelta(hours=24)
+    since = utc_now() - datetime.timedelta(hours=24)
     muni = db.query(Municipio).filter(Municipio.codigo_ibge == codigo_ibge).first()
     alerts = (
         db.query(MonitoringAlert)
@@ -83,7 +84,7 @@ def _monitoring_snapshot(db: Session, codigo_ibge: str) -> dict[str, Any]:
             nivel = "AMARELO"
 
     cemaden = sum(1 for a in alerts if a.tipo == "CEMADEN_ALERT")
-    now = datetime.datetime.utcnow()
+    now = utc_now()
     mes = calendar.month_name[now.month].lower()
     mes_pt = (
         "janeiro", "fevereiro", "março", "abril", "maio", "junho",
@@ -247,7 +248,7 @@ Produza JSON com chaves: interpretacao (2 frases), tendencia (1 frase), recomend
             "nivel_risco": ctx["nivel_risco"],
             "prob_critico_pct": ctx["prob_critico"],
         },
-        "updated_at": datetime.datetime.utcnow().isoformat(),
+        "updated_at": utc_now().isoformat(),
         "cached": False,
         "ai_provider": ai_provider,
     }
@@ -258,7 +259,7 @@ Produza JSON com chaves: interpretacao (2 frases), tendencia (1 frase), recomend
 def interpret_alert(tipo: str, nivel: str, titulo: str = "", *, use_ai: bool = True) -> dict[str, Any]:
     cache_key = f"alert:{tipo}:{nivel}:{titulo[:40]}"
     row = _alert_interp_cache.get(cache_key)
-    if row and datetime.datetime.utcnow() - row[0] <= CACHE_TTL:
+    if row and utc_now() - row[0] <= CACHE_TTL:
         return {"interpretacao": row[1], "cached": True, "tipo": tipo, "nivel": nivel}
 
     defaults = {
@@ -287,7 +288,7 @@ def interpret_alert(tipo: str, nivel: str, titulo: str = "", *, use_ai: bool = T
         except Exception:
             pass
 
-    _alert_interp_cache[cache_key] = (datetime.datetime.utcnow(), text)
+    _alert_interp_cache[cache_key] = (utc_now(), text)
     return {"interpretacao": text, "cached": False, "tipo": tipo, "nivel": nivel}
 
 

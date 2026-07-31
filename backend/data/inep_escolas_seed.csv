@@ -1,0 +1,25 @@
+codigo_ibge,codigo_inep,nome,dependencia,localizacao,ano,matriculas_total,matriculas_infantil,matriculas_fundamental,matriculas_medio,latitude,longitude
+2611606,26000001,Colégio Militar do Recife,federal,urbana,2023,1240,0,680,560,-8.0475,-34.9077
+2611606,26000002,Colégio Damas da Instrução Cristã,privada,urbana,2023,890,120,520,250,-8.0372,-34.9038
+2611606,26000003,Ginásio Pernambucano (Cabugá),estadual,urbana,2023,1580,0,920,660,-8.0531,-34.8806
+2611606,26000004,Escola Técnica Estadual Cícero Dias,estadual,urbana,2023,1120,0,0,1120,-8.1215,-34.9042
+2611606,26000005,Colégio de Aplicação da UFPE,federal,urbana,2023,760,80,420,260,-8.0494,-34.9452
+2611606,26000006,Colégio Santa Maria,privada,urbana,2023,640,90,380,170,-8.1251,-34.9009
+2611606,26000007,Escola Estadual Sizenando Silveira,estadual,urbana,2023,980,0,620,360,-8.0578,-34.8885
+2611606,26000008,EMEF Professor José de Barros,municipal,urbana,2023,420,85,335,0,-8.0345,-34.9123
+2611606,26000009,EMEI Boa Viagem,municipal,urbana,2023,180,180,0,0,-8.1189,-34.8945
+2611606,26000010,EMEF Alto do Pascoal,municipal,urbana,2023,510,60,450,0,-8.0298,-34.9356
+2611606,26000011,Escola Estadual Barão de Lucena,estadual,urbana,2023,1340,0,780,560,-8.0612,-34.8712
+2611606,26000012,EMEF Mustardinha,municipal,urbana,2023,390,55,335,0,-8.0756,-34.9189
+2611606,26000013,Colégio Marista Recife,privada,urbana,2023,720,110,410,200,-8.0867,-34.8912
+2611606,26000014,EMEF Coelhos,municipal,urbana,2023,460,70,390,0,-8.0412,-34.9234
+2611606,26000015,Escola Estadual Professor Josué de Castro,estadual,urbana,2023,870,0,540,330,-8.1123,-34.9056
+2611606,26000016,EMEI Jardim São Paulo,municipal,urbana,2023,145,145,0,0,-8.0987,-34.8765
+2611606,26000017,EMEF Afogados,municipal,urbana,2023,530,65,465,0,-8.0789,-34.9123
+2611606,26000018,Colégio PH (Parnamirim),privada,urbana,2023,580,95,350,135,-8.0312,-34.9012
+2611606,26000019,Escola Estadual Professor Luiz Freire,estadual,urbana,2023,1020,0,640,380,-8.0456,-34.8678
+2611606,26000020,EMEF Casa Amarela,municipal,urbana,2023,480,75,405,0,-8.0234,-34.9456
+2927408,29000001,Escola Municipal Modelo Salvador,municipal,urbana,2023,380,70,310,0,-12.9714,-38.5014
+2927408,29000002,Colégio Estadual da Bahia,estadual,urbana,2023,920,0,580,340,-12.9823,-38.5123
+4314902,43000001,EMEF Vila Assunção,municipal,urbana,2023,410,60,350,0,-30.0346,-51.2177
+4314902,43000002,Colégio Farroupilha,privada,urbana,2023,650,90,380,180,-30.0289,-51.2089

@@ -2,10 +2,10 @@
   "codigo_ibge": "2611606",
   "model_version": "1.0",
   "model_kind": "baseline_synthetic",
-  "auc_roc_cv": 0.993,
+  "auc_roc_cv": 0.994,
   "n_samples": 900,
   "n_positive": 816,
-  "threshold_mm_24h": 20.0,
+  "threshold_mm_24h": 30.0,
   "terrain": {
     "impermeabilizacao_pct": 62.0,
     "cobertura_vegetal_pct": 8.0,
@@ -21,7 +21,7 @@
     "cobertura_vegetal_pct",
     "declividade_media"
   ],
-  "trained_at": "2026-06-25T17:07:00Z",
-  "training_seconds": 1.47,
+  "trained_at": "2026-07-20T18:12:50Z",
+  "training_seconds": 1.05,
   "note": "Modelo baseline sintético. Execute etl/etl_flood_ml.py --municipio 2611606 para retreinar com OpenMeteo + S2ID."
 }

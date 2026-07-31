@@ -51,7 +51,7 @@ _PILOT_VEGETATION_HA = {
     2024: 1750.0,
 }
 VEGETATION_CLASS = "Vegetação / Floresta"
-COVERAGE_PARTITION_VERSION = 2
+COVERAGE_PARTITION_VERSION = 3  # v3: Recife usa OSM georreferenciado (água/parques/mata)
 
 # Recife — afinidade espacial por bairro (0–1) para partição de uso do solo
 RECIFE_WATER_AFFINITY: dict[str, float] = {
@@ -101,6 +101,45 @@ RECIFE_RIVER_LINES = (
 def _stats_dir() -> Path:
     return Path(os.getenv("MAPBIOMAS_STATS_DIR", "/data/mapbiomas"))
 
+
+def _repo_root() -> Path:
+    # backend/app/data_connectors/mapbiomas_collector.py → repo root
+    return Path(__file__).resolve().parents[3]
+
+
+def _bundled_pilot_csv() -> Path | None:
+    """CSV oficial dos 6 pilotos versionado em scripts/mapbiomas_stats (Fase 19c.2)."""
+    candidates = (
+        _repo_root() / "scripts" / "mapbiomas_stats" / "municipios_cobertura_pilotos.csv",
+        _stats_dir() / "municipios_cobertura_pilotos.csv",
+        Path("/data/mapbiomas/municipios_cobertura_pilotos.csv"),
+    )
+    for path in candidates:
+        if path.is_file():
+            return path
+    return None
+
+
+def ensure_pilot_csv_seeded() -> Path | None:
+    """Garante municipios_cobertura.csv no volume a partir do extract dos pilotos."""
+    dest = _stats_dir() / "municipios_cobertura.csv"
+    if dest.is_file():
+        return dest
+    bundled = _bundled_pilot_csv()
+    if not bundled:
+        return None
+    try:
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        import shutil
+
+        shutil.copy2(bundled, dest)
+        global _CSV_INDEX
+        _CSV_INDEX = None
+        logger.info("CSV MapBiomas pilotos semeado: %s → %s", bundled, dest)
+        return dest
+    except OSError as exc:
+        logger.warning("Não foi possível semear CSV MapBiomas em %s: %s", dest, exc)
+        return bundled
 
 def _normalize_muni_name(name: str) -> str:
     text = unicodedata.normalize("NFKD", str(name))
@@ -204,8 +243,9 @@ def _csv_path() -> Path | None:
     if explicit and Path(explicit).exists():
         return Path(explicit)
     default = _stats_dir() / "municipios_cobertura.csv"
-    return default if default.exists() else None
-
+    if default.exists():
+        return default
+    return _bundled_pilot_csv()
 
 def _parse_area(value: Any) -> float | None:
     if value in (None, "", "-", "..."):
@@ -301,10 +341,9 @@ def _urban_ha_for_year(
     """Retorna (urban_ha, data_quality)."""
     code = str(codigo_ibge).zfill(7)[:7]
     idx = csv_index()
-    for classe in CLASSES:
-        key = (code, year, classe)
-        if key in idx:
-            return idx[key], "oficial" if classe == "Área Urbana" else "oficial"
+    key = (code, year, "Área Urbana")
+    if key in idx:
+        return idx[key], "oficial"
 
     if code == "2611606" and year in _PILOT_URBAN_HA:
         return _PILOT_URBAN_HA[year], "referencia_mapbiomas"
@@ -317,7 +356,6 @@ def _urban_ha_for_year(
     growth = 1.0 + min(0.025, 0.015 + populacao / 5_000_000)  # ~2%/a
     urban = min(urban_cap, base_1985 * (growth ** years_elapsed))
     return round(urban, 2), "derivado"
-
 
 def _vegetation_ha_for_year(
     codigo_ibge: str,
@@ -413,23 +451,32 @@ def build_landcover_series(
     """Gera série anual urbana/floresta/água em hectares."""
     years = years or REFERENCE_YEARS
     total_ha = max(float(area_km2 or 0) * 100.0, 1.0)
-    water_ha = round(min(total_ha * 0.04, max(50.0, total_ha * 0.02)), 2)
+    code = str(codigo_ibge).zfill(7)[:7]
+    idx = csv_index()
     rows: list[dict[str, Any]] = []
 
     for year in years:
+        water_key = (code, year, "Corpo d'água")
+        if water_key in idx:
+            water_ha = float(idx[water_key])
+            water_quality = "oficial"
+        else:
+            water_ha = round(min(total_ha * 0.04, max(50.0, total_ha * 0.02)), 2)
+            water_quality = "derivado"
+
         urban_ha, urban_quality = _urban_ha_for_year(codigo_ibge, year, area_km2, populacao)
         forest_ha, forest_quality = _vegetation_ha_for_year(
             codigo_ibge, year, area_km2, urban_ha, water_ha
         )
         if urban_ha + forest_ha + water_ha > total_ha * 1.01:
-            code = str(codigo_ibge).zfill(7)[:7]
-            if not (code == "2611606" and year in _PILOT_VEGETATION_HA):
-                forest_ha = round(max(0.0, total_ha - urban_ha - water_ha), 2)
-                forest_quality = "derivado"
+            if not (code == "2611606" and year in _PILOT_VEGETATION_HA and forest_quality != "oficial"):
+                if forest_quality != "oficial":
+                    forest_ha = round(max(0.0, total_ha - urban_ha - water_ha), 2)
+                    forest_quality = "derivado"
         for classe, area, quality in (
             ("Área Urbana", urban_ha, urban_quality),
             (VEGETATION_CLASS, forest_ha, forest_quality),
-            ("Corpo d'água", water_ha, "derivado"),
+            ("Corpo d'água", water_ha, water_quality),
         ):
             rows.append({
                 "ano": year,
@@ -477,35 +524,43 @@ def _take_cells_by_quota(
 
 
 def _river_water_mask(poly) -> Any:
+    """Fallback fino (~45 m) — não usar buffer largo (vira mancha de inundação)."""
     rivers = unary_union(
-        [line.buffer(0.0032, cap_style=2, join_style=2) for line in RECIFE_RIVER_LINES]
+        [line.buffer(0.0004, cap_style=2, join_style=2) for line in RECIFE_RIVER_LINES]
     )
     return poly.intersection(rivers)
 
 
 def _recife_landcover_partition(poly, class_ha: dict[str, float]) -> dict[str, Any]:
-    """Partição por bairros + rios — evita faixas horizontais artificiais."""
+    """Recife: preferir OSM georreferenciado; fallback Voronoi só se OSM falhar."""
+    try:
+        from app.data_connectors.osm_landcover_collector import build_recife_osm_landcover
+
+        osm_parts = build_recife_osm_landcover(poly)
+        if osm_parts and len(osm_parts) >= 2:
+            return osm_parts
+    except Exception as exc:
+        logger.warning("Cobertura OSM Recife indisponível, usando fallback: %s", exc)
+
+    return _recife_landcover_partition_voronoi_fallback(poly, class_ha)
+
+
+def _recife_landcover_partition_voronoi_fallback(poly, class_ha: dict[str, float]) -> dict[str, Any]:
+    """Fallback legado — rios finos + afinidade de vegetação (sem pintar bairros inteiros como água)."""
     from app.data_connectors.territorial_mesh_collector import RECIFE_BAIRRO_SEEDS, _partition_voronoi
 
-    water_r, veg_r, _urban_r = _class_area_ratios(class_ha)
+    _water_r, veg_r, _urban_r = _class_area_ratios(class_ha)
     cells = _partition_voronoi(poly, RECIFE_BAIRRO_SEEDS)
 
-    water_cells, remaining = _take_cells_by_quota(
-        cells, RECIFE_WATER_AFFINITY, poly.area * water_r, default=0.08
-    )
-    veg_cells, remaining = _take_cells_by_quota(
-        remaining, RECIFE_VEG_AFFINITY, poly.area * veg_r, default=0.06
-    )
-
-    water_parts = [g for g in water_cells if g is not None and not g.is_empty]
+    # Água: apenas eixos fluviais finos (nunca quota por bairro)
     river_mask = _river_water_mask(poly)
-    if not river_mask.is_empty:
-        water_parts.append(river_mask)
-
-    water = poly.intersection(unary_union(water_parts)) if water_parts else None
+    water = poly.intersection(river_mask) if river_mask is not None and not river_mask.is_empty else None
     if water is not None and water.is_empty:
         water = None
 
+    veg_cells, remaining = _take_cells_by_quota(
+        cells, RECIFE_VEG_AFFINITY, poly.area * veg_r, default=0.06
+    )
     veg_raw = unary_union(veg_cells) if veg_cells else None
     if veg_raw is not None and not veg_raw.is_empty:
         veg_clip = veg_raw.difference(water) if water is not None else veg_raw
@@ -660,7 +715,22 @@ def needs_coverage_polygon_refresh(db: Session, muni: Municipio) -> bool:
     if poly.is_empty:
         return False
     if len(rows) != 3:
-        return False
+        return True
+
+    # Recife: mancha de água Voronoi antiga costuma ocupar >6% do município
+    if muni.codigo_ibge == "2611606":
+        from app.data_connectors.osm_landcover_collector import GEOJSON_PATH
+
+        if GEOJSON_PATH.exists():
+            water_row = next(
+                (r for r in rows if "água" in (r.classe_uso or "").lower() or "agua" in (r.classe_uso or "").lower()),
+                None,
+            )
+            if water_row is not None:
+                wgeom = shape(json.loads(db.scalar(water_row.geom.ST_AsGeoJSON())))
+                if not wgeom.is_empty and (wgeom.area / max(poly.area, 1e-12)) > 0.055:
+                    return True
+
     return all(
         _geometry_is_horizontal_band(shape(json.loads(db.scalar(row.geom.ST_AsGeoJSON()))), poly)
         for row in rows
@@ -781,12 +851,18 @@ def collect_mapbiomas_municipality(db: Session, codigo_ibge: str, force: bool = 
     return result
 
 
-def sync_mapbiomas_batch(db: Session, *, limit: int = 61, force: bool = False) -> dict[str, Any]:
+def sync_mapbiomas_batch(db: Session, *, limit: int = 6, force: bool = False) -> dict[str, Any]:
     """Sincroniza MapBiomas para municípios já carregados no banco."""
     from app.data_connectors.constants import TARGET_IBGE_CODES
 
+    ensure_pilot_csv_seeded()
     csv_built = ensure_mapbiomas_csv_from_xlsx(db, force=force)
-    source = "xlsx_oficial" if csv_built and _xlsx_path() else "csv_ou_derivado"
+    if _xlsx_path() and csv_built:
+        source = "xlsx_oficial"
+    elif _csv_path():
+        source = "csv_oficial"
+    else:
+        source = "derivado"
 
     codes = TARGET_IBGE_CODES[: max(1, min(limit, 100))]
     processed: list[dict[str, Any]] = []
@@ -811,8 +887,16 @@ def sync_mapbiomas_batch(db: Session, *, limit: int = 61, force: bool = False) -
 
 
 def get_urban_series(db: Session, codigo_ibge: str) -> list[dict[str, Any]]:
-    """Série área urbanizada (km²) para gráfico climático."""
+    """Série área urbanizada (km² e % do município) — 17e.2."""
     code = str(codigo_ibge).zfill(7)[:7]
+    muni = db.query(Municipio).filter(Municipio.codigo_ibge == code).first()
+    area_km2 = float(muni.area_km2) if muni and muni.area_km2 else 0.0
+
+    def _pct(area_urb_km2: float) -> float | None:
+        if area_km2 <= 0:
+            return None
+        return round(100.0 * area_urb_km2 / area_km2, 2)
+
     rows = (
         db.query(MapBiomasMunicipalStat)
         .filter(
@@ -823,23 +907,27 @@ def get_urban_series(db: Session, codigo_ibge: str) -> list[dict[str, Any]]:
         .all()
     )
     if rows:
-        return [
-            {
+        out = []
+        for r in rows:
+            km2 = round(float(r.area_ha) / 100.0, 2)
+            out.append({
                 "ano": r.ano,
-                "area_urbanizada_km2": round(float(r.area_ha) / 100.0, 2),
-                "qualidade_dado": "Oficial" if r.data_quality in ("oficial", "referencia_mapbiomas") else "Derivado",
-            }
-            for r in rows
-        ]
+                "area_urbanizada_km2": km2,
+                "pct_area_municipal": _pct(km2),
+                "qualidade_dado": (
+                    "Oficial" if r.data_quality in ("oficial", "referencia_mapbiomas") else "Derivado"
+                ),
+            })
+        return out
 
-    muni = db.query(Municipio).filter(Municipio.codigo_ibge == code).first()
     if not muni:
         return []
-    derived = build_landcover_series(code, float(muni.area_km2 or 0), int(muni.populacao or 0))
+    derived = build_landcover_series(code, area_km2, int(muni.populacao or 0))
     return [
         {
             "ano": r["ano"],
             "area_urbanizada_km2": round(float(r["area_ha"]) / 100.0, 2),
+            "pct_area_municipal": _pct(round(float(r["area_ha"]) / 100.0, 2)),
             "qualidade_dado": "Derivado",
         }
         for r in derived

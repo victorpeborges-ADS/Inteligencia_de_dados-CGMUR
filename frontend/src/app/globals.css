@@ -1,57 +1,90 @@
 @import url('https://unpkg.com/leaflet@1.9.4/dist/leaflet.css');
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Outfit:wght@400;500;600;700;800&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Source+Sans+3:ital,wght@0,400;0,500;0,600;0,700;1,400&display=swap');
 
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
-:root {
-  --foreground-rgb: 255, 255, 255;
-  --background-start-rgb: 9, 9, 11;
-  --background-end-rgb: 9, 9, 11;
+@import '../styles/theme-light.css';
+
+:root,
+[data-theme='dark'] {
+  --sinidu-bg: #0b0c0e;
+  --sinidu-card: #14161a;
+  --sinidu-border: #2a2e35;
+  --sinidu-fg: #f2f3f5;
+  --sinidu-accent: #0d9488;
+  --sinidu-accent-muted: rgba(13, 148, 136, 0.18);
+  --foreground-rgb: 242, 243, 245;
+  --background-start-rgb: 11, 12, 14;
+  --background-end-rgb: 11, 12, 14;
+}
+
+[data-theme='light'] {
+  --sinidu-bg: #e8e8e8;
+  --sinidu-card: #f0f0f0;
+  --sinidu-border: #c4c4c4;
+  --sinidu-fg: #404040;
+  --sinidu-accent: #0f766e;
+  --sinidu-accent-muted: rgba(15, 118, 110, 0.12);
+  --foreground-rgb: 64, 64, 64;
+  --background-start-rgb: 232, 232, 232;
+  --background-end-rgb: 224, 224, 224;
 }
 
 body {
   color: rgb(var(--foreground-rgb));
   background: rgb(var(--background-start-rgb));
-  font-family: 'Inter', sans-serif;
+  font-family: 'Source Sans 3', 'Segoe UI', system-ui, sans-serif;
   overflow-x: hidden;
+  letter-spacing: -0.01em;
 }
 
-/* Custom scrollbars for a premium dark mode feel */
+/* Scrollbars sóbrios */
 ::-webkit-scrollbar {
   width: 6px;
   height: 6px;
 }
 
 ::-webkit-scrollbar-track {
-  background: #09090b;
+  background: var(--sinidu-bg);
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #27272a;
-  border-radius: 3px;
+  background: var(--sinidu-border);
+  border-radius: 2px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #3f3f46;
+  background: #3d4450;
 }
 
-/* Leaflet Map overrides for glassmorphism popups */
+/* Leaflet — chrome alinhado ao shell (sem glass excessivo) */
 .leaflet-popup-content-wrapper {
-  background: rgba(24, 24, 27, 0.9) !important;
-  backdrop-filter: blur(10px);
-  color: #fff !important;
-  border: 1px solid #27272a !important;
-  border-radius: 8px !important;
-  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.5) !important;
+  background: var(--sinidu-card) !important;
+  color: var(--sinidu-fg) !important;
+  border: 1px solid var(--sinidu-border) !important;
+  border-radius: 6px !important;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.45) !important;
 }
 
 .leaflet-popup-tip {
-  background: rgba(24, 24, 27, 0.9) !important;
-  border: 1px solid #27272a !important;
+  background: var(--sinidu-card) !important;
+  border: 1px solid var(--sinidu-border) !important;
+}
+
+/* Marcadores de equipamentos (letra = tipo, borda = dependência) */
+.equipamento-marker {
+  background: transparent !important;
+  border: none !important;
 }
 
 .leaflet-container {
-  background: #0c0c0e !important;
+  background: #0b0c0e !important;
+}
+
+/* Foco visível institucional */
+:focus-visible {
+  outline: 2px solid var(--sinidu-accent);
+  outline-offset: 2px;
 }

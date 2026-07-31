@@ -11,6 +11,8 @@ from sqlalchemy.orm import Session
 
 from app.data_connectors.s2id_collector import ensure_s2id_loaded
 from app.data_connectors.sinesp_collector import ensure_sinesp_loaded
+from app.data_connectors.inep_educacao_collector import sync_educacao_municipio
+from app.data_connectors.territorios_especiais_collector import sync_territorios_municipio
 from app.models import Municipio, MunicipioSeed
 from app.services.cemaden_monitor import sync_cemaden_alerts
 from app.services.malha_ibge_service import baixar_malha_bairros_ibge, enriquecer_socioeconomico_censo
@@ -20,7 +22,7 @@ from app.services.recarga_progress_store import init_recarga, load_recarga_statu
 
 logger = logging.getLogger(__name__)
 
-ETAPAS = ("malha_ibge", "socioeconomico_censo", "s2id", "cemaden", "seguranca_sinesp")
+ETAPAS = ("malha_ibge", "socioeconomico_censo", "s2id", "cemaden", "seguranca_sinesp", "educacao_inep", "territorios_especiais")
 _locks: dict[str, threading.Lock] = {}
 
 
@@ -63,6 +65,10 @@ async def _run_etapa(
     if etapa == "seguranca_sinesp":
         result = ensure_sinesp_loaded(db, muni)
         return result or {"codigo_ibge": muni.codigo_ibge, "skipped": True}
+    if etapa == "educacao_inep":
+        return sync_educacao_municipio(db, muni)
+    if etapa == "territorios_especiais":
+        return sync_territorios_municipio(db, muni)
     raise ValueError(f"Etapa desconhecida: {etapa}")
 
 

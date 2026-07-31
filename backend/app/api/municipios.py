@@ -37,7 +37,7 @@ def recarregar_dados_reais(
     db: Session = Depends(get_db),
 ):
     get_accessible_municipio(db, codigo_ibge, request=request)
-    allowed = {"malha_ibge", "socioeconomico_censo", "s2id", "cemaden"}
+    allowed = {"malha_ibge", "socioeconomico_censo", "s2id", "cemaden", "educacao_inep", "seguranca_sinesp", "territorios_especiais"}
     fontes = [f for f in payload.fontes if f in allowed]
     if not fontes:
         raise HTTPException(status_code=400, detail="Nenhuma fonte válida informada.")

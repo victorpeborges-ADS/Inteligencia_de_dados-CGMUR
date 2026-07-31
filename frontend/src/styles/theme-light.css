@@ -1,0 +1,382 @@
+/**
+ * Modo claro = grayscale tendendo ao branco (UI).
+ * Mapa permanece escuro; painéis flutuantes usam .map-ui-chrome.
+ */
+
+[data-theme='light'] {
+  color-scheme: light;
+
+  /* Grayscale — sem branco puro */
+  --sinidu-bg: #e8e8e8;
+  --sinidu-card: #f0f0f0;
+  --sinidu-border: #c4c4c4;
+  --sinidu-fg: #404040;
+  --sinidu-muted: #5c5c5c;
+  --sinidu-subtle: #737373;
+  --sinidu-surface: #dedede;
+  --sinidu-surface-muted: #d4d4d4;
+  --sinidu-elevated: #f2f2f2;
+  --sinidu-stroke: #9ca3af;
+}
+
+[data-theme='light'] body {
+  color: var(--sinidu-fg);
+  background: var(--sinidu-bg);
+}
+
+[data-theme='light'] .text-foreground {
+  color: #404040 !important;
+}
+
+/* ── Zinc: fundos (grayscale) ── */
+[data-theme='light'] .bg-zinc-950 { background-color: var(--sinidu-elevated) !important; }
+[data-theme='light'] .bg-zinc-900 { background-color: var(--sinidu-surface) !important; }
+[data-theme='light'] .bg-zinc-800 { background-color: var(--sinidu-surface-muted) !important; }
+[data-theme='light'] .bg-black { background-color: var(--sinidu-surface) !important; }
+
+[data-theme='light'] .bg-zinc-950\/40 { background-color: rgba(242, 242, 242, 0.88) !important; }
+[data-theme='light'] .bg-zinc-950\/50 { background-color: rgba(242, 242, 242, 0.9) !important; }
+[data-theme='light'] .bg-zinc-950\/60 { background-color: #e8e8e8 !important; }
+[data-theme='light'] .bg-zinc-950\/70 { background-color: rgba(242, 242, 242, 0.94) !important; }
+[data-theme='light'] .bg-zinc-950\/80 { background-color: #f0f0f0 !important; }
+[data-theme='light'] .bg-zinc-950\/90,
+[data-theme='light'] .bg-zinc-950\/95 { background-color: rgba(240, 240, 240, 0.96) !important; }
+[data-theme='light'] .bg-zinc-900\/40,
+[data-theme='light'] .bg-zinc-900\/50,
+[data-theme='light'] .bg-zinc-900\/60,
+[data-theme='light'] .bg-zinc-900\/80 { background-color: #e5e5e5 !important; }
+[data-theme='light'] .bg-zinc-800\/80 { background-color: #dcdcdc !important; }
+[data-theme='light'] .bg-zinc-700\/30 { background-color: #e0e0e0 !important; }
+
+[data-theme='light'] .bg-card\/10 { background-color: rgba(240, 240, 240, 0.92) !important; }
+[data-theme='light'] .bg-card\/30 { background-color: #f0f0f0 !important; }
+[data-theme='light'] .bg-card\/50,
+[data-theme='light'] .bg-card\/60 { background-color: #f2f2f2 !important; }
+[data-theme='light'] .bg-card\/65 { background-color: rgba(244, 244, 244, 0.97) !important; }
+
+/* ── Zinc: texto (cinza escuro, não preto) ── */
+[data-theme='light'] .text-zinc-50,
+[data-theme='light'] .text-zinc-100 { color: #383838 !important; }
+[data-theme='light'] .text-zinc-200 { color: #404040 !important; }
+[data-theme='light'] .text-zinc-300 { color: #4a4a4a !important; }
+[data-theme='light'] .text-zinc-400 { color: #5c5c5c !important; }
+[data-theme='light'] .text-zinc-500 { color: #6b6b6b !important; }
+[data-theme='light'] .text-zinc-600 { color: #525252 !important; }
+
+[data-theme='light'] .hover\:text-zinc-200:hover,
+[data-theme='light'] .hover\:text-zinc-300:hover { color: #404040 !important; }
+
+/* ── Zinc: bordas / traços ── */
+[data-theme='light'] .border-zinc-600,
+[data-theme='light'] .border-zinc-700,
+[data-theme='light'] .border-zinc-700\/80 { border-color: #b8b8b8 !important; }
+[data-theme='light'] .border-zinc-800,
+[data-theme='light'] .border-zinc-800\/50,
+[data-theme='light'] .border-zinc-800\/80 { border-color: #c4c4c4 !important; }
+[data-theme='light'] .border-zinc-900\/60 { border-color: #c8c8c8 !important; }
+[data-theme='light'] .border-white\/20,
+[data-theme='light'] .border-white\/30 { border-color: #a3a3a3 !important; }
+
+[data-theme='light'] .hover\:bg-zinc-800:hover,
+[data-theme='light'] .hover\:bg-zinc-900:hover { background-color: #d4d4d4 !important; }
+
+/* ── Títulos gradiente ── */
+[data-theme='light'] .from-zinc-100 { --tw-gradient-from: #383838 var(--tw-gradient-from-position) !important; }
+[data-theme='light'] .to-zinc-400 { --tw-gradient-to: #6b6b6b var(--tw-gradient-to-position) !important; }
+
+/* ── Acentos (legíveis em fundo cinza-claro) ── */
+[data-theme='light'] .text-indigo-100,
+[data-theme='light'] .text-indigo-200,
+[data-theme='light'] .text-indigo-300,
+[data-theme='light'] .text-indigo-400 { color: #3730a3 !important; }
+
+[data-theme='light'] .text-emerald-200,
+[data-theme='light'] .text-emerald-300,
+[data-theme='light'] .text-emerald-400 { color: #047857 !important; }
+
+[data-theme='light'] .text-sky-200,
+[data-theme='light'] .text-sky-300,
+[data-theme='light'] .text-sky-400 { color: #0369a1 !important; }
+
+[data-theme='light'] .text-teal-200,
+[data-theme='light'] .text-teal-300 { color: #0f766e !important; }
+
+[data-theme='light'] .text-amber-100,
+[data-theme='light'] .text-amber-200,
+[data-theme='light'] .text-amber-300 { color: #b45309 !important; }
+
+[data-theme='light'] .text-rose-100,
+[data-theme='light'] .text-rose-200,
+[data-theme='light'] .text-rose-300,
+[data-theme='light'] .text-rose-400 { color: #be123c !important; }
+
+[data-theme='light'] .text-violet-200,
+[data-theme='light'] .text-violet-300 { color: #6d28d9 !important; }
+[data-theme='light'] .text-fuchsia-200,
+[data-theme='light'] .text-fuchsia-300 { color: #a21caf !important; }
+[data-theme='light'] .text-cyan-200,
+[data-theme='light'] .text-cyan-300 { color: #0e7490 !important; }
+[data-theme='light'] .text-orange-200,
+[data-theme='light'] .text-orange-300 { color: #c2410c !important; }
+[data-theme='light'] .text-purple-200,
+[data-theme='light'] .text-purple-300 { color: #7e22ce !important; }
+[data-theme='light'] .text-red-400 { color: #dc2626 !important; }
+[data-theme='light'] .text-blue-300,
+[data-theme='light'] .text-blue-400 { color: #1d4ed8 !important; }
+[data-theme='light'] .text-lime-300 { color: #4d7c0f !important; }
+
+[data-theme='light'] .hover\:text-indigo-200:hover { color: #312e81 !important; }
+
+[data-theme='light'] [class*='text-indigo-200'],
+[data-theme='light'] [class*='text-indigo-300'] { color: #3730a3 !important; }
+[data-theme='light'] [class*='text-fuchsia-200'],
+[data-theme='light'] [class*='text-cyan-200'],
+[data-theme='light'] [class*='text-orange-200'],
+[data-theme='light'] [class*='text-purple-200'] { color: #525252 !important; }
+
+/* ── Fundos de acento (pastéis em cinza) ── */
+[data-theme='light'] .bg-indigo-950\/10,
+[data-theme='light'] .bg-indigo-950\/15,
+[data-theme='light'] .bg-indigo-950\/20,
+[data-theme='light'] .bg-indigo-950\/30 { background-color: #e4e4f0 !important; }
+[data-theme='light'] .bg-indigo-500\/10,
+[data-theme='light'] .bg-indigo-500\/15,
+[data-theme='light'] .bg-indigo-500\/20,
+[data-theme='light'] .bg-indigo-500\/25 { background-color: #dcdcee !important; }
+
+[data-theme='light'] .bg-emerald-950\/30,
+[data-theme='light'] .bg-emerald-500\/10,
+[data-theme='light'] .bg-emerald-500\/15,
+[data-theme='light'] .bg-emerald-500\/25 { background-color: #dceee6 !important; }
+[data-theme='light'] .bg-sky-950\/30,
+[data-theme='light'] .bg-sky-500\/10,
+[data-theme='light'] .bg-sky-500\/15,
+[data-theme='light'] .bg-sky-500\/25 { background-color: #dce8f2 !important; }
+[data-theme='light'] .bg-amber-950\/30,
+[data-theme='light'] .bg-amber-950\/50,
+[data-theme='light'] .bg-amber-500\/10,
+[data-theme='light'] .bg-amber-500\/15 { background-color: #f0ead8 !important; }
+[data-theme='light'] .bg-rose-950\/30,
+[data-theme='light'] .bg-rose-950\/40,
+[data-theme='light'] .bg-rose-500\/10,
+[data-theme='light'] .bg-rose-500\/15 { background-color: #f0e0e4 !important; }
+[data-theme='light'] .bg-teal-950\/20,
+[data-theme='light'] .bg-teal-950\/30,
+[data-theme='light'] .bg-teal-500\/20 { background-color: #dcecea !important; }
+[data-theme='light'] .bg-cyan-950\/60,
+[data-theme='light'] .bg-cyan-900\/50 { background-color: #dceef0 !important; }
+
+[data-theme='light'] .border-indigo-500\/25,
+[data-theme='light'] .border-indigo-500\/30,
+[data-theme='light'] .border-indigo-500\/40 { border-color: #a5a5c8 !important; }
+[data-theme='light'] .border-emerald-500\/40 { border-color: #8ab89a !important; }
+[data-theme='light'] .border-sky-500\/40 { border-color: #8aaccc !important; }
+[data-theme='light'] .border-rose-500\/40,
+[data-theme='light'] .border-rose-500\/60 { border-color: #c9a0a8 !important; }
+[data-theme='light'] .border-teal-500\/30,
+[data-theme='light'] .border-teal-600\/40 { border-color: #8ab8b0 !important; }
+[data-theme='light'] .border-cyan-700 { border-color: #7ab0bc !important; }
+
+/* ── Painéis flutuantes no mapa (oficina, camadas, legenda) ── */
+[data-theme='light'] .map-ui-chrome {
+  background-color: rgba(240, 240, 240, 0.97) !important;
+  border-color: #b0b0b0 !important;
+  color: #404040 !important;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.35) !important;
+}
+
+[data-theme='light'] .map-ui-chrome .bg-zinc-950,
+[data-theme='light'] .map-ui-chrome .bg-zinc-950\/95,
+[data-theme='light'] .map-ui-chrome .bg-zinc-950\/90,
+[data-theme='light'] .map-ui-chrome .bg-zinc-900,
+[data-theme='light'] .map-ui-chrome .bg-zinc-900\/50,
+[data-theme='light'] .map-ui-chrome .bg-zinc-900\/80 {
+  background-color: #ececec !important;
+}
+
+[data-theme='light'] .map-ui-chrome .bg-zinc-900\/40 {
+  background-color: #e2e2e2 !important;
+}
+
+[data-theme='light'] .map-ui-chrome .text-zinc-50,
+[data-theme='light'] .map-ui-chrome .text-zinc-100,
+[data-theme='light'] .map-ui-chrome .text-zinc-200,
+[data-theme='light'] .map-ui-chrome .text-zinc-300 {
+  color: #404040 !important;
+}
+
+[data-theme='light'] .map-ui-chrome .border-zinc-800,
+[data-theme='light'] .map-ui-chrome .border-zinc-700,
+[data-theme='light'] .map-ui-chrome .border-zinc-800\/80 {
+  border-color: #b8b8b8 !important;
+}
+
+[data-theme='light'] .map-ui-chrome .shadow-black\/50 {
+  --tw-shadow-color: rgba(0, 0, 0, 0.25) !important;
+}
+
+/* ── Mapa: fundo sempre escuro ── */
+[data-theme='light'] .leaflet-container {
+  background: #0a0a0c !important;
+}
+
+/* ── Inputs ── */
+[data-theme='light'] input,
+[data-theme='light'] select,
+[data-theme='light'] textarea {
+  color: #404040;
+}
+[data-theme='light'] select option {
+  background-color: #f0f0f0;
+  color: #404040;
+}
+
+/* ── Scrollbar ── */
+[data-theme='light'] ::-webkit-scrollbar-track { background: #e0e0e0; }
+[data-theme='light'] ::-webkit-scrollbar-thumb { background: #b0b0b0; }
+[data-theme='light'] ::-webkit-scrollbar-thumb:hover { background: #909090; }
+
+/* ── Leaflet popups (sobre mapa escuro) ── */
+[data-theme='light'] .leaflet-popup-content-wrapper {
+  background: #f0f0f0 !important;
+  color: #404040 !important;
+  border: 1px solid #b8b8b8 !important;
+}
+[data-theme='light'] .leaflet-popup-tip {
+  background: #f0f0f0 !important;
+  border: 1px solid #b8b8b8 !important;
+}
+[data-theme='light'] .leaflet-popup-content .text-zinc-400 {
+  color: #6b6b6b !important;
+}
+
+/* ── Tabelas e código ── */
+[data-theme='light'] pre.bg-zinc-900 {
+  background-color: #e5e5e5 !important;
+  color: #404040 !important;
+  border: 1px solid #c4c4c4;
+}
+[data-theme='light'] thead.bg-zinc-950\/80 {
+  background-color: #e0e0e0 !important;
+}
+
+[data-theme='light'] .bg-zinc-900.border.border-zinc-800 {
+  background-color: #f2f2f2 !important;
+  border-color: #c4c4c4 !important;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+}
+
+[data-theme='light'] .hover\:bg-cyan-900\/50:hover,
+[data-theme='light'] .hover\:bg-teal-900\/40:hover {
+  background-color: #d8e8ea !important;
+}
+
+/* ── Painel homologação / status (Sistema) ── */
+[data-theme='light'] .border-sky-900\/40 {
+  border-color: #7dd3fc !important;
+}
+[data-theme='light'] .bg-sky-950\/10 {
+  background-color: #e0f2fe !important;
+}
+[data-theme='light'] .text-sky-300 {
+  color: #0369a1 !important;
+}
+[data-theme='light'] .border-emerald-900\/40 {
+  border-color: #6ee7b7 !important;
+}
+[data-theme='light'] .text-emerald-200 {
+  color: #047857 !important;
+}
+[data-theme='light'] .border-amber-900\/40 {
+  border-color: #fcd34d !important;
+}
+[data-theme='light'] .text-amber-200 {
+  color: #b45309 !important;
+}
+[data-theme='light'] .border-rose-900\/40 {
+  border-color: #fda4af !important;
+}
+[data-theme='light'] .text-rose-200 {
+  color: #be123c !important;
+}
+
+/* ── Botões primários e anéis ── */
+[data-theme='light'] .bg-teal-600 {
+  background-color: #0f766e !important;
+  color: #f8fafc !important;
+}
+[data-theme='light'] .hover\:bg-teal-500:hover {
+  background-color: #0d9488 !important;
+}
+[data-theme='light'] .bg-sky-700 {
+  background-color: #0369a1 !important;
+  color: #f8fafc !important;
+}
+[data-theme='light'] .bg-orange-600 {
+  background-color: #ea580c !important;
+  color: #fff7ed !important;
+}
+[data-theme='light'] .ring-zinc-900\/80 {
+  --tw-ring-color: rgba(163, 163, 163, 0.55) !important;
+}
+[data-theme='light'] .placeholder\:text-zinc-600::placeholder {
+  color: #737373 !important;
+}
+
+/* Contingência / alertas vivos */
+[data-theme='light'] .border-emerald-500\/35,
+[data-theme='light'] .border-emerald-500\/30 {
+  border-color: #6ee7b7 !important;
+}
+[data-theme='light'] .bg-emerald-950\/20,
+[data-theme='light'] .bg-emerald-950\/15 {
+  background-color: #dcfce7 !important;
+}
+[data-theme='light'] .border-amber-500\/35,
+[data-theme='light'] .border-amber-500\/40 {
+  border-color: #fbbf24 !important;
+}
+[data-theme='light'] .bg-amber-950\/20,
+[data-theme='light'] .bg-amber-950\/25 {
+  background-color: #fef3c7 !important;
+}
+[data-theme='light'] .bg-rose-950\/20 {
+  background-color: #ffe4e6 !important;
+}
+[data-theme='light'] .border-amber-900\/40 {
+  border-color: #fcd34d !important;
+}
+[data-theme='light'] .bg-amber-950\/20 {
+  background-color: #fef3c7 !important;
+}
+[data-theme='light'] .text-amber-600\/80 {
+  color: #b45309 !important;
+}
+[data-theme='light'] .text-amber-300 {
+  color: #b45309 !important;
+}
+
+/* MapLibre / overlays sem .map-ui-chrome */
+[data-theme='light'] .maplibregl-map {
+  background: #0a0a0c !important;
+}
+[data-theme='light'] .border-sky-500\/40 {
+  border-color: #38bdf8 !important;
+}
+[data-theme='light'] .border-amber-500\/30 {
+  border-color: #fbbf24 !important;
+}
+[data-theme='light'] .bg-zinc-950\/92 {
+  background-color: rgba(240, 240, 240, 0.96) !important;
+}
+[data-theme='light'] .bg-zinc-950\/80 {
+  background-color: rgba(232, 232, 232, 0.92) !important;
+}
+
+/* Nav de módulos — aba ativa */
+[data-theme='light'] .bg-indigo-600\/20 {
+  background-color: #e0e7ff !important;
+}
+[data-theme='light'] .text-indigo-100 {
+  color: #3730a3 !important;
+}

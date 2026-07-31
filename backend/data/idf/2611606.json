@@ -1,0 +1,10 @@
+{
+  "fonte": "APAC/plano_diretor_drenagem_recife",
+  "qualidade": "Oficial",
+  "referencia": "Curva IDF municipal curada (piloto 20h.4)",
+  "curvas": {
+    "60": {"2": 50.0, "10": 80.0, "25": 110.0, "100": 150.0},
+    "120": {"2": 65.0, "10": 100.0, "25": 135.0, "100": 185.0},
+    "1440": {"2": 75.0, "10": 115.0, "25": 155.0, "100": 230.0}
+  }
+}

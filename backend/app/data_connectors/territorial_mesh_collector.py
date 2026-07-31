@@ -148,7 +148,7 @@ def needs_territorial_refresh(db: Session, muni: Municipio) -> bool:
     if len(bairros) >= 15:
         return False
     if muni.codigo_ibge == "2611606":
-        return len(bairros) < RECIFE_MESH_MIN_BAIRROS or infra_count < 12
+        return len(bairros) < RECIFE_MESH_MIN_BAIRROS or infra_count < 40
     return infra_count <= 1
 
 
@@ -326,11 +326,20 @@ def _sync_infraestrutura(db: Session, muni: Municipio) -> int:
         synchronize_session=False
     )
     if muni.codigo_ibge == "2611606":
-        from etl.etl_osm import load_simulated_infrastructure
+        from app.data_connectors.equipamentos_recife_collector import sync_equipamentos_recife
 
-        load_simulated_infrastructure(db, muni.id)
+        # sync_equipamentos limpa pontos e reescreve; vias entram depois se necessário
+        result = sync_equipamentos_recife(db, force=True, commit=False)
+        try:
+            from etl.etl_osm import load_simulated_roads_only
+            load_simulated_roads_only(db, muni.id)
+        except Exception:
+            pass
         db.flush()
-        return db.query(InfraestruturaUrbana).filter(InfraestruturaUrbana.municipio_id == muni.id).count()
+        n = db.query(InfraestruturaUrbana).filter(InfraestruturaUrbana.municipio_id == muni.id).count()
+        logger = __import__("logging").getLogger(__name__)
+        logger.info("Infra Recife: %s → %d features", result.get("por_tipo"), n)
+        return n
 
     centroid = shape(json.loads(db.scalar(muni.geom.ST_AsGeoJSON()))).centroid
     db.add(
@@ -338,7 +347,7 @@ def _sync_infraestrutura(db: Session, muni: Municipio) -> int:
             municipio_id=muni.id,
             tipo="hospital",
             nome=f"Hospital Municipal {muni.nome}",
-            subgrupo="atendimento_medico",
+            subgrupo="municipal",
             geom=from_shape(centroid, srid=4326),
         )
     )

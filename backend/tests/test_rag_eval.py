@@ -70,7 +70,13 @@ def test_evaluate_case_fail_low_similarity():
 
 def test_dataset_has_minimum_cases():
     cases = load_eval_dataset()
-    assert len(cases) >= 8
+    assert len(cases) >= 14
+    ids = {c["id"] for c in cases}
+    assert "sinidu_contingencia" in ids
+    assert "sinidu_calor_lst" in ids
+    assert "sinidu_maturidade" in ids
+    assert "sinidu_alerta_vivo" in ids
+    assert "sinidu_ml_alagamento" in ids
     assert all(c.get("question") and c.get("id") for c in cases)
 
 

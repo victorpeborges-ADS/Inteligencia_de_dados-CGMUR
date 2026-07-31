@@ -15,9 +15,12 @@ from app.models import (
     MunicipioIbge,
     MunicipioSeed,
     MunicipioSaneamento,
+    MunicipioSingedlabRs,
 )
+from app.data_connectors.singedlab_rs_collector import catalog_status_for_row
 from app.data_connectors.snis_sinisa_collector import snis_status_label
 from app.data_connectors.external_sources_collector import catalog_status_from_quality
+from app.services.building_catalog_service import catalog_status_gemeo_digital
 
 # Fallback demo para municípios piloto (compatibilidade)
 _PILOT_FALLBACK: dict[str, dict[str, str]] = {
@@ -120,6 +123,11 @@ def _status_from_seed(seed: MunicipioSeed | None, step_key: str) -> str | None:
     return None
 
 
+def _status_singedlab(db: Session, codigo_ibge: str) -> str:
+    row = db.query(MunicipioSingedlabRs).filter(MunicipioSingedlabRs.codigo_ibge == codigo_ibge).first()
+    return catalog_status_for_row(row)
+
+
 def resolve_catalog_status(
     db: Session,
     codigo_ibge: str,
@@ -139,6 +147,8 @@ def resolve_catalog_status(
         "s2id": lambda: _status_s2id(db, muni),
         "mapbiomas": lambda: _status_mapbiomas(db, codigo_ibge, muni),
         "cemaden_georiscos": lambda: _status_cemaden(db, muni),
+        "ibge_singedlab_rs": lambda: _status_singedlab(db, codigo_ibge),
+        "gemeo_digital_3d": lambda: catalog_status_gemeo_digital(db, codigo_ibge, muni=muni),
     }
     if base_id in resolvers:
         return resolvers[base_id]()

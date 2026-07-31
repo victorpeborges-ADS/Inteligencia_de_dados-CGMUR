@@ -32,6 +32,8 @@ function stepProgress(status: OnboardingStatus, key: string): string | null {
 export default function OnboardingBanner({ codigoIbge, municipioNome }: { codigoIbge: string; municipioNome?: string }) {
   const [status, setStatus] = useState<OnboardingStatus | null>(null);
   const [loading, setLoading] = useState(true);
+  const [activating, setActivating] = useState(false);
+  const [activateMsg, setActivateMsg] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -67,6 +69,21 @@ export default function OnboardingBanner({ codigoIbge, municipioNome }: { codigo
   }
 
   if (!status || status.onboarding_status === 'concluido') return null;
+
+  const handleActivate = async () => {
+    setActivating(true);
+    setActivateMsg(null);
+    try {
+      await api.ensureMunicipality(codigoIbge);
+      const data = await api.getOnboardingStatus(codigoIbge);
+      setStatus(data);
+      setActivateMsg('Integração básica reforçada.');
+    } catch (e: unknown) {
+      setActivateMsg(e instanceof Error ? e.message : 'Falha ao ativar');
+    } finally {
+      setActivating(false);
+    }
+  };
 
   const nome = municipioNome || status.nome;
   const steps = ['geometria', 'mapbiomas', 'score'] as const;
@@ -104,6 +121,16 @@ export default function OnboardingBanner({ codigoIbge, municipioNome }: { codigo
               </li>
             ))}
           </ul>
+          <button
+            type="button"
+            onClick={() => void handleActivate()}
+            disabled={activating}
+            className="mt-3 inline-flex items-center gap-1.5 rounded-lg border border-amber-500/40 bg-amber-500/15 px-3 py-1.5 text-[10px] font-bold uppercase tracking-wide text-amber-100 hover:bg-amber-500/25 disabled:opacity-50"
+          >
+            {activating ? <Loader2 className="h-3 w-3 animate-spin" /> : <Zap className="h-3 w-3" />}
+            Concluir integração básica
+          </button>
+          {activateMsg && <p className="mt-1.5 text-[10px] text-amber-100/80">{activateMsg}</p>}
         </div>
       </div>
     </div>

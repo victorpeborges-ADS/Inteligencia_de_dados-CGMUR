@@ -37,6 +37,9 @@ export default function AgenteSinidu() {
 
   const agenteAberto = useAppStore((s) => s.agenteAberto);
   const setAgenteAberto = useAppStore((s) => s.setAgenteAberto);
+  const agenteModo = useAppStore((s) => s.agenteModo);
+  const setAgenteModo = useAppStore((s) => s.setAgenteModo);
+  const setActiveTab = useAppStore((s) => s.setActiveTab);
   const mensagens = useAppStore((s) => s.agenteMensagens);
   const addAgenteMensagem = useAppStore((s) => s.addAgenteMensagem);
   const agenteNaoLidas = useAppStore((s) => s.agenteNaoLidas);
@@ -63,6 +66,12 @@ export default function AgenteSinidu() {
     textareaRef.current.style.height = `${Math.min(textareaRef.current.scrollHeight, 120)}px`;
   }, [input]);
 
+  const goNormativo = useCallback(() => {
+    setAgenteModo('normativo');
+    setAgenteAberto(false);
+    setActiveTab('assistant');
+  }, [setActiveTab, setAgenteAberto, setAgenteModo]);
+
   const sendMessage = useCallback(
     async (text: string) => {
       const trimmed = text.trim();
@@ -88,8 +97,8 @@ export default function AgenteSinidu() {
             dados_pagina: dadosPagina,
             historico,
           },
-          (text) => {
-            setStreamingText(text);
+          (chunk) => {
+            setStreamingText(chunk);
           },
         );
         addAgenteMensagem({ role: 'assistant', content: full || 'Sem resposta.' });
@@ -128,9 +137,12 @@ export default function AgenteSinidu() {
         <button
           type="button"
           aria-label="Abrir Agente Sinidu"
-          onClick={() => setAgenteAberto(true)}
+          onClick={() => {
+            setAgenteModo('operacional');
+            setAgenteAberto(true);
+          }}
           className="fixed bottom-6 right-6 z-[9999] flex h-[52px] w-[52px] items-center justify-center rounded-full bg-[#1D9E75] text-white shadow-xl shadow-teal-900/50 ring-2 ring-teal-400/30 transition hover:scale-105 hover:bg-[#178f68] animate-pulse"
-          title="Agente Sinidu — IA contextual"
+          title="Agente Sinidu — modo Operacional"
         >
           <Sparkles size={22} />
           {agenteNaoLidas > 0 && (
@@ -147,20 +159,54 @@ export default function AgenteSinidu() {
         }`}
         aria-hidden={!agenteAberto}
       >
-        <header className="flex items-center justify-between border-b border-zinc-800 px-4 py-3">
-          <div>
-            <p className="text-[10px] font-bold uppercase tracking-wider text-teal-400">Agente Sinidu</p>
-            <p className="text-sm font-medium text-zinc-100">{municipioNome}</p>
-            <p className="text-[10px] text-zinc-500">{pageContext.pagina}</p>
+        <header className="border-b border-zinc-800 px-4 py-3">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-[10px] font-bold uppercase tracking-wider text-teal-400">Agente Sinidu</p>
+              <p className="text-sm font-medium text-zinc-100">{municipioNome}</p>
+              <p className="text-[10px] text-zinc-500">{pageContext.pagina}</p>
+            </div>
+            <button
+              type="button"
+              aria-label="Fechar agente"
+              onClick={() => setAgenteAberto(false)}
+              className="rounded-lg border border-zinc-700 p-2 text-zinc-400 hover:bg-zinc-900 hover:text-zinc-200"
+            >
+              <X size={16} />
+            </button>
           </div>
-          <button
-            type="button"
-            aria-label="Fechar agente"
-            onClick={() => setAgenteAberto(false)}
-            className="rounded-lg border border-zinc-700 p-2 text-zinc-400 hover:bg-zinc-900 hover:text-zinc-200"
+          <div
+            className="mt-2 flex rounded-lg border border-zinc-800 bg-zinc-900/80 p-0.5"
+            role="tablist"
+            aria-label="Modo do Agente Sinidu"
           >
-            <X size={16} />
-          </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={agenteModo === 'operacional'}
+              onClick={() => setAgenteModo('operacional')}
+              className={`flex-1 rounded-md px-2 py-1.5 text-[10px] font-semibold uppercase tracking-wide ${
+                agenteModo === 'operacional'
+                  ? 'bg-teal-600/30 text-teal-200'
+                  : 'text-zinc-500 hover:text-zinc-300'
+              }`}
+            >
+              Operacional
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={agenteModo === 'normativo'}
+              onClick={goNormativo}
+              className={`flex-1 rounded-md px-2 py-1.5 text-[10px] font-semibold uppercase tracking-wide ${
+                agenteModo === 'normativo'
+                  ? 'bg-indigo-600/30 text-indigo-200'
+                  : 'text-zinc-500 hover:text-zinc-300'
+              }`}
+            >
+              Normativo
+            </button>
+          </div>
         </header>
 
         <div ref={scrollRef} className="flex-1 space-y-3 overflow-y-auto px-4 py-3">
@@ -168,6 +214,8 @@ export default function AgenteSinidu() {
             <p className="rounded-lg border border-zinc-800 bg-zinc-900/60 px-3 py-2 text-xs leading-relaxed text-zinc-400">
               Olá! Estou no módulo <strong className="text-zinc-200">{pageContext.pagina}</strong>.
               Posso explicar como usar a plataforma ou interpretar os dados de {municipioNome}.
+              Para leis e normas (Lei 12.608, COBRADE), use o modo{' '}
+              <strong className="text-zinc-200">Normativo</strong>.
             </p>
           )}
 

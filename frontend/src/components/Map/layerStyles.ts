@@ -1,10 +1,29 @@
+import type { SocioSubcamadaId } from '@/config/socioeconomicoSubcamadas';
+import {
+  getDependenciaColor,
+  getEducacaoEtapa,
+  getEquipamentoTipoColor,
+  markerRadiusFromMatriculas,
+  markerRadiusFromTipo,
+  type EducacaoEtapaId,
+} from '@/config/educacaoInep';
+import { getTerritorioTipo, type TerritorioTipoId } from '@/config/territoriosEspeciais';
+
 export type LayerStyle = {
   fillColor: string;
   fillOpacity: number;
   color: string;
   weight: number;
   radius?: number;
+  opacity?: number;
+  dashArray?: string;
 };
+
+function deficitColor(pct: number, thresholds: [number, number], palette: [string, string, string]): string {
+  if (pct >= thresholds[1]) return palette[0];
+  if (pct >= thresholds[0]) return palette[1];
+  return palette[2];
+}
 
 export function scoreColor(value: number, palette: [string, string, string]): string {
   if (value >= 0.66) return palette[0];
@@ -12,7 +31,11 @@ export function scoreColor(value: number, palette: [string, string, string]): st
   return palette[2];
 }
 
-export function getLayerStyle(layerName: string, feature: any): LayerStyle {
+export function getLayerStyle(
+  layerName: string,
+  feature: any,
+  options?: { socioSubcamada?: SocioSubcamadaId; educacaoEtapa?: EducacaoEtapaId; territorioTipo?: TerritorioTipoId },
+): LayerStyle {
   const props = feature?.properties || {};
 
   if (layerName === 'municipio') {
@@ -22,15 +45,16 @@ export function getLayerStyle(layerName: string, feature: any): LayerStyle {
   if (layerName === 'cobertura') {
     const cls = props.classe_uso;
     if (cls === 'Vegetação / Floresta') {
-      return { fillColor: '#10b981', fillOpacity: 0.45, color: '#047857', weight: 1 };
+      return { fillColor: '#15803d', fillOpacity: 0.5, color: '#14532d', weight: 0.8 };
     }
     if (cls === "Corpo d'água") {
-      return { fillColor: '#0ea5e9', fillOpacity: 0.55, color: '#0369a1', weight: 1 };
+      // Azul-escuro sóbrio — distinto da mancha de inundação (#0ea5e9 / cyan claro)
+      return { fillColor: '#1e3a8a', fillOpacity: 0.55, color: '#1e40af', weight: 0.8 };
     }
     if (cls === 'Área Urbana') {
-      return { fillColor: '#71717a', fillOpacity: 0.5, color: '#52525b', weight: 1 };
+      return { fillColor: '#a1a1aa', fillOpacity: 0.28, color: '#71717a', weight: 0.5 };
     }
-    return { fillColor: '#71717a', fillOpacity: 0.35, color: '#3f3f46', weight: 1 };
+    return { fillColor: '#71717a', fillOpacity: 0.25, color: '#3f3f46', weight: 0.5 };
   }
 
   if (layerName === 'alertas') {
@@ -61,7 +85,32 @@ export function getLayerStyle(layerName: string, feature: any): LayerStyle {
     return { fillColor: scoreColor(value, ['#075985', '#0284c7', '#7dd3fc']), fillOpacity: 0.42, color: '#bae6fd', weight: 1.3 };
   }
 
+  if (layerName === 'manchas_oficiais') {
+    // Estilo distinto (validação 20h.5): contorno tracejado roxo escuro, preenchimento baixo —
+    // não deve se confundir visualmente com a mancha derivada 'inundacao' (azul).
+    return { fillColor: '#6d28d9', fillOpacity: 0.12, color: '#4c1d95', weight: 2, dashArray: '6,4' };
+  }
+
   if (layerName === 'socioeconomico') {
+    const sub = options?.socioSubcamada ?? 'renda';
+    const deficits = props.deficits_censo as Record<string, number> | undefined;
+    if (sub !== 'renda' && deficits && deficits[sub] != null) {
+      const pct = Number(deficits[sub]);
+      const palettes: Record<string, { thresholds: [number, number]; colors: [string, string, string] }> = {
+        arborizacao: { thresholds: [15, 35], colors: ['#facc15', '#84cc16', '#14532d'] },
+        calcada: { thresholds: [15, 35], colors: ['#f97316', '#60a5fa', '#1e3a8a'] },
+        iluminacao: { thresholds: [5, 15], colors: ['#ef4444', '#a78bfa', '#312e81'] },
+        agua: { thresholds: [5, 15], colors: ['#dc2626', '#38bdf8', '#0c4a6e'] },
+        esgoto: { thresholds: [10, 25], colors: ['#b91c1c', '#2dd4bf', '#134e4a'] },
+        lixo: { thresholds: [3, 8], colors: ['#ea580c', '#a1a1aa', '#3f3f46'] },
+        alfabetizacao: { thresholds: [5, 12], colors: ['#be123c', '#c084fc', '#4c1d95'] },
+      };
+      const cfg = palettes[sub];
+      if (cfg) {
+        const fill = deficitColor(pct, cfg.thresholds, cfg.colors);
+        return { fillColor: fill, fillOpacity: 0.42, color: '#e2e8f0', weight: 0.9 };
+      }
+    }
     const value = props.classe_renda === 'ALTA' ? 0.8 : props.classe_renda === 'MEDIA' ? 0.5 : 0.2;
     return { fillColor: scoreColor(value, ['#22c55e', '#eab308', '#f97316']), fillOpacity: 0.34, color: '#fef3c7', weight: 0.8 };
   }
@@ -69,6 +118,20 @@ export function getLayerStyle(layerName: string, feature: any): LayerStyle {
   if (layerName === 'adaptacao_climatica') {
     const value = Number(props.capacidade_adaptacao || 0);
     return { fillColor: scoreColor(value, ['#16a34a', '#facc15', '#f97316']), fillOpacity: 0.38, color: '#dcfce7', weight: 1.1 };
+  }
+
+  if (layerName === 'risco_consolidado') {
+    const nivel = String(props.nivel || 'VERDE').toUpperCase();
+    if (nivel === 'VERMELHO') {
+      return { fillColor: '#dc2626', fillOpacity: 0.62, color: '#7f1d1d', weight: 1.5 };
+    }
+    if (nivel === 'LARANJA') {
+      return { fillColor: '#ea580c', fillOpacity: 0.55, color: '#9a3412', weight: 1.35 };
+    }
+    if (nivel === 'AMARELO') {
+      return { fillColor: '#eab308', fillOpacity: 0.48, color: '#a16207', weight: 1.2 };
+    }
+    return { fillColor: '#22c55e', fillOpacity: 0.38, color: '#15803d', weight: 1.0 };
   }
 
   if (layerName === 'prioridade_planejamento') {
@@ -98,16 +161,33 @@ export function getLayerStyle(layerName: string, feature: any): LayerStyle {
     return { fillColor: scoreColor(value, ['#16a34a', '#f59e0b', '#e11d48']), fillOpacity: 0.5, color: '#fef3c7', weight: 2 };
   }
 
+  if (layerName === 'territorios_especiais') {
+    const tipo = props.tipo || 'comunidade_urbana';
+    const palette: Record<string, { fill: string; stroke: string }> = {
+      quilombo: { fill: '#a16207', stroke: '#fbbf24' },
+      terra_indigena: { fill: '#15803d', stroke: '#4ade80' },
+      comunidade_urbana: { fill: '#c026d3', stroke: '#e879f9' },
+    };
+    const colors = palette[tipo] || palette.comunidade_urbana;
+    return { fillColor: colors.fill, fillOpacity: 0.42, color: colors.stroke, weight: 1.6 };
+  }
+
   if (layerName === 'bairros') {
     const nome = String(props.nome || props.codigo_bairro || '');
     let hash = 0;
     for (let i = 0; i < nome.length; i += 1) {
       hash = (hash * 31 + nome.charCodeAt(i)) >>> 0;
     }
+    // Tons distintos por bairro, mas com contraste alto no basemap escuro
     const hue = hash % 360;
-    const fill = `hsl(${hue}, 62%, 42%)`;
-    const stroke = `hsl(${hue}, 72%, 68%)`;
-    return { fillColor: fill, fillOpacity: 0.28, color: stroke, weight: 1.2 };
+    const fill = `hsl(${hue}, 58%, 48%)`;
+    return {
+      fillColor: fill,
+      fillOpacity: 0.42,
+      color: '#c7d2fe',
+      weight: 1.8,
+      opacity: 0.95,
+    };
   }
 
   if (layerName === 'desastres') {
@@ -115,17 +195,31 @@ export function getLayerStyle(layerName: string, feature: any): LayerStyle {
   }
 
   if (layerName === 'infraestrutura') {
-    const tipo = props.tipo;
-    if (tipo === 'hospital') {
-      return { fillColor: '#ef4444', fillOpacity: 0.85, color: '#fecaca', weight: 2, radius: 8 };
-    }
-    if (tipo === 'escola') {
-      return { fillColor: '#3b82f6', fillOpacity: 0.85, color: '#bfdbfe', weight: 2, radius: 6 };
-    }
+    const tipo = String(props.tipo || '').toLowerCase();
     if (tipo === 'via') {
-      return { fillColor: 'transparent', fillOpacity: 0, color: '#c4b5fd', weight: 3 };
+      return { fillColor: 'transparent', fillOpacity: 0, color: '#94a3b8', weight: 2.5 };
     }
-    return { fillColor: '#a78bfa', fillOpacity: 0.55, color: '#ddd6fe', weight: 1.5, radius: 5 };
+    const tipoColor = getEquipamentoTipoColor(tipo);
+    const depColor = getDependenciaColor(props.dependencia);
+    const radius = markerRadiusFromTipo(tipo);
+    return { fillColor: tipoColor, fillOpacity: 0.92, color: depColor, weight: 2, radius };
+  }
+
+  if (layerName === 'educacao') {
+    const etapa = options?.educacaoEtapa || 'todas';
+    // Preferência: cor por dependência (esfera); etapa só quando filtro ativo
+    const color =
+      etapa === 'todas' && props.dependencia
+        ? getDependenciaColor(props.dependencia)
+        : getEducacaoEtapa(etapa).color;
+    const matriculas = Number(props.matriculas_ativas ?? props.matriculas_total ?? 0);
+    return {
+      fillColor: color,
+      fillOpacity: 0.9,
+      color: '#f8fafc',
+      weight: 1.5,
+      radius: markerRadiusFromMatriculas(matriculas),
+    };
   }
 
   if (layerName === 'saude_risco') {
@@ -176,15 +270,25 @@ export function getLayerStyle(layerName: string, feature: any): LayerStyle {
 export function enrichGeoJSON(layerName: string, geojson: any): { type: 'FeatureCollection'; features: any[] } {
   const features = (geojson?.features || []).map((feature: any) => {
     const style = getLayerStyle(layerName, feature);
+    const props = feature.properties || {};
+    const extrusion =
+      props._extrusionHeightM != null
+        ? Number(props._extrusionHeightM)
+        : props.altura_m != null
+          ? Number(props.altura_m)
+          : undefined;
     return {
       ...feature,
       properties: {
-        ...feature.properties,
+        ...props,
         _fill: style.fillColor,
         _fillOpacity: style.fillOpacity,
         _stroke: style.color,
         _strokeWidth: style.weight,
         _radius: style.radius ?? 6,
+        ...(extrusion != null && Number.isFinite(extrusion)
+          ? { _extrusionHeightM: Math.max(1.5, extrusion) }
+          : {}),
       },
     };
   });
@@ -193,7 +297,17 @@ export function enrichGeoJSON(layerName: string, geojson: any): { type: 'Feature
 
 export function getSimulationFeatureStyle(feature: any) {
   const props = feature?.properties || {};
-  if (props.temp_increase_celsius) {
+  if (props.temp_increase_celsius != null) {
+    const band = props.heat_band as string | undefined;
+    if (band === 'leve') {
+      return { fillColor: '#fbbf24', fillOpacity: 0.5, color: '#d97706', weight: 2 };
+    }
+    if (band === 'moderada') {
+      return { fillColor: '#f97316', fillOpacity: 0.55, color: '#c2410c', weight: 2 };
+    }
+    if (band === 'severa') {
+      return { fillColor: '#ef4444', fillOpacity: 0.62, color: '#b91c1c', weight: 2 };
+    }
     return { fillColor: '#ef4444', fillOpacity: 0.55, color: '#b91c1c', weight: 2 };
   }
   if (props.layer_type === 'landslide') {

@@ -1,9 +1,11 @@
-"""Testes expansão 50 municípios + índice VM."""
+"""Testes do catálogo piloto (6 municípios)."""
 from __future__ import annotations
 
 from pathlib import Path
 
 import yaml
+
+from app.data_connectors.constants import TARGET_IBGE_CODES
 
 
 def _load_manifest():
@@ -12,34 +14,21 @@ def _load_manifest():
         return yaml.safe_load(fh).get("municipios", [])
 
 
-def test_seed_manifest_has_61_municipios():
+def test_seed_manifest_piloto_6_municipios():
     rows = _load_manifest()
-    assert len(rows) == 61
+    assert len(rows) == 6
     codes = {r["codigo_ibge"] for r in rows}
-    assert len(codes) == 61
-    assert "2611606" in codes
-    assert "3550308" in codes
-    assert "5201108" in codes  # Anápolis — Cidades +Inteligentes
+    assert codes == set(TARGET_IBGE_CODES)
+    assert "2611606" in codes  # Recife
+    assert "2800308" in codes  # Aracaju
+    assert "2927408" in codes  # Salvador
+    assert "3550308" in codes  # São Paulo
+    assert "3304557" in codes  # Rio de Janeiro
+    assert "5300108" in codes  # Brasília
 
 
-def test_seed_criterios():
+def test_seed_criterios_piloto():
     rows = _load_manifest()
-    criterios = {r["criterio"] for r in rows}
-    assert "capital" in criterios
-    assert "s2id_emergencia" in criterios
-    assert "cidades_mais_inteligentes" in criterios
-    assert sum(1 for r in rows if r["criterio"] == "capital") == 27
-    assert sum(1 for r in rows if r["criterio"] == "cidades_mais_inteligentes") == 19
-
-
-def test_cidades_mais_inteligentes_edital_2026():
-    """22 municípios do Edital SNDUM 1/2026 (3 já como capitais)."""
-    rows = _load_manifest()
-    codes = {r["codigo_ibge"] for r in rows}
-    edital_22 = {
-        "1702109", "1400233", "2604106", "2407104", "2924009", "2806701",
-        "5201108", "5208905", "5218805", "4302105", "4304606", "4104907",
-        "4305108", "3200607", "3509502", "3138203", "3548708", "3549904",
-        "3305505", "1501402", "2408102", "4106902",  # Belém, Natal, Curitiba
-    }
-    assert edital_22.issubset(codes)
+    assert all(r["criterio"] == "capital" for r in rows)
+    assert rows[0]["codigo_ibge"] == "2611606"
+    assert rows[1]["codigo_ibge"] == "2800308"

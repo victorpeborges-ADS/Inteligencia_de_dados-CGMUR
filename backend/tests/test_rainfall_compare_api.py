@@ -8,8 +8,11 @@ from fastapi.testclient import TestClient
 from app import config as config_module
 import app.security.auth as auth_module
 from main import app
+from tests.conftest import requires_postgres
 
 RECIFE_IBGE = "2611606"
+
+pytestmark = requires_postgres
 
 
 @pytest.fixture
@@ -26,6 +29,7 @@ def reset_auth(monkeypatch):
 
 
 def test_compare_rainfall_recife_api(client: TestClient):
+    pytest.importorskip("rasterio")
     res = client.post(
         "/api/v1/simulations/extreme-rainfall/compare",
         json={"baseline_mm": 80.0, "scenario_mm": 160.0, "codigo_ibge": RECIFE_IBGE},

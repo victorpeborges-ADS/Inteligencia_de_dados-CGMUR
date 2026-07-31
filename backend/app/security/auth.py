@@ -194,6 +194,7 @@ def _is_public_path(path: str) -> bool:
 # POST/PUT que exigem gestor_municipal ou superior
 GESTOR_WRITE_PREFIXES = (
     "/api/v1/onboarding/",
+    "/api/v1/geoportal/",
     "/api/v1/reports/",
     "/api/v1/diagnostic/",
     "/api/v1/action-plan/",

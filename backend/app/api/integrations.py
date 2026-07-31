@@ -66,7 +66,7 @@ def mapbiomas_sync_municipality(
 
 @router.post("/mapbiomas/sync-batch")
 def mapbiomas_sync_batch(
-    limit: int = Query(default=61, ge=1, le=100),
+    limit: int = Query(default=6, ge=1, le=100),
     force: bool = Query(default=False),
     db: Session = Depends(get_db),
     _admin: User = Depends(require_role(Role.ADMIN)),
@@ -110,6 +110,32 @@ def saude_sync_municipality(
 ):
     """Carrega estabelecimentos CNES ou malha curada de saúde por município."""
     return collect_saude_municipality(db, codigo_ibge, force=force)
+
+
+@router.post("/equipamentos/sync/{codigo_ibge}")
+def equipamentos_sync_municipality(
+    codigo_ibge: str,
+    force: bool = Query(default=True),
+    db: Session = Depends(get_db),
+):
+    """Recife: escolas, creches, faculdades, hospitais e UPAs com dependência administrativa."""
+    code = str(codigo_ibge).zfill(7)[:7]
+    if code != "2611606":
+        return {
+            "codigo_ibge": code,
+            "skipped": True,
+            "reason": "Inventário ampliado disponível apenas para Recife (2611606) nesta versão.",
+        }
+    from app.data_connectors.equipamentos_recife_collector import sync_equipamentos_recife
+    from etl.etl_osm import load_simulated_roads_only
+    from app.models import Municipio
+
+    result = sync_equipamentos_recife(db, force=force, commit=False)
+    muni = db.query(Municipio).filter(Municipio.codigo_ibge == code).first()
+    if muni and not result.get("skipped"):
+        load_simulated_roads_only(db, muni.id)
+    db.commit()
+    return result
 
 
 @router.post("/territorial/sync/{codigo_ibge}")
