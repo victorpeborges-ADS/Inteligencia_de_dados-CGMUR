@@ -46,6 +46,18 @@ PLAN_DIRECTOR_SOURCES = {
             "url": "https://licenciamentounificado.recife.pe.gov.br/lei-complementar-no-02-2021",
         }
     ],
+    "2603603": [
+        {
+            "titulo": "Plano Diretor Participativo de Camutanga — legislação urbanística municipal",
+            "url": "https://www.camutanga.pe.gov.br/",
+        }
+    ],
+    "2607604": [
+        {
+            "titulo": "Plano Diretor de Ilha de Itamaracá — legislação urbanística municipal",
+            "url": "https://www.itamaraca.pe.gov.br/",
+        }
+    ],
     "2927408": [
         {
             "titulo": "PDDU Salvador - Lei nº 9.069/2016",

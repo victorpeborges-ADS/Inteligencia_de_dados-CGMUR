@@ -31,6 +31,27 @@ const LAYER_LEGEND: Record<string, { title: string; items: { color: string; labe
       { color: '#dc2626', label: 'Vermelho' },
     ],
   },
+  hand_suscetibilidade: {
+    title: 'HAND (altura acima da drenagem)',
+    items: [
+      { color: '#7f1d1d', label: '< 2 m' },
+      { color: '#ea580c', label: '2–5 m' },
+      { color: '#ca8a04', label: '5–10 m' },
+      { color: '#a3a3a3', label: '10–25 m' },
+    ],
+  },
+  hidrografia_osm: {
+    title: 'Hidrografia OSM',
+    items: [{ color: '#1d4ed8', label: 'Rio / córrego / canal' }],
+  },
+  hazard_referencia: {
+    title: 'GloFAS RP100 (referência)',
+    items: [
+      { color: '#93c5fd', label: '5–50 cm' },
+      { color: '#2563eb', label: '50–150 cm' },
+      { color: '#1e3a8a', label: '> 150 cm' },
+    ],
+  },
   alertas: {
     title: 'Alertas',
     items: [
@@ -58,11 +79,12 @@ const LAYER_LEGEND: Record<string, { title: string; items: { color: string; labe
 };
 
 const SIM_LEGEND = {
-  title: 'Simulação ativa',
+  title: 'Enchente 3D — água nas ruas',
   items: [
-    { color: '#0284c7', label: 'Inundação / profundidade' },
-    { color: '#ef4444', label: 'Deslizamento / calor severo' },
-    { color: '#fbbf24', label: 'Calor leve–moderado' },
+    { color: '#38bdf8', label: 'Água entre prédios' },
+    { color: '#0284c7', label: 'Água moderada' },
+    { color: '#075985', label: 'Água crítica' },
+    { color: '#f8fafc', label: 'Prédio (emerge da água)' },
   ],
 };
 
@@ -94,10 +116,18 @@ export default function MapHudControls({
   const legends = useMemo(() => {
     const out: { title: string; items: { color: string; label: string }[] }[] = [];
     for (const id of activeLayers) {
-      if (id === 'edificacoes') continue;
       const entry = LAYER_LEGEND[id];
       if (entry) out.push(entry);
-      else {
+      else if (id === 'edificacoes') {
+        out.push({
+          title: 'Edificações (LOD1)',
+          items: [
+            { color: '#cbd5e1', label: 'Baixa (< 9 m)' },
+            { color: '#94a3b8', label: 'Média (9–18 m)' },
+            { color: '#64748b', label: 'Alta (≥ 18 m)' },
+          ],
+        });
+      } else {
         const opt = layerOptions.find((o) => o.id === id);
         if (opt) {
           out.push({

@@ -22,7 +22,7 @@ def test_ml_targets_piloto():
     from ml.baseline import TERRAIN_PRESETS
     from ml.constants import ML_TARGET_IBGE_CODES, SLUG_BY_IBGE
 
-    assert len(ML_TARGET_IBGE_CODES) == 6
+    assert len(ML_TARGET_IBGE_CODES) == 8
     assert "2800308" in ML_TARGET_IBGE_CODES
     assert "3550308" in ML_TARGET_IBGE_CODES
     assert set(ML_TARGET_IBGE_CODES) <= set(SLUG_BY_IBGE)
@@ -146,7 +146,7 @@ def test_predictor_hides_auc_for_synthetic(mock_path, tmp_path):
 
 
 def test_municipality_slugs_count():
-    assert len(MUNICIPALITY_SLUGS) == 6
+    assert len(MUNICIPALITY_SLUGS) == 8
     assert MUNICIPALITY_SLUGS["aracaju"] == "2800308"
 
 

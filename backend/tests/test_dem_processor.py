@@ -57,7 +57,8 @@ def test_local_dem_paths_and_import(tmp_path, monkeypatch):
     monkeypatch.setattr(dp, "LOCAL_DEM_DIR", tmp_path / "local")
     code = "2611606"
     paths = local_dem_source_paths(code)
-    assert paths[0].name == "local_dem.tif"
+    assert paths[0].name == "lidar.tif"
+    assert any(p.name == "local_dem.tif" for p in paths)
     assert find_local_dem(code) is None
     payload = b"\x00" * 4096
     dest = import_local_dem_bytes(code, payload)

@@ -43,7 +43,7 @@ export interface SimulationResultsProps {
   analysisLoading: boolean;
   interpretError: string | null;
   copyOk: boolean;
-  exportLoading: 'geojson' | 'pdf' | 'kmz' | null;
+  exportLoading: 'geojson' | 'pdf' | 'kmz' | 'csv' | null;
   rainfallComparison: RainfallComparison | null;
   heatLstComparison: HeatLstComparison | null;
   lstCompareLoading: boolean;
@@ -79,6 +79,7 @@ export interface SimulationResultsProps {
   handleExportGeojson: () => void | Promise<void>;
   handleExportKmz: () => void | Promise<void>;
   handleExportPdf: () => void | Promise<void>;
+  handleExportImpactsCsv: () => void | Promise<void>;
   handleIncludeInReport: () => void;
   handleCopyInterpret: () => void | Promise<void>;
   simulationTipo: () => 'chuva' | 'asfalto' | 'vegetacao' | 'drenagem' | 'calor';
@@ -124,6 +125,7 @@ export default function SimulationResults({
   handleExportGeojson,
   handleExportKmz,
   handleExportPdf,
+  handleExportImpactsCsv,
   handleIncludeInReport,
   handleCopyInterpret,
   simulationTipo,
@@ -204,7 +206,38 @@ export default function SimulationResults({
             >
               {exportLoading === 'pdf' ? 'Gerando PDF…' : 'PDF para oficina'}
             </button>
+            <button
+              type="button"
+              onClick={handleExportImpactsCsv}
+              disabled={exportLoading !== null}
+              title="Lista vias intransitáveis e escolas/UBS atingidos"
+              className="rounded-lg border border-rose-500/30 bg-rose-950/20 px-3 py-1.5 text-[10px] font-bold uppercase text-rose-200 hover:bg-rose-950/40 disabled:opacity-50"
+            >
+              {exportLoading === 'csv' ? 'Gerando CSV…' : 'CSV impactos'}
+            </button>
           </div>
+
+          {result.simulation_meta?.glofas_compare?.ok && (
+            <div className="rounded-lg border border-indigo-500/25 bg-indigo-950/20 px-3 py-2">
+              <p className="text-[10px] font-semibold uppercase tracking-wide text-indigo-200">
+                Confrontação GloFAS RP100
+              </p>
+              <p className="mt-1 text-[11px] text-indigo-100/90">
+                Overlap com hazard de referência:{' '}
+                <span className="font-semibold text-indigo-50">
+                  {result.simulation_meta.glofas_compare.overlap_pct}%
+                </span>
+                {result.simulation_meta.glofas_compare.intersection_km2 != null && (
+                  <> · {result.simulation_meta.glofas_compare.intersection_km2} km²</>
+                )}
+              </p>
+              {result.simulation_meta.glofas_compare.nota && (
+                <p className="mt-1 text-[10px] leading-snug text-indigo-200/70">
+                  {result.simulation_meta.glofas_compare.nota}
+                </p>
+              )}
+            </div>
+          )}
 
           {result.scenario_type === 'ExtremeRainfall' && (
             <div className="rounded-lg border border-sky-500/25 bg-sky-950/20 px-3 py-2.5">
@@ -1323,7 +1356,10 @@ export default function SimulationResults({
             </div>
           )}
 
-          {(result.contours?.features?.length > 0 || result.flow_paths?.features?.length > 0) && (
+          {(result.contours?.features?.length > 0
+            || result.flow_paths?.features?.length > 0
+            || (result.vias_intransitaveis?.features?.length ?? 0) > 0
+            || (result.ativos_criticos_atingidos?.features?.length ?? 0) > 0) && (
             <div className="rounded-lg border border-zinc-800 bg-zinc-950/40 p-2.5">
               <span className="text-[9px] text-zinc-400 font-bold uppercase tracking-wider block mb-1.5">Visibilidade no mapa</span>
               <div className="flex flex-wrap gap-2 mb-2">
@@ -1332,6 +1368,8 @@ export default function SimulationResults({
                     { key: 'showFlood' as const, label: 'Manchas de alagamento', activeClass: 'border-sky-500/40 bg-sky-500/15 text-sky-200' },
                     { key: 'showContours' as const, label: 'Curvas de nível', activeClass: 'border-lime-500/40 bg-lime-500/15 text-lime-200' },
                     { key: 'showFlow' as const, label: 'Escoamento D8', activeClass: 'border-cyan-500/40 bg-cyan-500/15 text-cyan-200' },
+                    { key: 'showImpassableRoads' as const, label: 'Vias intransitáveis', activeClass: 'border-red-500/40 bg-red-500/15 text-red-200' },
+                    { key: 'showCriticalAssets' as const, label: 'Ativos críticos', activeClass: 'border-amber-500/40 bg-amber-500/15 text-amber-200' },
                   ] as const
                 ).map(({ key, label, activeClass }) => {
                   const active = overlayOptions[key];
@@ -1364,6 +1402,25 @@ export default function SimulationResults({
                 {result.flow_paths?.features?.length > 0 && (
                   <span className="rounded-full border border-cyan-500/30 bg-cyan-500/10 px-2 py-0.5 text-[9px] text-cyan-200">
                     {result.flow_paths.features.length} vetores escoamento
+                  </span>
+                )}
+                {(result.vias_intransitaveis?.features?.length ?? 0) > 0 && (
+                  <span className="rounded-full border border-red-500/30 bg-red-500/10 px-2 py-0.5 text-[9px] text-red-200">
+                    {result.vias_intransitaveis!.features!.length} trecho(s) intransitável(is)
+                    {result.simulation_meta?.impacto_operacional?.mobilidade?.vias_comprometidas_km != null
+                      ? ` · ${result.simulation_meta.impacto_operacional.mobilidade.vias_comprometidas_km} km`
+                      : ''}
+                  </span>
+                )}
+                {(result.ativos_criticos_atingidos?.features?.length ?? 0) > 0 && (
+                  <span className="rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-[9px] text-amber-200">
+                    {result.ativos_criticos_atingidos!.features!.length} ativo(s) crítico(s)
+                    {result.simulation_meta?.ativos_criticos?.escolas
+                      ? ` · ${result.simulation_meta.ativos_criticos.escolas} escola(s)`
+                      : ''}
+                    {result.simulation_meta?.ativos_criticos?.saude
+                      ? ` · ${result.simulation_meta.ativos_criticos.saude} saúde`
+                      : ''}
                   </span>
                 )}
               </div>

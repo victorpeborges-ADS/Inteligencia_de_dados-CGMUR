@@ -58,6 +58,7 @@ from app.services.simulation_export import (
     export_download_meta,
     generate_simulation_pdf,
     save_simulation_geojson,
+    save_simulation_impacts_csv,
     save_simulation_kmz,
     simulation_export_dir,
 )
@@ -675,6 +676,26 @@ def export_simulation_kmz(payload: SimulationExportRequest, request: Request, db
     return SimulationExportResponse(format="kmz", **meta)
 
 
+@router.post("/export/impacts-csv", response_model=SimulationExportResponse)
+def export_simulation_impacts_csv(payload: SimulationExportRequest, request: Request, db: Session = Depends(get_db)):
+    """CSV operacional: vias intransitáveis + escolas/UBS/abrigos atingidos."""
+    muni = get_accessible_municipio(db, payload.codigo_ibge, request=request)
+    path = save_simulation_impacts_csv(payload.simulation, muni)
+    actor = resolve_actor(request)
+    log_audit(
+        db,
+        user=actor,
+        action="simulation.export_impacts_csv",
+        resource_type="simulation",
+        resource_id=muni.codigo_ibge,
+        codigo_ibge=muni.codigo_ibge,
+        metadata={"filename": path.name, "scenario": payload.simulation.get("scenario_type")},
+        request=request,
+    )
+    meta = export_download_meta(path)
+    return SimulationExportResponse(format="csv", **meta)
+
+
 @router.get("/download/{filename}")
 def download_simulation_export(filename: str, request: Request, db: Session = Depends(get_db)):
     safe = Path(filename).name
@@ -688,6 +709,7 @@ def download_simulation_export(filename: str, request: Request, db: Session = De
         ".pdf": "application/pdf",
         ".geojson": "application/geo+json",
         ".json": "application/geo+json",
+        ".csv": "text/csv; charset=utf-8",
         ".kmz": "application/vnd.google-earth.kmz",
         ".kml": "application/vnd.google-earth.kml+xml",
     }.get(suffix, "application/octet-stream")

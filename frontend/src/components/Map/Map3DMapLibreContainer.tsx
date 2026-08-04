@@ -9,7 +9,6 @@ import {
   syncLiveSensorsOverlay,
   syncCriticalPoisOverlay,
   syncUrbanContextOverlay,
-  clearEdificacoesMvt,
   pulseLiveSensorsHalo,
   setInspectMarker,
   clearInspectMarker,
@@ -19,7 +18,9 @@ import ActiveLayersPanel from './ActiveLayersPanel';
 import Map3DNavAssist from './Map3DNavAssist';
 import MapHudControls, { metersPerPixel, niceScaleMeters } from './MapHudControls';
 import { buildInspectResult, formatElevation, type FloodInspectResult } from '@/utils/floodInspect';
+import { prepareFloodScene3D, tintBuildingsInFlood } from '@/utils/floodStreetScene';
 import { MAPLIBRE_BASEMAPS } from '@/config/theme';
+import { MAP_CENTER_LEFT } from '@/config/mapOverlayLayout';
 import { useAppStore } from '@/stores/useAppStore';
 import { useAlertWebSocket } from '@/hooks/useAlertWebSocket';
 import type { ContingencyMapOverlay } from '@/utils/contingencyGeo';
@@ -45,7 +46,15 @@ interface Props {
   simGeoJSON: any;
   simContours?: any;
   simFlowPaths?: any;
-  simOverlays?: { showFlood: boolean; showContours: boolean; showFlow: boolean };
+  simImpassableRoads?: any;
+  simCriticalAssets?: any;
+  simOverlays?: {
+    showFlood: boolean;
+    showContours: boolean;
+    showFlow: boolean;
+    showImpassableRoads?: boolean;
+    showCriticalAssets?: boolean;
+  };
   contingencyOverlay?: ContingencyMapOverlay | null;
   showContingencyOnMap?: boolean;
   selectedMunicipio: string;
@@ -254,7 +263,15 @@ export default function Map3DMapLibreContainer({
   simGeoJSON,
   simContours,
   simFlowPaths,
-  simOverlays = { showFlood: true, showContours: true, showFlow: true },
+  simImpassableRoads,
+  simCriticalAssets,
+  simOverlays = {
+    showFlood: true,
+    showContours: true,
+    showFlow: true,
+    showImpassableRoads: true,
+    showCriticalAssets: true,
+  },
   contingencyOverlay = null,
   showContingencyOnMap = true,
   selectedMunicipio,
@@ -270,6 +287,8 @@ export default function Map3DMapLibreContainer({
   const simGeoJSONRef = useRef<any>(simGeoJSON);
   const simContoursRef = useRef<any>(simContours);
   const simFlowPathsRef = useRef<any>(simFlowPaths);
+  const simImpassableRoadsRef = useRef<any>(simImpassableRoads);
+  const simCriticalAssetsRef = useRef<any>(simCriticalAssets);
   const simOverlaysRef = useRef(simOverlays);
   const contingencyRef = useRef(
     showContingencyOnMap && contingencyOverlay
@@ -347,6 +366,8 @@ export default function Map3DMapLibreContainer({
   simGeoJSONRef.current = simGeoJSON;
   simContoursRef.current = simContours;
   simFlowPathsRef.current = simFlowPaths;
+  simImpassableRoadsRef.current = simImpassableRoads;
+  simCriticalAssetsRef.current = simCriticalAssets;
   simOverlaysRef.current = simOverlays;
   showLiveSensorsRef.current = showLiveSensors;
   liveSensorsRef.current = liveSensors;
@@ -365,22 +386,61 @@ export default function Map3DMapLibreContainer({
       : null;
   layerDataRef.current = layerData;
   layerOpacityRef.current = layerOpacityById;
+  const exaggerationRef = useRef(exaggeration);
+  exaggerationRef.current = exaggeration;
 
   const applyThematicLayers = (map: MapLibreMap) => {
+    // Com relevo exagerado, fill-extrusion não acompanha — escala visual dos prédios
+    const exag = Math.max(1, exaggerationRef.current);
+    const data = { ...layerDataRef.current };
+    let edif = data.edificacoes;
+    const rawFlood = simGeoJSONRef.current;
+    // Água só nos vãos entre prédios (não tapete azul sobre a cidade)
+    const streetFlood =
+      rawFlood?.features?.length && edif?.features?.length
+        ? prepareFloodScene3D(rawFlood, edif)
+        : rawFlood;
+    if (edif?.features?.length && rawFlood?.features?.length) {
+      edif = tintBuildingsInFlood(edif, rawFlood) ?? edif;
+    }
+    if (edif?.features?.length && exag > 1) {
+      data.edificacoes = {
+        ...edif,
+        features: edif.features.map((f: any) => {
+          const props = f.properties || {};
+          const h = Number(props.altura_m ?? props._extrusionHeightM ?? 6);
+          const scaled = Math.max(5, Number.isFinite(h) ? h : 6) * exag;
+          return {
+            ...f,
+            properties: { ...props, _extrusionHeightM: scaled },
+          };
+        }),
+      };
+    } else if (edif) {
+      data.edificacoes = edif;
+    }
     syncThematicLayers(
       map,
-      activeLayersRef.current.filter((id) => id !== 'edificacoes'),
-      layerDataRef.current,
-      simGeoJSONRef.current,
-      simContoursRef.current,
+      activeLayersRef.current,
+      data,
+      streetFlood,
+      // Curvas competem visualmente com a lâmina — esconde durante enchente
+      rawFlood?.features?.length ? null : simContoursRef.current,
       simFlowPathsRef.current,
       {
         layerOpacityById: layerOpacityRef.current,
-        simOverlays: simOverlaysRef.current,
+        simOverlays: {
+          ...simOverlaysRef.current,
+          floodVisualGain: 1 + 0.15 * Math.max(0, exag - 1),
+          showFlood: true,
+          showFlow: true,
+          showContours: false,
+        },
         contingency: contingencyRef.current,
+        simImpassableRoads: simImpassableRoadsRef.current,
+        simCriticalAssets: simCriticalAssetsRef.current,
       },
     );
-    clearEdificacoesMvt(map);
     syncLiveSensorsOverlay(map, liveSensorsRef.current, showLiveSensorsRef.current);
     syncCriticalPoisOverlay(map, criticalPoisRef.current, showCriticalPoisRef.current);
     syncUrbanContextOverlay(
@@ -487,12 +547,12 @@ export default function Map3DMapLibreContainer({
     setLayersLoading(true);
 
     Promise.all(
-      activeLayers
-        .filter((layerName) => layerName !== 'edificacoes')
-        .map(async (layerName) => {
-          const data = await api.getLayerGeoJSON(layerName, selectedMunicipio);
-          return [layerName, data] as const;
-        }),
+      activeLayers.map(async (layerName) => {
+        const extra =
+          layerName === 'edificacoes' ? { limit: 3500 } : undefined;
+        const data = await api.getLayerGeoJSON(layerName, selectedMunicipio, extra);
+        return [layerName, data] as const;
+      }),
     )
       .then((entries) => {
         if (!cancelled) setLayerData(Object.fromEntries(entries));
@@ -536,8 +596,9 @@ export default function Map3DMapLibreContainer({
         preserveDrawingBuffer: true, // 17f.9 — export PNG/WebM
       });
 
-      map.addControl(new ml.NavigationControl({ visualizePitch: true }), 'top-left');
-      map.addControl(new ml.ScaleControl({ maxWidth: 100, unit: 'metric' }), 'bottom-left');
+      // Controles nativos à direita — esquerda fica para LayerPanel + overlays Sinidu
+      map.addControl(new ml.NavigationControl({ visualizePitch: true }), 'top-right');
+      map.addControl(new ml.ScaleControl({ maxWidth: 100, unit: 'metric' }), 'bottom-right');
 
       const syncHud = () => {
         if (!map) return;
@@ -596,6 +657,8 @@ export default function Map3DMapLibreContainer({
     simGeoJSON,
     simContours,
     simFlowPaths,
+    simImpassableRoads,
+    simCriticalAssets,
     simOverlays,
     layerOpacityById,
     contingencyOverlay,
@@ -608,6 +671,16 @@ export default function Map3DMapLibreContainer({
     showUrbanContext,
     urbanCtxOpacity,
   ]);
+
+  // Cenário de enchente: clima chuva + vias + pitch oblíquo (look das refs)
+  useEffect(() => {
+    if (!hasSimulation) return;
+    setWeatherPreset('chuva');
+    setSolarHour(presetDefaultHour('chuva'));
+    setPitch((p) => (p < 48 ? 55 : p));
+    setExaggeration((e) => (e > 1.6 ? 1.35 : e));
+    setCtxVias(true);
+  }, [hasSimulation]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -779,6 +852,7 @@ export default function Map3DMapLibreContainer({
     const map = mapRef.current;
     if (!map || !mapReady) return;
     map.setTerrain({ source: 'terrain', exaggeration });
+    applyThematicLayers(map);
   }, [exaggeration, mapReady]);
 
   useEffect(() => {
@@ -833,6 +907,21 @@ export default function Map3DMapLibreContainer({
     <div ref={wrapRef} className="absolute inset-0 z-0">
       <div ref={mapDivRef} className="h-full w-full" />
 
+      {hasSimulation && (
+        <div
+          className={`map-flood-rain pointer-events-none absolute inset-0 z-[2] ${
+            weatherPreset === 'chuva' ? 'map-flood-rain--heavy' : 'map-flood-rain--soft'
+          }`}
+          aria-hidden
+        />
+      )}
+
+      {hasSimulation && (
+        <div className="pointer-events-none absolute left-1/2 top-6 z-[3] -translate-x-1/2 rounded-lg border border-sky-400/40 bg-zinc-950/80 px-3 py-1.5 text-[10px] font-extrabold uppercase tracking-wider text-sky-200 shadow-lg backdrop-blur-md">
+          Simulação de enchente 3D
+        </div>
+      )}
+
       {(!libReady || !mapReady || layersLoading) && (
         <div className="absolute inset-0 z-[1] flex items-center justify-center bg-zinc-950/80 text-sm text-zinc-400">
           {!libReady
@@ -843,9 +932,29 @@ export default function Map3DMapLibreContainer({
         </div>
       )}
 
+      {/* Coluna esquerda (após LayerPanel): só navegação 3D */}
+      {!focusMode && mapReady && (
+        <div
+          className="pointer-events-auto absolute top-20 z-10 flex max-h-[min(52vh,28rem)] w-64 flex-col gap-2 overflow-y-auto"
+          style={{ left: MAP_CENTER_LEFT }}
+        >
+          <Map3DNavAssist
+            className="w-full shrink-0"
+            map={mapRef.current}
+            mapReady={mapReady}
+            selectedMunicipio={selectedMunicipio}
+            mapFocus={mapFocus}
+            bearing={bearing}
+          />
+        </div>
+      )}
+
+      {/* Coluna direita: camadas ativas (recolhida) + basemap — evita choque com LayerPanel */}
       {!focusMode && (
+      <div className="pointer-events-auto absolute bottom-28 right-4 top-24 z-10 flex w-52 flex-col gap-2 overflow-y-auto">
       <ActiveLayersPanel
-        className="pointer-events-auto absolute left-4 top-24 z-10 w-64"
+        className="w-full shrink-0"
+        defaultCollapsed
         activeLayers={activeLayers}
         layerOptions={layerOptions}
         layerOpacityById={layerOpacityById}
@@ -853,21 +962,7 @@ export default function Map3DMapLibreContainer({
         moveActiveLayer={moveActiveLayer}
         toggleLayer={toggleLayer}
       />
-      )}
-
-      {!focusMode && mapReady && (
-        <Map3DNavAssist
-          className="pointer-events-auto absolute left-4 top-[22.5rem] z-10 w-64"
-          map={mapRef.current}
-          mapReady={mapReady}
-          selectedMunicipio={selectedMunicipio}
-          mapFocus={mapFocus}
-          bearing={bearing}
-        />
-      )}
-
-      {!focusMode && (
-      <div className="map-ui-chrome absolute right-4 top-24 z-10 w-52 rounded-xl border border-teal-500/30 bg-zinc-950/95 p-3 shadow-2xl backdrop-blur-md transition-opacity duration-300">
+      <div className="map-ui-chrome w-full shrink-0 rounded-xl border border-teal-500/30 bg-zinc-950/95 p-3 shadow-2xl backdrop-blur-md">
         <p className="mb-2 text-[10px] font-extrabold uppercase text-teal-300">Basemap</p>
         <div className="flex gap-1">
           <button
@@ -1232,11 +1327,12 @@ export default function Map3DMapLibreContainer({
           )}
         </div>
       </div>
+      </div>
       )}
 
       {!focusMode && (
       <MapHudControls
-        className="absolute bottom-6 right-4 z-20"
+        className="absolute bottom-6 right-4 z-20 max-w-[13rem]"
         bearing={bearing}
         scaleLabel={scaleLabel}
         activeLayers={activeLayers}
@@ -1254,7 +1350,10 @@ export default function Map3DMapLibreContainer({
       )}
 
       {showContingencyOnMap && contingencyOverlay && !focusMode && (
-        <div className="map-ui-chrome absolute bottom-6 left-6 z-10 rounded-xl border border-orange-500/40 bg-zinc-950/95 px-3 py-2 text-[10px] text-orange-100 shadow-lg backdrop-blur-md">
+        <div
+          className="map-ui-chrome absolute bottom-28 z-10 max-w-xs rounded-xl border border-orange-500/40 bg-zinc-950/95 px-3 py-2 text-[10px] text-orange-100 shadow-lg backdrop-blur-md"
+          style={{ left: MAP_CENTER_LEFT }}
+        >
           <p className="font-extrabold uppercase tracking-wider text-orange-300">Plano ativo no mapa</p>
           <p className="mt-0.5 text-zinc-400">
             {contingencyOverlay.cenario} · {contingencyOverlay.nivel} ·{' '}
@@ -1263,71 +1362,53 @@ export default function Map3DMapLibreContainer({
         </div>
       )}
 
-      {hasSimulation && !focusMode && (
-        <div className={`map-ui-chrome absolute z-10 max-w-sm rounded-xl border border-sky-500/40 bg-zinc-950/95 p-4 shadow-2xl backdrop-blur-md transition-opacity duration-300 ${
-          showContingencyOnMap && contingencyOverlay ? 'bottom-24 left-6' : 'bottom-6 left-6'
-        }`}>
+      {/* Inspeção sob demanda — não compete com "Evolução no tempo" */}
+      {hasSimulation && !focusMode && (inspect || simulating) && (
+        <div
+          className="map-ui-chrome absolute z-20 max-w-xs rounded-xl border border-sky-500/40 bg-zinc-950/95 px-3 py-2.5 shadow-2xl backdrop-blur-md"
+          style={{ left: MAP_CENTER_LEFT, bottom: 'calc(1rem + 5.5rem)' }}
+        >
           <p className="flex items-center gap-1.5 text-[10px] font-extrabold uppercase tracking-wider text-sky-300">
             {isHeatSim ? (
               <>
-                <Thermometer size={12} /> Simulação 3D — ilha de calor
+                <Thermometer size={12} /> Inspeção — calor
               </>
             ) : (
               <>
-                <Droplets size={12} /> Simulação 3D — volume de água
+                <Droplets size={12} /> Inspeção — água
               </>
             )}
           </p>
-          <p className="mt-1 text-[10px] leading-relaxed text-zinc-400">
-            {isHeatSim
-              ? 'Colunas vermelhas = aumento térmico estimado. Clique na mancha para ver o delta no ponto.'
-              : 'Barras azuis = profundidade estimada (DEM SRTM 30 m). Clique em uma mancha para ver cota e altura da água no ponto.'}
-          </p>
           {simulating && (
-            <p className="mt-2 animate-pulse text-[10px] text-sky-200">Calculando manchas…</p>
+            <p className="mt-1 animate-pulse text-[10px] text-sky-200">Calculando manchas…</p>
           )}
           {inspect && (
-            <div className="mt-3 space-y-2 border-t border-zinc-800 pt-3 text-[11px]">
+            <div className="mt-2 space-y-1 text-[11px]">
               <p className="flex items-center gap-1 text-zinc-500">
                 <MapPin size={11} />
                 {inspect.lat.toFixed(5)}, {inspect.lng.toFixed(5)}
               </p>
               {inspect.scenario === 'flood' && inspect.inFlood && (
                 <>
-                  <p className="text-lg font-black text-sky-300">
-                    +{inspect.depthCm} cm <span className="text-sm font-semibold text-zinc-400">de água</span>
+                  <p className="text-base font-black text-sky-300">
+                    +{inspect.depthCm} cm{' '}
+                    <span className="text-xs font-semibold text-zinc-400">de água</span>
                   </p>
                   <p className="text-zinc-300">{inspect.bandLabel}</p>
-                  <p className="text-zinc-500">
-                    Solo ~{formatElevation(inspect.groundElevationM)} · Cota da água ~{formatElevation(inspect.waterSurfaceM)}
-                  </p>
-                  {inspect.precipitationMm != null && (
-                    <p className="text-zinc-500">Cenário: {inspect.precipitationMm} mm de chuva</p>
-                  )}
                 </>
               )}
               {inspect.scenario === 'heat' && inspect.tempIncreaseC != null && (
-                <p className="flex items-center gap-1 text-rose-300">
-                  <Thermometer size={14} />
-                  +{inspect.tempIncreaseC}°C estimado (ilha de calor)
+                <p className="text-base font-black text-orange-300">
+                  +{inspect.tempIncreaseC}°C estimado
                 </p>
               )}
               {inspect.scenario === 'none' && (
                 <p className="text-zinc-400">
                   Sem alagamento neste ponto
-                  {inspect.groundElevationM != null && ` · solo ~${formatElevation(inspect.groundElevationM)}`}
+                  {inspect.groundElevationM != null &&
+                    ` · solo ~${formatElevation(inspect.groundElevationM)}`}
                 </p>
               )}
-            </div>
-          )}
-          {!inspect && !simulating && (
-            <p className="mt-2 text-[10px] italic text-zinc-500">Clique no mapa para inspecionar um ponto</p>
-          )}
-          {!isHeatSim && (
-            <div className="mt-3 flex flex-wrap gap-2 border-t border-zinc-800 pt-3 text-[9px]">
-              <span className="rounded border border-sky-700/40 bg-sky-900/40 px-2 py-0.5 text-sky-200">Superficial &lt;35 cm</span>
-              <span className="rounded border border-indigo-700/40 bg-indigo-900/40 px-2 py-0.5 text-indigo-200">Moderada 35–80 cm</span>
-              <span className="rounded border border-violet-700/40 bg-violet-900/40 px-2 py-0.5 text-violet-200">Crítica &gt;80 cm</span>
             </div>
           )}
         </div>

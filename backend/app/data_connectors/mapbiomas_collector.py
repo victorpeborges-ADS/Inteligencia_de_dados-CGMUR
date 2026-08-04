@@ -851,7 +851,7 @@ def collect_mapbiomas_municipality(db: Session, codigo_ibge: str, force: bool = 
     return result
 
 
-def sync_mapbiomas_batch(db: Session, *, limit: int = 6, force: bool = False) -> dict[str, Any]:
+def sync_mapbiomas_batch(db: Session, *, limit: int = 8, force: bool = False) -> dict[str, Any]:
     """Sincroniza MapBiomas para municípios já carregados no banco."""
     from app.data_connectors.constants import TARGET_IBGE_CODES
 

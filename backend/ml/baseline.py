@@ -30,6 +30,9 @@ _BASE_TERRAIN = {
     "3550308": {"impermeabilizacao_pct": 72.0, "cobertura_vegetal_pct": 6.0, "declividade_media": 3.5, "water_proximity": 0.08},
     "3304557": {"impermeabilizacao_pct": 68.0, "cobertura_vegetal_pct": 7.0, "declividade_media": 5.5, "water_proximity": 0.20},
     "5300108": {"impermeabilizacao_pct": 45.0, "cobertura_vegetal_pct": 22.0, "declividade_media": 2.0, "water_proximity": 0.05},
+    # PE LiDAR (PE3D): Mata Norte / ilha costeira — presets até MapBiomas oficial
+    "2603603": {"impermeabilizacao_pct": 28.0, "cobertura_vegetal_pct": 35.0, "declividade_media": 3.5, "water_proximity": 0.12},
+    "2607604": {"impermeabilizacao_pct": 32.0, "cobertura_vegetal_pct": 28.0, "declividade_media": 2.0, "water_proximity": 0.45},
 }
 TERRAIN_PRESETS: dict[str, dict[str, float]] = {
     code: {**FEATURE_DEFAULTS, **vals} for code, vals in _BASE_TERRAIN.items()

@@ -1,8 +1,8 @@
-"""Códigos IBGE do catálogo piloto Sinidu+Clima (6 municípios)."""
+"""Códigos IBGE do catálogo piloto Sinidu+Clima (8 municípios)."""
 
 import os
 
-# Ordem: boot/demo primeiro (Recife, Aracaju), depois demais capitais do piloto.
+# Ordem: boot/demo primeiro (Recife, Aracaju), capitais, depois PE LiDAR (PE3D).
 TARGET_MUNICIPALITIES = [
     {"codigo_ibge": "2611606", "nome": "Recife", "uf": "PE"},
     {"codigo_ibge": "2800308", "nome": "Aracaju", "uf": "SE"},
@@ -10,6 +10,8 @@ TARGET_MUNICIPALITIES = [
     {"codigo_ibge": "3550308", "nome": "São Paulo", "uf": "SP"},
     {"codigo_ibge": "3304557", "nome": "Rio de Janeiro", "uf": "RJ"},
     {"codigo_ibge": "5300108", "nome": "Brasília", "uf": "DF"},
+    {"codigo_ibge": "2603603", "nome": "Camutanga", "uf": "PE"},
+    {"codigo_ibge": "2607604", "nome": "Ilha de Itamaracá", "uf": "PE"},
 ]
 
 TARGET_IBGE_CODES = [item["codigo_ibge"] for item in TARGET_MUNICIPALITIES]

@@ -215,7 +215,7 @@ def get_layers_meta(
                     if edificacoes_count > 0
                     else "Estimado"
                 ),
-                "source": "OpenStreetMap building=* · altura OSM/levels/heurística (LOD1)",
+                "source": "OSM / Microsoft Building Footprints · altura OSM/nDSM/heurística (LOD1)",
                 "count": edificacoes_count,
                 "disponivel": True,
                 "tiles_mvt": True,
@@ -224,6 +224,21 @@ def get_layers_meta(
                 "quality": "Derivado Sinidu+Clima",
                 "source": "Score Sinidu (IVC+IRI+adaptação) × alerta vivo CEMADEN",
                 "disponivel": malha_disponivel or muni.codigo_ibge == "2611606",
+            },
+            "hand_suscetibilidade": {
+                "quality": "Derivado Sinidu+Clima",
+                "source": "HAND (DEM D8) — altura acima da drenagem mais próxima",
+                "disponivel": True,
+            },
+            "hidrografia_osm": {
+                "quality": "Referencia",
+                "source": "OpenStreetMap waterway (Overpass)",
+                "disponivel": True,
+            },
+            "hazard_referencia": {
+                "quality": "Referencia",
+                "source": "JRC CEMS-GloFAS Flood Hazard RP100",
+                "disponivel": True,
             },
             "cobertura": {
                 "quality": (
@@ -597,9 +612,10 @@ def get_geojson_layer(
 ):
     """
     Returns the requested geospatial layer as a standard GeoJSON FeatureCollection.
-    Supported layers: municipio, bairros, vulnerabilidade, inundacao, manchas_oficiais, socioeconomico,
-    adaptacao_climatica, prioridade_planejamento, saneamento_drenagem, lacunas_dados, setores,
-    desastres, alertas, cobertura, infraestrutura, educacao, territorios_especiais
+    Supported layers: municipio, bairros, vulnerabilidade, inundacao, manchas_oficiais, hand_suscetibilidade,
+    hidrografia_osm, hazard_referencia, socioeconomico, adaptacao_climatica, prioridade_planejamento,
+    saneamento_drenagem, lacunas_dados, setores, desastres, alertas, cobertura, infraestrutura, educacao,
+    territorios_especiais
     """
     muni = get_accessible_municipio(db, codigo_ibge, request=request)
 
@@ -1466,6 +1482,27 @@ def get_geojson_layer(
         geo_limit = max(100, min(geo_limit, 3500))
         fc = buildings_geojson(db, muni.codigo_ibge, ensure=True, limit=geo_limit)
         features.extend(fc.get("features") or [])
+
+    elif layer_name == "hand_suscetibilidade":
+        from app.services.hand_service import build_hand_bands_geojson
+
+        fc = build_hand_bands_geojson(db, muni.codigo_ibge)
+        for feat in fc.get("features") or []:
+            features.append(feat)
+
+    elif layer_name == "hidrografia_osm":
+        from app.services.osm_hydrography_service import build_osm_hydrography_geojson
+
+        fc = build_osm_hydrography_geojson(db, muni.codigo_ibge)
+        for feat in fc.get("features") or []:
+            features.append(feat)
+
+    elif layer_name == "hazard_referencia":
+        from app.services.glofas_hazard_service import build_glofas_rp100_geojson
+
+        fc = build_glofas_rp100_geojson(db, muni.codigo_ibge)
+        for feat in fc.get("features") or []:
+            features.append(feat)
 
     elif layer_name == "risco_consolidado":
         from app.services.risco_consolidado_service import build_risco_consolidado_geojson

@@ -29,6 +29,9 @@ LAYER_FONTE_IDS: dict[str, list[str]] = {
     "adaptacao_climatica": ["adapta_brasil", "mapbiomas"],
     "prioridade_planejamento": ["munic"],
     "risco_consolidado": ["mapbiomas", "s2id", "cemaden_georiscos"],
+    "hand_suscetibilidade": ["inde"],
+    "hidrografia_osm": [],
+    "hazard_referencia": [],
     "lacunas_dados": ["brasil_mais", "inde"],
     "saude_risco": ["ibge_cidades"],
     "seguranca_publica": [],
@@ -78,6 +81,18 @@ LAYER_DESCRICOES: dict[str, str] = {
         "Mapa síntese 'onde está o risco agora': Score Sinidu (IVC+IRI+adaptação) por bairro "
         "cruzado com alerta vivo CEMADEN — semáforo VERDE–VERMELHO."
     ),
+    "hand_suscetibilidade": (
+        "Height Above Nearest Drainage (HAND): faixas de altura acima da rede de drenagem "
+        "derivada do DEM — áreas baixas (HAND < 5 m) são topograficamente mais suscetíveis a alagar."
+    ),
+    "hidrografia_osm": (
+        "Rede hidrográfica OSM (rios, córregos, canais e drenos) — usada no motor pluvial "
+        "e exposta como referência de canais naturais/artificiais."
+    ),
+    "hazard_referencia": (
+        "Hazard de inundação de referência JRC CEMS-GloFAS (período de retorno 100 anos) — "
+        "camada global aberta para confrontar a mancha simulada Sinidu+Clima."
+    ),
     "lacunas_dados": "Radar de maturidade e lacunas de integração de fontes oficiais no município.",
     "saude_risco": "Cruzamento de unidades de saúde (CNES/DataSUS) com manchas de risco climático territorial.",
     "seguranca_publica": "Indicadores de criminalidade municipal (SINESP/dados.gov.br) para contexto de vulnerabilidade urbana.",
@@ -104,6 +119,9 @@ LAYER_GRUPOS: dict[str, str] = {
     "adaptacao_climatica": "Planejamento",
     "prioridade_planejamento": "Planejamento",
     "risco_consolidado": "Clima e riscos",
+    "hand_suscetibilidade": "Clima e riscos",
+    "hidrografia_osm": "Clima e riscos",
+    "hazard_referencia": "Clima e riscos",
     "lacunas_dados": "Planejamento",
     "saude_risco": "Saúde e segurança",
     "seguranca_publica": "Saúde e segurança",

@@ -1,7 +1,9 @@
-"""Exportação de simulações territoriais — GeoJSON, KMZ e PDF para oficina."""
+"""Exportação de simulações territoriais — GeoJSON, KMZ, CSV e PDF para oficina."""
 
 from __future__ import annotations
 
+import csv
+import io
 import json
 import zipfile
 from datetime import datetime, timezone
@@ -25,6 +27,8 @@ _KML_COLORS = {
     "heat": "990000ff",
     "bairro_afetado": "6600ffaa",
     "ponto_contingencia": "ff00ffff",
+    "via_intransitavel": "ff0000ff",
+    "ativo_critico_atingido": "ff00d4ff",
     "default": "9900ffff",
 }
 _DEPTH_COLORS = {
@@ -43,6 +47,8 @@ _FOLDER_BY_LAYER = {
     "flow_path": "escoamento",
     "bairro_afetado": "bairros_afetados",
     "ponto_contingencia": "pontos_contingencia",
+    "via_intransitavel": "vias_intransitaveis",
+    "ativo_critico_atingido": "ativos_criticos",
     "heat": "calor",
 }
 
@@ -96,6 +102,8 @@ def build_simulation_geojson(
         _append_fc(geom if isinstance(geom, dict) else None, "simulation")
     _append_fc(simulation.get("contours"), "contour")
     _append_fc(simulation.get("flow_paths"), "flow_path")
+    _append_fc(simulation.get("vias_intransitaveis"), "via_intransitavel")
+    _append_fc(simulation.get("ativos_criticos_atingidos"), "ativo_critico_atingido")
 
     for feat in extra_features or []:
         if isinstance(feat, dict) and feat.get("geometry"):
@@ -249,6 +257,96 @@ def save_simulation_geojson(
     filename = f"simulacao_{muni.codigo_ibge}_{slug}_{ts}.geojson"
     path = simulation_export_dir() / filename
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    return path
+
+
+def build_impacts_csv_text(simulation: dict[str, Any], muni: Municipio) -> str:
+    """CSV operacional: vias intransitáveis + ativos críticos atingidos."""
+    buf = io.StringIO()
+    writer = csv.writer(buf, delimiter=";")
+    writer.writerow(["# Sinidu+Clima — impactos operacionais da simulação"])
+    writer.writerow(["municipio", muni.nome])
+    writer.writerow(["codigo_ibge", muni.codigo_ibge])
+    writer.writerow(["cenario", simulation.get("scenario_type")])
+    writer.writerow(["input_value", simulation.get("input_value")])
+    writer.writerow(["exportado_em", datetime.now(timezone.utc).isoformat()])
+    meta = simulation.get("simulation_meta") if isinstance(simulation.get("simulation_meta"), dict) else {}
+    mob = ((meta.get("impacto_operacional") or {}).get("mobilidade") or {})
+    ativos_meta = meta.get("ativos_criticos") or (meta.get("impacto_operacional") or {}).get("ativos_criticos") or {}
+    writer.writerow([])
+    writer.writerow(["# Resumo"])
+    writer.writerow(["vias_comprometidas_km", mob.get("vias_comprometidas_km") or mob.get("vias_comprometidas_km_proxy")])
+    writer.writerow(["vias_trechos", mob.get("vias_trechos")])
+    writer.writerow(["vias_fonte", mob.get("vias_fonte")])
+    writer.writerow(["escolas_atingidas", ativos_meta.get("escolas")])
+    writer.writerow(["saude_atingida", ativos_meta.get("saude")])
+    writer.writerow(["abrigos_atingidos", ativos_meta.get("abrigos")])
+    writer.writerow(["matriculas_expostas", ativos_meta.get("matriculas_expostas")])
+    writer.writerow(["leitos_sus_expostos", ativos_meta.get("leitos_sus_expostos")])
+    glofas = meta.get("glofas_compare") or {}
+    if glofas:
+        writer.writerow(["glofas_overlap_pct", glofas.get("overlap_pct")])
+        writer.writerow(["glofas_nota", glofas.get("nota")])
+
+    writer.writerow([])
+    writer.writerow(["# Vias intransitáveis"])
+    writer.writerow(["nome", "highway", "length_km", "depth_threshold_m", "fonte_vias", "lon", "lat"])
+    vias = simulation.get("vias_intransitaveis") or {}
+    for feat in vias.get("features") or []:
+        props = feat.get("properties") or {}
+        geom = feat.get("geometry") or {}
+        coords = geom.get("coordinates") or []
+        lon = lat = ""
+        if geom.get("type") == "LineString" and coords:
+            mid = coords[len(coords) // 2]
+            lon, lat = mid[0], mid[1]
+        writer.writerow([
+            props.get("nome"),
+            props.get("highway"),
+            props.get("length_km"),
+            props.get("depth_threshold_m"),
+            props.get("fonte_vias"),
+            lon,
+            lat,
+        ])
+
+    writer.writerow([])
+    writer.writerow(["# Ativos críticos atingidos"])
+    writer.writerow([
+        "categoria", "nome", "subtipo", "depth_band", "depth_m",
+        "matriculas_total", "leitos_sus", "codigo", "lon", "lat",
+    ])
+    ativos = simulation.get("ativos_criticos_atingidos") or {}
+    for feat in ativos.get("features") or []:
+        props = feat.get("properties") or {}
+        geom = feat.get("geometry") or {}
+        coords = geom.get("coordinates") or [None, None]
+        lon = coords[0] if isinstance(coords, (list, tuple)) and len(coords) >= 2 else ""
+        lat = coords[1] if isinstance(coords, (list, tuple)) and len(coords) >= 2 else ""
+        writer.writerow([
+            props.get("categoria"),
+            props.get("nome"),
+            props.get("subtipo"),
+            props.get("depth_band"),
+            props.get("depth_m"),
+            props.get("matriculas_total"),
+            props.get("leitos_sus"),
+            props.get("codigo_inep") or props.get("cnes_codigo"),
+            lon,
+            lat,
+        ])
+    return buf.getvalue()
+
+
+def save_simulation_impacts_csv(
+    simulation: dict[str, Any],
+    muni: Municipio,
+) -> Path:
+    ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    slug = _slug_scenario(str(simulation.get("scenario_type", "sim")))
+    filename = f"impactos_{muni.codigo_ibge}_{slug}_{ts}.csv"
+    path = simulation_export_dir() / filename
+    path.write_text(build_impacts_csv_text(simulation, muni), encoding="utf-8-sig")
     return path
 
 

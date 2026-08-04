@@ -1,4 +1,4 @@
-"""Extrai CSV dos 6 municípios piloto a partir do XLSX oficial MapBiomas Coleção 10.1.
+"""Extrai CSV dos municípios piloto a partir do XLSX oficial MapBiomas Coleção 10.1.
 
 Fonte: https://doi.org/10.58053/MapBiomas/SJZOLT
 Arquivo: MAPBIOMAS_BRAZIL-COVERAGE_STATISTICS-COL.10.1-MUNICIPALITIES_STATES_BIOMES.xlsx
@@ -25,6 +25,8 @@ PILOTS = {
     ("sp", "sao paulo"): "3550308",
     ("rj", "rio de janeiro"): "3304557",
     ("df", "brasilia"): "5300108",
+    ("pe", "camutanga"): "2603603",
+    ("pe", "ilha de itamaraca"): "2607604",
 }
 YEARS = [1985, 1995, 2005, 2015, 2020, 2024]
 

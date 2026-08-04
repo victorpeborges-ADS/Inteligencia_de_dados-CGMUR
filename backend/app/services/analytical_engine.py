@@ -1053,6 +1053,53 @@ class AnalyticalEngine:
 
             logging.getLogger(__name__).warning("Impacto operacional / âncora falhou: %s", exc)
 
+        vias_fc = None
+        try:
+            from app.services.impassable_roads_service import build_impassable_roads_geojson
+
+            vias_fc, vias_meta = build_impassable_roads_geojson(db, muni, fc)
+            mob = (sim_meta.get("impacto_operacional") or {}).setdefault("mobilidade", {})
+            if vias_meta.get("ok") and vias_meta.get("vias_comprometidas_km") is not None:
+                mob["vias_comprometidas_km"] = vias_meta["vias_comprometidas_km"]
+                mob["vias_comprometidas_km_proxy"] = vias_meta["vias_comprometidas_km"]
+                mob["vias_fonte"] = vias_meta.get("fonte_vias")
+                mob["vias_trechos"] = vias_meta.get("trechos")
+            else:
+                mob["vias_fonte"] = vias_meta.get("reason") or "indisponivel"
+        except Exception as exc:
+            import logging
+
+            logging.getLogger(__name__).warning("Vias intransitáveis falhou: %s", exc)
+
+        ativos_fc = None
+        try:
+            from app.services.critical_assets_flood_service import build_critical_assets_hit_geojson
+
+            ativos_fc, ativos_meta = build_critical_assets_hit_geojson(db, muni, fc)
+            sim_meta["ativos_criticos"] = ativos_meta
+            ops = sim_meta.setdefault("impacto_operacional", {})
+            ops["ativos_criticos"] = {
+                "escolas": ativos_meta.get("escolas", 0),
+                "saude": ativos_meta.get("saude", 0),
+                "abrigos": ativos_meta.get("abrigos", 0),
+                "total": ativos_meta.get("total", 0),
+                "matriculas_expostas": ativos_meta.get("matriculas_expostas", 0),
+                "leitos_sus_expostos": ativos_meta.get("leitos_sus_expostos", 0),
+            }
+        except Exception as exc:
+            import logging
+
+            logging.getLogger(__name__).warning("Ativos críticos × mancha falhou: %s", exc)
+
+        try:
+            from app.services.glofas_compare_service import compare_flood_to_glofas
+
+            sim_meta["glofas_compare"] = compare_flood_to_glofas(db, muni.codigo_ibge, fc)
+        except Exception as exc:
+            import logging
+
+            logging.getLogger(__name__).warning("Comparativo GloFAS falhou: %s", exc)
+
         return {
             "scenario_type": "ExtremeRainfall",
             "input_value": precipitacao_mm,
@@ -1064,6 +1111,8 @@ class AnalyticalEngine:
             "geometry": fc,
             "contours": terrain.get("contours"),
             "flow_paths": terrain.get("flow_paths"),
+            "vias_intransitaveis": vias_fc,
+            "ativos_criticos_atingidos": ativos_fc,
             "simulation_meta": sim_meta,
             "risk_context": terrain.get("risk_context"),
         }

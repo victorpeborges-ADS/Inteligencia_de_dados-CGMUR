@@ -149,12 +149,9 @@ export const useAppStore = create<AppStore>((set, get) => ({
   activeLayers: [...DEFAULT_MAP_LAYERS],
   setActiveLayers: (value) =>
     set({
-      activeLayers: (typeof value === 'function' ? value(get().activeLayers) : value).filter(
-        (id) => id !== 'edificacoes',
-      ),
+      activeLayers: typeof value === 'function' ? value(get().activeLayers) : value,
     }),
   toggleLayer: (layerId) => {
-    if (layerId === 'edificacoes') return; // LOD1 UI pausada — qualidade insuficiente
     set((state) => ({
       activeLayers: state.activeLayers.includes(layerId)
         ? state.activeLayers.filter((id) => id !== layerId)

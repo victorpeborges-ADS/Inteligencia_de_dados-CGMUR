@@ -7,7 +7,9 @@ from app.services.hydro_simulator import (
     _adaptive_contour_interval,
     _compute_d8_accumulation,
     _downsample_elevation_grid,
+    _hydro_grid_limit_for,
     _lat_grid,
+    _local_valley_floor,
     _smooth_dem,
     contours_geojson,
     flood_bands_geojson,
@@ -89,6 +91,32 @@ def test_downsample_elevation_grid_caps_dim():
     # Sem necessidade de downsample
     same, *_ = _downsample_elevation_grid(elev[:20, :20], 0, 0, 0.01, 0.01, max_dim=40)
     assert same.shape == (20, 20)
+
+
+def test_hydro_grid_limit_fine_vs_medium(monkeypatch):
+    monkeypatch.delenv("HYDRO_MAX_GRID_DIM", raising=False)
+    monkeypatch.delenv("HYDRO_LIDAR_MAX_GRID_DIM", raising=False)
+    fine = np.zeros((4000, 4000), dtype=np.float32)
+    assert _hydro_grid_limit_for({"dem_resolution_m": 2.0}, fine, 2e-5, 2e-5, -8.0) >= 1024
+    # ~20 m — não forçar grade fina só por rótulo LiDAR
+    med = np.zeros((1152, 1152), dtype=np.float32)
+    lim = _hydro_grid_limit_for(
+        {"dem_source": "LiDAR/DSM local", "dem_resolution_m": 20.0},
+        med, 1.5e-4, 2e-4, -8.0,
+    )
+    assert lim == 512
+
+
+def test_local_valley_floor_follows_two_basins():
+    elev = np.full((40, 40), 50.0)
+    elev[5:15, 5:15] = 10.0   # vale A
+    elev[25:35, 25:35] = 20.0  # vale B (mais alto)
+    elev[8:12, 8:12] = 8.0
+    elev[28:32, 28:32] = 18.0
+    mask = np.ones_like(elev, dtype=bool)
+    floor = _local_valley_floor(elev, mask, res_m=10.0, window_m=80.0)
+    assert floor[10, 10] < floor[30, 30]
+    assert floor[10, 10] <= 10.0 + 1e-6
 
 
 def test_contours_respect_north_up_orientation():

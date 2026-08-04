@@ -76,7 +76,15 @@ interface MapProps {
   simGeoJSON: any;
   simContours?: any;
   simFlowPaths?: any;
-  simOverlays?: { showFlood: boolean; showContours: boolean; showFlow: boolean };
+  simImpassableRoads?: any;
+  simCriticalAssets?: any;
+  simOverlays?: {
+    showFlood: boolean;
+    showContours: boolean;
+    showFlow: boolean;
+    showImpassableRoads?: boolean;
+    showCriticalAssets?: boolean;
+  };
   contingencyOverlay?: ContingencyMapOverlay | null;
   showContingencyOnMap?: boolean;
   selectedMunicipio: string;
@@ -131,6 +139,18 @@ const legendByLayer: Record<string, LegendItem[]> = {
     { color: '#075985', label: 'Risco alto' },
     { color: '#0284c7', label: 'Risco médio' },
     { color: '#7dd3fc', label: 'Risco baixo' }
+  ],
+  hand_suscetibilidade: [
+    { color: '#7f1d1d', label: 'HAND < 2 m' },
+    { color: '#ea580c', label: 'HAND 2–5 m' },
+    { color: '#ca8a04', label: 'HAND 5–10 m' },
+    { color: '#a3a3a3', label: 'HAND 10–25 m' },
+  ],
+  hidrografia_osm: [{ color: '#1d4ed8', label: 'Hidrografia OSM' }],
+  hazard_referencia: [
+    { color: '#93c5fd', label: 'GloFAS 5–50 cm' },
+    { color: '#2563eb', label: 'GloFAS 50–150 cm' },
+    { color: '#1e3a8a', label: 'GloFAS > 150 cm' },
   ],
   alertas: [
     { color: '#f43f5e', label: 'Muito alto' },
@@ -362,7 +382,15 @@ export default function MapContainer({
   simGeoJSON,
   simContours,
   simFlowPaths,
-  simOverlays = { showFlood: true, showContours: true, showFlow: true },
+  simImpassableRoads,
+  simCriticalAssets,
+  simOverlays = {
+    showFlood: true,
+    showContours: true,
+    showFlow: true,
+    showImpassableRoads: true,
+    showCriticalAssets: true,
+  },
   contingencyOverlay = null,
   showContingencyOnMap = true,
   selectedMunicipio,
@@ -892,6 +920,65 @@ export default function MapContainer({
               opacity: 0.9,
               dashArray: '6,4',
             })}
+          />
+        )}
+
+        {simOverlays.showImpassableRoads !== false && simImpassableRoads?.features?.length > 0 && (
+          <GeoJSON
+            key={`impassable-${simImpassableRoads.features.length}`}
+            data={simImpassableRoads}
+            style={() => ({
+              fillOpacity: 0,
+              color: '#ef4444',
+              weight: 3.2,
+              opacity: 0.92,
+            })}
+            onEachFeature={(feature, layer) => {
+              const nome = feature.properties?.nome || 'Via';
+              const km = feature.properties?.length_km;
+              layer.bindPopup(
+                `<div class="p-2 text-xs"><strong>${nome}</strong>`
+                + `<p class="text-zinc-400">Intransitável (≥35 cm)`
+                + (km != null ? ` · ${km} km` : '')
+                + `</p></div>`,
+              );
+            }}
+          />
+        )}
+
+        {simOverlays.showCriticalAssets !== false && simCriticalAssets?.features?.length > 0 && (
+          <GeoJSON
+            key={`critical-${simCriticalAssets.features.length}`}
+            data={simCriticalAssets}
+            pointToLayer={(feature, latlng) => {
+              const cat = feature.properties?.categoria;
+              const color =
+                cat === 'escola' ? '#38bdf8' : cat === 'saude' ? '#22c55e' : '#fbbf24';
+              return L.circleMarker(latlng, {
+                radius: feature.properties?.depth_band === 'critica' ? 9 : 7,
+                color: '#7f1d1d',
+                weight: 1.5,
+                fillColor: color,
+                fillOpacity: 0.92,
+              });
+            }}
+            onEachFeature={(feature, layer) => {
+              const p = feature.properties || {};
+              const cat =
+                p.categoria === 'escola' ? 'Escola' : p.categoria === 'saude' ? 'Saúde' : 'Abrigo';
+              const extra =
+                p.matriculas_total != null
+                  ? ` · ${p.matriculas_total} matrículas`
+                  : p.leitos_sus != null
+                    ? ` · ${p.leitos_sus} leitos SUS`
+                    : '';
+              layer.bindPopup(
+                `<div class="p-2 text-xs"><strong>${p.nome || cat}</strong>`
+                + `<p class="text-zinc-400">${cat} atingido`
+                + (p.depth_band ? ` · ${p.depth_band}` : '')
+                + `${extra}</p></div>`,
+              );
+            }}
           />
         )}
 

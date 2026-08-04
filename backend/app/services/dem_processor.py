@@ -149,17 +149,18 @@ def dem_resolution_m(res_x: float, res_y: float, lat_c: float) -> float:
 
 def local_dem_source_paths(codigo_ibge: str) -> list[Path]:
     code = str(codigo_ibge).zfill(7)[:7]
+    # LiDAR / hidrodêmicos antes do SRTM genérico `{code}.tif`.
     return [
-        dem_dir(code) / "local_dem.tif",
         dem_dir(code) / "lidar.tif",
+        dem_dir(code) / "local_dem.tif",
         dem_dir(code) / "merit.tif",
         dem_dir(code) / "anadem.tif",
-        LOCAL_DEM_DIR / f"{code}.tif",
         LOCAL_DEM_DIR / f"{code}_lidar.tif",
         LOCAL_DEM_DIR / f"{code}_dsm.tif",
         LOCAL_DEM_DIR / f"{code}_merit.tif",
         LOCAL_DEM_DIR / f"{code}_anadem.tif",
         LOCAL_DEM_DIR / f"{code}_merit_hydro.tif",
+        LOCAL_DEM_DIR / f"{code}.tif",
     ]
 
 
@@ -287,7 +288,7 @@ def _store_refined_pilot_dem(
         return None
 
 
-def sync_dem_batch(db: Session, *, limit: int = 6, force: bool = False) -> dict[str, Any]:
+def sync_dem_batch(db: Session, *, limit: int = 8, force: bool = False) -> dict[str, Any]:
     """Processa DEM (LiDAR local ou SRTM) para municípios prioritários."""
     from app.data_connectors.constants import TARGET_IBGE_CODES
 
@@ -322,7 +323,7 @@ def sync_dem_batch(db: Session, *, limit: int = 6, force: bool = False) -> dict[
     }
 
 
-def dem_status(*, limit: int = 6) -> dict[str, Any]:
+def dem_status(*, limit: int = 8) -> dict[str, Any]:
     """Panorama DEM dos municípios prioritários (processados, LiDAR local, piloto)."""
     from app.config import settings
     from app.data_connectors.constants import TARGET_IBGE_CODES

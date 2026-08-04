@@ -156,6 +156,8 @@ class IntegrationOrchestrator:
         row.fonte = payload.get("fonte")
         row.atualizado_em = payload.get("atualizado_em")
         row.raw_payload = json.dumps(payload.get("raw_payload") or {}, ensure_ascii=False)
+        # autoflush=False: CAPAG precisa ver esta linha antes de criar outra
+        self.db.flush()
         return True
 
     def _sync_snis(self, codigo_ibge: str) -> bool:
@@ -182,23 +184,45 @@ class IntegrationOrchestrator:
         return True
 
     def _upsert_fiscal_capag(self, codigo_ibge: str, capag: Dict[str, Any]) -> None:
-        row = self.db.query(MunicipioFiscal).filter(MunicipioFiscal.codigo_ibge == codigo_ibge).first()
+        row = (
+            self.db.query(MunicipioFiscal)
+            .filter(MunicipioFiscal.codigo_ibge == codigo_ibge)
+            .first()
+        )
         if not row:
-            row = MunicipioFiscal(codigo_ibge=codigo_ibge, municipio_id=self._municipio_id(codigo_ibge))
+            # Inclui objetos pending na sessão (autoflush=False)
+            for obj in self.db.new:
+                if isinstance(obj, MunicipioFiscal) and obj.codigo_ibge == codigo_ibge:
+                    row = obj
+                    break
+        if not row:
+            row = MunicipioFiscal(
+                codigo_ibge=codigo_ibge,
+                municipio_id=self._municipio_id(codigo_ibge),
+            )
             self.db.add(row)
+        row.municipio_id = row.municipio_id or self._municipio_id(codigo_ibge)
         row.nota_capag = capag.get("nota_capag")
         if capag.get("nota_capag"):
-            row.data_quality = "oficial"
-            row.fonte = capag.get("fonte")
+            # Não rebaixar qualidade se SICONFI já marcou oficial
+            if row.data_quality not in ("oficial",):
+                row.data_quality = "oficial"
+            row.fonte = row.fonte or capag.get("fonte")
             row.atualizado_em = capag.get("atualizado_em")
-        row.raw_payload = json.dumps(
+        # Preserva payload SICONFI se já existir
+        prev: dict = {}
+        try:
+            prev = json.loads(row.raw_payload) if row.raw_payload else {}
+        except (TypeError, json.JSONDecodeError):
+            prev = {}
+        prev.update(
             {
                 "nota_capag_raw": capag.get("nota_capag_raw"),
                 "indicadores": capag.get("indicadores") or [],
                 "origem_nota": capag.get("origem_nota"),
-            },
-            ensure_ascii=False,
+            }
         )
+        row.raw_payload = json.dumps(prev, ensure_ascii=False)
 
     def _register_run(self, source: str, status: str, records_count: int, error_message: str | None = None) -> None:
         self.db.add(IntegrationRun(

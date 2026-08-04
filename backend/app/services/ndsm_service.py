@@ -8,7 +8,7 @@ from shapely.geometry import shape
 from sqlalchemy.orm import Session
 
 from app.models import Edificacao, Municipio
-from app.services.dem_processor import dem_dir, find_local_dem, load_meta, meta_path
+from app.services.dem_processor import LOCAL_DEM_DIR, dem_dir, find_local_dem, load_meta, meta_path
 
 logger = logging.getLogger(__name__)
 
@@ -21,6 +21,50 @@ GROUND_WINDOW_M = 50.0
 
 def ndsm_path(codigo_ibge: str) -> Path:
     return dem_dir(codigo_ibge) / "ndsm.tif"
+
+
+_MDT_NAMES = frozenset({"lidar.tif", "mdt.tif"})
+
+
+def _is_mdt_filename(path: Path) -> bool:
+    name = path.name.lower()
+    return name in _MDT_NAMES or name.endswith("_lidar.tif") or name.endswith("_mdt.tif")
+
+
+def find_local_dsm(codigo_ibge: str) -> Path | None:
+    """Prefere MDS/DSM real (`*_dsm.tif` / `local_dem.tif`).
+
+    Não usa SRTM genérico (`{ibge}.tif`) nem MDT PE3D (`*_lidar.tif`) como superfície —
+    isso gera nDSM espúrio (SRTM−MDT) ou ~0 (MDT−minfilter).
+    """
+    code = str(codigo_ibge).zfill(7)[:7]
+    LOCAL_DEM_DIR.mkdir(parents=True, exist_ok=True)
+    candidates = [
+        dem_dir(code) / "dsm.tif",
+        LOCAL_DEM_DIR / f"{code}_dsm.tif",
+        dem_dir(code) / "mds.tif",
+        LOCAL_DEM_DIR / f"{code}_mds.tif",
+        dem_dir(code) / "local_dem.tif",
+    ]
+    for path in candidates:
+        if path.exists() and path.stat().st_size > 2048 and not _is_mdt_filename(path):
+            return path
+    return None
+
+
+def find_local_mdt(codigo_ibge: str) -> Path | None:
+    """MDT PE3D / terreno — DTM verdadeiro quando MDS também existe."""
+    code = str(codigo_ibge).zfill(7)[:7]
+    candidates = [
+        dem_dir(code) / "mdt.tif",
+        dem_dir(code) / "lidar.tif",
+        LOCAL_DEM_DIR / f"{code}_mdt.tif",
+        LOCAL_DEM_DIR / f"{code}_lidar.tif",
+    ]
+    for path in candidates:
+        if path.exists() and path.stat().st_size > 2048:
+            return path
+    return None
 
 
 def _ground_window_px(res_m: float) -> int:
@@ -53,20 +97,24 @@ def build_ndsm(codigo_ibge: str, *, force: bool = False) -> dict[str, Any]:
             "dem_source": meta.get("dem_source"),
         }
 
-    src_path = find_local_dem(code)
+    src_path = find_local_dsm(code)
     if not src_path:
         cand = dem_dir(code) / "dem.tif"
         src_path = cand if cand.exists() else None
     if not src_path:
         return {"codigo_ibge": code, "status": "sem_dsm", "path": None}
 
+    mdt_path = find_local_mdt(code)
+
     try:
         import rasterio
+        from rasterio.warp import reproject, Resampling
         from scipy import ndimage
     except ImportError as exc:
         return {"codigo_ibge": code, "status": "deps_ausentes", "erro": str(exc)}
 
     dem_dir(code).mkdir(parents=True, exist_ok=True)
+    method = "dsm_minus_minfilter_dtm_proxy"
     with rasterio.open(src_path) as src:
         dsm = src.read(1).astype(np.float64)
         nodata = src.nodata
@@ -77,9 +125,33 @@ def build_ndsm(codigo_ibge: str, *, force: bool = False) -> dict[str, Any]:
         res_m = _approx_res_m(transform, src)
         win = _ground_window_px(res_m)
         finite = np.isfinite(dsm)
-        fill_val = float(np.nanmax(dsm)) if finite.any() else 0.0
-        filled = np.where(finite, dsm, fill_val)
-        dtm = ndimage.minimum_filter(filled, size=win, mode="nearest")
+
+        dtm = None
+        if mdt_path and src_path.resolve() != mdt_path.resolve():
+            try:
+                with rasterio.open(mdt_path) as mdt_src:
+                    dtm = np.empty(dsm.shape, dtype=np.float64)
+                    reproject(
+                        source=rasterio.band(mdt_src, 1),
+                        destination=dtm,
+                        src_transform=mdt_src.transform,
+                        src_crs=mdt_src.crs,
+                        dst_transform=transform,
+                        dst_crs=src.crs,
+                        resampling=Resampling.bilinear,
+                        src_nodata=mdt_src.nodata,
+                        dst_nodata=np.nan,
+                    )
+                    method = "mds_minus_mdt"
+            except Exception as exc:
+                logger.warning("nDSM: falha ao alinhar MDT %s: %s", mdt_path, exc)
+                dtm = None
+
+        if dtm is None:
+            fill_val = float(np.nanmax(dsm)) if finite.any() else 0.0
+            filled = np.where(finite, dsm, fill_val)
+            dtm = ndimage.minimum_filter(filled, size=win, mode="nearest")
+
         ndsm = np.clip(dsm - dtm, 0.0, NDSM_MAX_M)
         ndsm = np.where(finite, ndsm, np.nan)
 
@@ -95,12 +167,13 @@ def build_ndsm(codigo_ibge: str, *, force: bool = False) -> dict[str, Any]:
             "ground_window_px": win,
             "ground_window_m_approx": GROUND_WINDOW_M,
             "dsm_source": str(src_path),
+            "mdt_source": str(mdt_path) if mdt_path and method == "mds_minus_mdt" else None,
             "resolution_m_approx": round(res_m, 2),
         }
 
     meta = load_meta(code) or {"codigo_ibge": code}
     meta["ndsm_file"] = "ndsm.tif"
-    meta["ndsm_method"] = "dsm_minus_minfilter_dtm_proxy"
+    meta["ndsm_method"] = method
     meta["ndsm_stats"] = stats
     meta_path(code).write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
 

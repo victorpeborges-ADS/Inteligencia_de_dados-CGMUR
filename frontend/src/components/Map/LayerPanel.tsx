@@ -59,7 +59,7 @@ export const LAYER_PRESETS = {
     id: 'cruzar_riscos',
     label: 'Cruzar riscos',
     description: 'Bairros + vulnerabilidade climática + risco de inundação',
-    layers: ['bairros', 'vulnerabilidade', 'inundacao'],
+    layers: ['bairros', 'vulnerabilidade', 'inundacao', 'hand_suscetibilidade'],
   },
   riscoConsolidado: {
     id: 'risco_consolidado',

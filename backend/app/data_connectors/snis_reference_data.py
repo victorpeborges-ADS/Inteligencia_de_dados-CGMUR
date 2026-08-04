@@ -7,6 +7,10 @@ from typing import Any, Dict
 # IN055 (% pop. atendida água), IN056 (% esgoto), IN089 (perdas água), IN063 (% esgoto tratado)
 SNIS_MUNICIPAL_2022: Dict[str, Dict[str, Any]] = {
     "2611606": {"cobertura_agua_pct": 97.2, "cobertura_esgoto_pct": 67.8, "indice_perdas_agua_pct": 42.1, "indice_atendimento_esgoto_pct": 45.3},
+    # Camutanga — SINISA/IAS (água 84,5%; esgoto coleta ~41,4%; tratamento ~28,4%)
+    "2603603": {"cobertura_agua_pct": 84.5, "cobertura_esgoto_pct": 41.4, "indice_perdas_agua_pct": 43.8, "indice_atendimento_esgoto_pct": 28.4},
+    # Ilha de Itamaracá — proxy COMPESA/SINISA regional (água alta; esgoto parcial)
+    "2607604": {"cobertura_agua_pct": 88.0, "cobertura_esgoto_pct": 35.0, "indice_perdas_agua_pct": 42.0, "indice_atendimento_esgoto_pct": 22.0},
     "2927408": {"cobertura_agua_pct": 88.4, "cobertura_esgoto_pct": 55.1, "indice_perdas_agua_pct": 36.8, "indice_atendimento_esgoto_pct": 38.2},
     "2304400": {"cobertura_agua_pct": 92.1, "cobertura_esgoto_pct": 45.6, "indice_perdas_agua_pct": 40.5, "indice_atendimento_esgoto_pct": 28.4},
     "2704302": {"cobertura_agua_pct": 85.3, "cobertura_esgoto_pct": 40.2, "indice_perdas_agua_pct": 44.2, "indice_atendimento_esgoto_pct": 22.1},

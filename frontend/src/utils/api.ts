@@ -526,6 +526,8 @@ export interface SimulationOutput {
   geometry: any;
   contours?: any;
   flow_paths?: any;
+  vias_intransitaveis?: any;
+  ativos_criticos_atingidos?: any;
   simulation_meta?: {
     dem_available?: boolean;
     dem_source?: string;
@@ -3212,6 +3214,22 @@ export const api = {
       }),
     });
     if (!res.ok) throw await httpError(res, 'Exportação KMZ falhou');
+    return res.json();
+  },
+
+  exportSimulationImpactsCsv: async (
+    simulation: SimulationOutput,
+    codigoIbge?: string,
+  ): Promise<{ download_url: string; nome_arquivo: string }> => {
+    const res = await apiFetch(`${getApiBaseUrl()}/api/v1/simulations/export/impacts-csv`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        codigo_ibge: codigoIbge,
+        simulation,
+      }),
+    });
+    if (!res.ok) throw await httpError(res, 'Exportação CSV de impactos falhou');
     return res.json();
   },
 

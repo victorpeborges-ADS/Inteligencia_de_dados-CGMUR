@@ -22,6 +22,10 @@ from app.models import Edificacao, Municipio
 logger = logging.getLogger(__name__)
 
 OVERPASS_URL = "https://overpass-api.de/api/interpreter"
+OVERPASS_HEADERS = {
+    "User-Agent": "SiniduClima/1.0 (digital-twin; research; https://github.com/)",
+    "Accept": "application/json",
+}
 LEVEL_HEIGHT_M = 3.0
 DEFAULT_HEIGHT_M = 6.0
 MAX_BUILDINGS = 3500
@@ -173,9 +177,10 @@ def fetch_osm_buildings(
             resp = requests.post(
                 OVERPASS_URL,
                 data={"data": query},
+                headers=OVERPASS_HEADERS,
                 timeout=OVERPASS_TIMEOUT_S + 15,
             )
-            if resp.status_code in (429, 502, 503, 504):
+            if resp.status_code in (406, 429, 502, 503, 504):
                 raise OverpassRateLimitError(f"HTTP {resp.status_code}")
             resp.raise_for_status()
             elements = resp.json().get("elements") or []
@@ -324,6 +329,36 @@ def collect_buildings_municipality(
     records = elements_to_records(elements, code)
 
     fonte = "osm"
+    # Municípios pequenos/rurais frequentemente têm OSM quase vazio — Microsoft ML footprints
+    if len(records) < 50:
+        try:
+            from app.data_connectors.microsoft_buildings_collector import (
+                fetch_microsoft_buildings,
+            )
+            from geoalchemy2.shape import to_shape
+
+            clip = None
+            if muni.geom is not None:
+                try:
+                    clip = to_shape(muni.geom)
+                except Exception:
+                    clip = None
+            ms_limit = max(limit, 8000)
+            ms_records = fetch_microsoft_buildings(
+                west, south, east, north, clip=clip, limit=ms_limit
+            )
+            if len(ms_records) > len(records):
+                records = [{**r, "codigo_ibge": code} for r in ms_records]
+                fonte = "microsoft"
+                logger.info(
+                    "Buildings %s: OSM=%s → Microsoft=%s",
+                    code,
+                    len(elements),
+                    len(records),
+                )
+        except Exception as exc:
+            logger.warning("Microsoft buildings fallback falhou para %s: %s", code, exc)
+
     if not records and code == "2611606":
         seed = _seed_recife_centro()
         records = [{**r, "codigo_ibge": code} for r in seed]
@@ -331,15 +366,15 @@ def collect_buildings_municipality(
 
     count = upsert_edificacoes(db, muni, records)
 
-    # 17a.6 — refinar altura com nDSM quando houver DSM/LiDAR local (piloto Recife)
+    # 17a.6 — refinar altura só com MDS/DSM real (não MDT/SRTM)
     ndsm_info = None
     try:
-        from app.services.dem_processor import dem_dir, find_local_dem
-        from app.services.ndsm_service import refine_building_heights_from_ndsm
+        from app.services.ndsm_service import find_local_dsm, refine_building_heights_from_ndsm
 
-        has_dsm = bool(find_local_dem(code)) or (dem_dir(code) / "dem.tif").exists()
-        if has_dsm:
+        if find_local_dsm(code):
             ndsm_info = refine_building_heights_from_ndsm(db, code)
+        else:
+            ndsm_info = {"status": "sem_dsm", "updated": 0}
     except Exception as exc:
         logger.warning("nDSM refine falhou para %s: %s", code, exc)
         ndsm_info = {"status": "erro", "erro": str(exc)}

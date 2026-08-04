@@ -88,3 +88,62 @@ body {
   outline: 2px solid var(--sinidu-accent);
   outline-offset: 2px;
 }
+
+/* Controles nativos MapLibre — fora da coluna do LayerPanel e do toggle 2D/3D */
+.maplibregl-ctrl-top-right {
+  top: 4.75rem !important;
+  right: 0.5rem !important;
+}
+.maplibregl-ctrl-bottom-right {
+  bottom: 6.5rem !important;
+  right: 0.5rem !important;
+}
+.maplibregl-ctrl-top-left,
+.maplibregl-ctrl-bottom-left {
+  /* Evita sobrepor o painel de camadas (esquerda) */
+  left: calc(18rem + 1.75rem) !important;
+}
+
+/* Chuva cinematográfica sobre o Terreno 3D (simulação de enchente) */
+.map-flood-rain {
+  background-image:
+    repeating-linear-gradient(
+      -12deg,
+      transparent 0,
+      transparent 10px,
+      rgba(186, 230, 253, 0.07) 10px,
+      rgba(186, 230, 253, 0.07) 11px
+    );
+  animation: map-flood-rain-fall 0.55s linear infinite;
+  mix-blend-mode: screen;
+}
+.map-flood-rain--soft {
+  opacity: 0.35;
+}
+.map-flood-rain--heavy {
+  opacity: 0.7;
+  background-image:
+    repeating-linear-gradient(
+      -14deg,
+      transparent 0,
+      transparent 7px,
+      rgba(224, 242, 254, 0.11) 7px,
+      rgba(224, 242, 254, 0.11) 8px
+    ),
+    repeating-linear-gradient(
+      -8deg,
+      transparent 0,
+      transparent 13px,
+      rgba(125, 211, 252, 0.06) 13px,
+      rgba(125, 211, 252, 0.06) 14px
+    );
+  animation-duration: 0.4s;
+}
+@keyframes map-flood-rain-fall {
+  from {
+    background-position: 0 0, 0 0;
+  }
+  to {
+    background-position: 0 28px, 0 40px;
+  }
+}

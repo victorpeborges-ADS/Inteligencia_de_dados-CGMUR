@@ -273,6 +273,8 @@ class SimulationOutput(BaseModel):
     geometry: GeoJSONFeatureCollection
     contours: Optional[GeoJSONFeatureCollection] = None
     flow_paths: Optional[GeoJSONFeatureCollection] = None
+    vias_intransitaveis: Optional[GeoJSONFeatureCollection] = None
+    ativos_criticos_atingidos: Optional[GeoJSONFeatureCollection] = None
     simulation_meta: Optional[Dict[str, Any]] = None
     risk_context: Optional[List[Dict[str, Any]]] = None
     from_cache: Optional[bool] = None

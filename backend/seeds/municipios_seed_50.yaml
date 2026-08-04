@@ -1,5 +1,6 @@
-# Catálogo piloto Sinidu+Clima — 6 municípios
-# Recife e Aracaju: boot priority (malha/DEM prewarm). Demais sob demanda.
+# Catálogo piloto Sinidu+Clima — 8 municípios
+# Recife e Aracaju: boot priority (malha/DEM prewarm).
+# Camutanga e Ilha de Itamaracá: PE LiDAR (PE3D) — município pequeno / costa.
 
 municipios:
   - { codigo_ibge: "2611606", nome: "Recife", uf: "PE", criterio: "capital", decretos: 32, prioridade: 1 }
@@ -8,3 +9,5 @@ municipios:
   - { codigo_ibge: "3550308", nome: "São Paulo", uf: "SP", criterio: "capital", decretos: 38, prioridade: 1 }
   - { codigo_ibge: "3304557", nome: "Rio de Janeiro", uf: "RJ", criterio: "capital", decretos: 41, prioridade: 1 }
   - { codigo_ibge: "5300108", nome: "Brasília", uf: "DF", criterio: "capital", decretos: 11, prioridade: 1 }
+  - { codigo_ibge: "2603603", nome: "Camutanga", uf: "PE", criterio: "lidar_pe3d", decretos: 0, prioridade: 2 }
+  - { codigo_ibge: "2607604", nome: "Ilha de Itamaracá", uf: "PE", criterio: "lidar_pe3d", decretos: 0, prioridade: 2 }

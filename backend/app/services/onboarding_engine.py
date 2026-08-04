@@ -204,6 +204,10 @@ def run_onboarding(db: Session, codigo_ibge: str, *, force: bool = False) -> dic
             steps["capag"] = _step("parcial", "CAPAG consultado sem nota.")
             errors.append({"step": "capag", "message": "Nota CAPAG ausente."})
     except Exception as exc:
+        try:
+            db.rollback()
+        except Exception:
+            pass
         steps["capag"] = _step("falha", str(exc))
         errors.append({"step": "capag", "message": str(exc)})
 

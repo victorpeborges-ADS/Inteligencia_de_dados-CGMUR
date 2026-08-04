@@ -42,6 +42,22 @@ export function getLayerStyle(
     return { fillColor: 'transparent', fillOpacity: 0, color: '#38bdf8', weight: 3 };
   }
 
+  if (layerName === 'edificacoes') {
+    // Branco/cinza claro — contrastam com a água nas ruas (refs enchente 3D)
+    const floodBand = props._flood_band as string | undefined;
+    if (floodBand) {
+      return { fillColor: '#f8fafc', fillOpacity: 0.97, color: '#38bdf8', weight: 0.55 };
+    }
+    const h = Number(props.altura_m ?? props._extrusionHeightM ?? 6);
+    if (h >= 18) {
+      return { fillColor: '#e7e5e4', fillOpacity: 0.96, color: '#a8a29e', weight: 0.35 };
+    }
+    if (h >= 9) {
+      return { fillColor: '#f5f5f4', fillOpacity: 0.95, color: '#a8a29e', weight: 0.3 };
+    }
+    return { fillColor: '#fafafa', fillOpacity: 0.94, color: '#d6d3d1', weight: 0.28 };
+  }
+
   if (layerName === 'cobertura') {
     const cls = props.classe_uso;
     if (cls === 'Vegetação / Floresta') {
@@ -89,6 +105,35 @@ export function getLayerStyle(
     // Estilo distinto (validação 20h.5): contorno tracejado roxo escuro, preenchimento baixo —
     // não deve se confundir visualmente com a mancha derivada 'inundacao' (azul).
     return { fillColor: '#6d28d9', fillOpacity: 0.12, color: '#4c1d95', weight: 2, dashArray: '6,4' };
+  }
+
+  if (layerName === 'hand_suscetibilidade') {
+    const band = String(props.hand_band || '');
+    if (band === 'muito_baixa') {
+      return { fillColor: '#7f1d1d', fillOpacity: 0.55, color: '#450a0a', weight: 0.8 };
+    }
+    if (band === 'baixa') {
+      return { fillColor: '#ea580c', fillOpacity: 0.48, color: '#9a3412', weight: 0.7 };
+    }
+    if (band === 'moderada') {
+      return { fillColor: '#ca8a04', fillOpacity: 0.38, color: '#854d0e', weight: 0.6 };
+    }
+    return { fillColor: '#a3a3a3', fillOpacity: 0.22, color: '#737373', weight: 0.5 };
+  }
+
+  if (layerName === 'hidrografia_osm') {
+    return { fillColor: 'transparent', fillOpacity: 0, color: '#1d4ed8', weight: 2.2, opacity: 0.9 };
+  }
+
+  if (layerName === 'hazard_referencia') {
+    const band = String(props.hazard_band || '');
+    if (band === 'profunda') {
+      return { fillColor: '#1e3a8a', fillOpacity: 0.42, color: '#172554', weight: 0.8 };
+    }
+    if (band === 'moderada') {
+      return { fillColor: '#2563eb', fillOpacity: 0.36, color: '#1e40af', weight: 0.7 };
+    }
+    return { fillColor: '#93c5fd', fillOpacity: 0.28, color: '#3b82f6', weight: 0.6 };
   }
 
   if (layerName === 'socioeconomico') {
@@ -271,12 +316,16 @@ export function enrichGeoJSON(layerName: string, geojson: any): { type: 'Feature
   const features = (geojson?.features || []).map((feature: any) => {
     const style = getLayerStyle(layerName, feature);
     const props = feature.properties || {};
-    const extrusion =
+    const extrusionRaw =
       props._extrusionHeightM != null
         ? Number(props._extrusionHeightM)
         : props.altura_m != null
           ? Number(props.altura_m)
-          : undefined;
+          : layerName === 'edificacoes'
+            ? 6
+            : undefined;
+    const extrusion =
+      extrusionRaw != null && Number.isFinite(extrusionRaw) ? Math.max(1.5, extrusionRaw) : undefined;
     return {
       ...feature,
       properties: {
@@ -286,9 +335,7 @@ export function enrichGeoJSON(layerName: string, geojson: any): { type: 'Feature
         _stroke: style.color,
         _strokeWidth: style.weight,
         _radius: style.radius ?? 6,
-        ...(extrusion != null && Number.isFinite(extrusion)
-          ? { _extrusionHeightM: Math.max(1.5, extrusion) }
-          : {}),
+        ...(extrusion != null ? { _extrusionHeightM: extrusion } : {}),
       },
     };
   });
@@ -313,25 +360,52 @@ export function getSimulationFeatureStyle(feature: any) {
   if (props.layer_type === 'landslide') {
     return { fillColor: '#dc2626', fillOpacity: 0.55, color: '#991b1b', weight: 2 };
   }
+  // Lâmina translúcida (refs: água nas ruas, prédios emergindo)
   if (props.depth_band === 'superficial') {
-    return { fillColor: '#38bdf8', fillOpacity: 0.42, color: '#0ea5e9', weight: 1.5 };
+    return { fillColor: '#38bdf8', fillOpacity: 0.42, color: '#7dd3fc', weight: 0.8 };
   }
   if (props.depth_band === 'moderada') {
-    return { fillColor: '#0284c7', fillOpacity: 0.58, color: '#0369a1', weight: 1.5 };
+    return { fillColor: '#0284c7', fillOpacity: 0.52, color: '#38bdf8', weight: 0.9 };
   }
   if (props.depth_band === 'critica') {
-    return { fillColor: '#1e3a8a', fillOpacity: 0.72, color: '#172554', weight: 2 };
+    return { fillColor: '#075985', fillOpacity: 0.62, color: '#0ea5e9', weight: 1.0 };
   }
   return {
-    fillColor: props.fill_color || '#0284c7',
-    fillOpacity: 0.6,
-    color: '#0369a1',
+    fillColor: props.fill_color || '#0ea5e9',
+    fillOpacity: 0.5,
+    color: '#0284c7',
     weight: 2,
     dashArray: '2,4',
   };
 }
 
-export function enrichSimulationGeoJSON(geojson: any): { type: 'FeatureCollection'; features: any[] } {
+/** Altura visual da lâmina (m) — profundidade real × ganho, para ler volume no Terreno 3D. */
+export function floodVisualExtrusionM(
+  depthBand: string | undefined,
+  depthMinM: number,
+  depthMaxM: number | null,
+  visualGain = 1,
+): { realM: number; visualM: number } {
+  const lo = Number.isFinite(depthMinM) ? depthMinM : 0.05;
+  const hi =
+    depthMaxM == null || !Number.isFinite(depthMaxM) || depthMaxM > 100
+      ? lo + 0.45
+      : depthMaxM;
+  const realM = Math.max(0.05, (lo + hi) / 2);
+  // Folha d'água legível no terreno, ainda abaixo dos prédios LOD1 (~6 m+)
+  const bandFloor =
+    depthBand === 'critica' ? 2.8 : depthBand === 'moderada' ? 1.8 : 1.1;
+  const bandGain =
+    depthBand === 'critica' ? 7 : depthBand === 'moderada' ? 5.5 : 4;
+  const visualM = Math.max(bandFloor, realM * bandGain) * Math.max(0.7, visualGain);
+  return { realM, visualM };
+}
+
+export function enrichSimulationGeoJSON(
+  geojson: any,
+  opts?: { visualGain?: number },
+): { type: 'FeatureCollection'; features: any[] } {
+  const visualGain = opts?.visualGain ?? 1;
   const features = (geojson?.features || []).map((feature: any) => {
     const props = feature?.properties || {};
     const style = getSimulationFeatureStyle(feature);
@@ -341,20 +415,29 @@ export function enrichSimulationGeoJSON(geojson: any): { type: 'FeatureCollectio
 
     if (props.temp_increase_celsius != null) {
       extrusionHeightM = Math.max(0.15, Number(props.temp_increase_celsius) * 12);
+    } else if (props.layer_type === 'landslide') {
+      // Suscetibilidade: placa baixa, não competir com volume d'água
+      extrusionHeightM = 0.6 * Math.max(0.5, visualGain);
     } else if (props.layer_type === 'flood_band' || props.depth_band) {
       const lo = Number(props.depth_min_m ?? 0.05);
       const hiRaw = props.depth_max_m;
-      const hi = hiRaw == null || Number(hiRaw) > 100 ? lo + 0.45 : Number(hiRaw);
-      extrusionHeightM = Math.max(0.08, (lo + hi) / 2);
-      depthCm = Math.round(extrusionHeightM * 100);
+      const hi = hiRaw == null || Number(hiRaw) > 100 ? null : Number(hiRaw);
+      const { realM, visualM } = floodVisualExtrusionM(
+        props.depth_band,
+        lo,
+        hi,
+        visualGain,
+      );
+      extrusionHeightM = visualM;
+      depthCm = Math.round(realM * 100);
     }
 
     return {
       ...feature,
       properties: {
         ...props,
-        _fill: style.fillColor,
-        _fillOpacity: style.fillOpacity,
+        _fill: props._fill ?? style.fillColor,
+        _fillOpacity: props._fillOpacity ?? style.fillOpacity,
         _stroke: style.color,
         _strokeWidth: style.weight ?? 2,
         _extrusionHeightM: extrusionHeightM,
@@ -383,8 +466,8 @@ export function enrichFlowPathGeoJSON(geojson: any): { type: 'FeatureCollection'
     ...feature,
     properties: {
       ...feature?.properties,
-      _stroke: '#22d3ee',
-      _strokeWidth: 2,
+      _stroke: '#67e8f9',
+      _strokeWidth: 3.2,
       _fillOpacity: 0,
     },
   }));

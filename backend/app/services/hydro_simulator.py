@@ -31,7 +31,7 @@ from app.services.dem_processor import (
 # SRTM GL1 — resolução horizontal ~30 m; RMSE vertical típico ±16 m (NASA/USGS)
 SRTM_HORIZONTAL_M = 30.0
 SRTM_VERTICAL_RMSE_M = 16.0
-HYDRO_MODEL_VERSION = "2.8"
+HYDRO_MODEL_VERSION = "2.10"
 
 # 17g.1b — fatores do hidrograma triangular (subida → pico → recessão)
 HYDROGRAPH_FACTORS = (
@@ -251,6 +251,39 @@ def _hydro_max_grid_dim() -> int:
         return 512
 
 
+def _hydro_lidar_max_grid_dim() -> int:
+    """LiDAR/MDT fino: grade maior (Mac mini 32 GB aguenta ~1536² no D8)."""
+    try:
+        return max(512, int(os.getenv("HYDRO_LIDAR_MAX_GRID_DIM", "1536")))
+    except ValueError:
+        return 1536
+
+
+def _hydro_grid_limit_for(
+    meta: dict[str, Any] | None,
+    elev: np.ndarray,
+    res_x: float,
+    res_y: float,
+    south: float,
+) -> int:
+    """Escolhe teto de grelha pela resolução nativa (não pelo rótulo dem_source).
+
+    - ≤5 m (MDT/LiDAR fino): até 1536 → alvo ~8–10 m/célula
+    - demais (DEM ~20 m / SRTM): 512 (latência OK em Recife)
+    """
+    if os.getenv("HYDRO_MAX_GRID_DIM"):
+        return _hydro_max_grid_dim()
+    rows, cols = elev.shape
+    lat_c = south + rows * abs(res_y) / 2.0
+    native_m = _dem_resolution_m(res_x, res_y, lat_c)
+    meta_res = float((meta or {}).get("dem_resolution_m") or 0) or None
+    res_m = meta_res if meta_res is not None else native_m
+    res_m = min(res_m, native_m)
+    if res_m <= 5.0:
+        return _hydro_lidar_max_grid_dim()
+    return _hydro_max_grid_dim()
+
+
 def _downsample_elevation_grid(
     elev: np.ndarray,
     west: float,
@@ -276,6 +309,35 @@ def _downsample_elevation_grid(
         rows, cols, down.shape[0], down.shape[1], factor,
     )
     return down, west, south, res_x * factor, res_y * factor
+
+
+def _local_valley_floor(
+    elev: np.ndarray,
+    muni_mask: np.ndarray,
+    res_m: float,
+    *,
+    window_m: float | None = None,
+) -> np.ndarray:
+    """Piso local por vale (~150 m) — evita banheira única municipal.
+
+    Cada depressão/vale tem sua própria cota de referência; colinas relativas
+    ao fundo local ficam acima da lâmina.
+    """
+    if not muni_mask.any():
+        return elev
+    try:
+        from scipy import ndimage
+    except ImportError:
+        base = float(np.percentile(elev[muni_mask], 10))
+        return np.where(muni_mask, base, elev)
+
+    win_m = float(window_m if window_m is not None else os.getenv("HYDRO_VALLEY_WINDOW_M", "150"))
+    px = int(round(win_m / max(res_m, 1.0)))
+    px = max(5, min(px | 1, 81))  # ímpar, limitado
+    fill_val = float(np.nanmax(elev[muni_mask]))
+    filled = np.where(np.isfinite(elev) & muni_mask, elev, fill_val)
+    floor = ndimage.minimum_filter(filled, size=px, mode="nearest")
+    return np.where(muni_mask, floor, elev)
 
 
 def _load_elevation_grid(
@@ -958,21 +1020,22 @@ def flood_bands_geojson(
     flood_rise_m = effective_rain_m * (5.5 + min(precip_mm / 120.0, 1.5)) * rise_scale * intensity_factor
 
     muni_elev = elev[muni_mask]
-    # 17g.1c — offset de nível do mar / storm surge eleva a cota base
+    # 17g.1c — storm surge eleva a lâmina; topografia relativa ao piso de vale local
     slr = max(0.0, float(nivel_mar_m or 0.0))
-    base_level = float(np.percentile(muni_elev, 10)) + slr
     mean_rise = float(np.mean(flood_rise_m[muni_mask]))
     acc_norm = _normalize_masked(accumulation, muni_mask)
+    lat_c = (muni_geom.bounds[1] + muni_geom.bounds[3]) / 2.0
+    res_m = _dem_resolution_m(res_x, res_y, lat_c)
 
-    # Superfície d'água modulada por acúmulo D8 (vales e linhas de drenagem).
-    # Nota 17g.4: acúmulo (acc_norm) já eleva a superfície aqui — o TWI abaixo combina
-    # acúmulo × declividade num único índice hidrológico consolidado. Evitar reaplicar
-    # o mesmo sinal de acúmulo via um segundo multiplicador independente, que compunha
-    # com o TWI e concentrava quase toda a mancha na faixa crítica (>80 cm).
-    water_surface = base_level + mean_rise * (1.0 + 0.75 * acc_norm)
-    depth = np.maximum(0.0, water_surface - elev)
+    # Piso de vale local (~150 m) em vez de banheira P10 municipal única.
+    # A lâmina enche depressões; colinas relativas ao fundo do vale ficam secas.
+    valley_floor = _local_valley_floor(elev, muni_mask, res_m)
+    height_above_valley = np.maximum(0.0, elev - valley_floor)
+    ponding = mean_rise * (1.0 + 0.75 * acc_norm) + slr
+    depth = np.maximum(0.0, ponding - height_above_valley)
     depth = depth * (0.65 + 0.55 * effective_rain_m / max(float(np.mean(effective_rain_m[muni_mask])), 1e-6))
     depth = np.where(muni_mask, depth, 0.0)
+    water_surface = valley_floor + ponding
 
     # Extravasamento por saturação da rede — reforça vales/acúmulo
     if rede_saturada:
@@ -1203,8 +1266,9 @@ def enrich_rainfall_simulation(
         }
 
     elev, west, south, res_x, res_y, meta = grid
+    grid_limit = _hydro_grid_limit_for(meta, elev, res_x, res_y, south)
     elev, west, south, res_x, res_y = _downsample_elevation_grid(
-        elev, west, south, res_x, res_y,
+        elev, west, south, res_x, res_y, max_dim=grid_limit,
     )
     muni_geom = shape(json.loads(db.scalar(muni.geom.ST_AsGeoJSON())))
 
@@ -1216,6 +1280,15 @@ def enrich_rainfall_simulation(
         shape(json.loads(db.scalar(r.geom.ST_AsGeoJSON())))
         for r in rivers
     ]
+    hydro_osm_meta: dict[str, Any] = {"ok": False}
+    try:
+        from app.services.osm_hydrography_service import load_osm_waterway_shapes, merge_river_shapes
+
+        osm_shapes, hydro_osm_meta = load_osm_waterway_shapes(db, muni.codigo_ibge)
+        if osm_shapes:
+            river_shapes = merge_river_shapes(river_shapes, osm_shapes)
+    except Exception as exc:
+        logger.warning("Hidrografia OSM %s: %s", muni.codigo_ibge, exc)
 
     try:
         muni_mask = _muni_raster_mask(elev, muni_geom, west, south, res_x, res_y)
@@ -1247,6 +1320,20 @@ def enrich_rainfall_simulation(
             "iri_scale": 1.0,
             "source": "default",
         }
+    # SoilGrids → escala de escoamento (grupo A–D)
+    soil_meta: dict[str, Any] = {}
+    try:
+        from app.services.soilgrids_service import resolve_municipal_soil_group
+
+        soil_meta = resolve_municipal_soil_group(db, muni.codigo_ibge)
+        soil_scale = float(soil_meta.get("runoff_scale") or 1.0)
+        if soil_scale != 1.0:
+            hydro_calib = dict(hydro_calib)
+            hydro_calib["runoff_scale"] = float(hydro_calib.get("runoff_scale") or 1.0) * soil_scale
+            hydro_calib["soil_runoff_scale"] = soil_scale
+            hydro_calib["grupo_hidrologico_solo"] = soil_meta.get("grupo_hidrologico_solo")
+    except Exception as exc:
+        logger.info("SoilGrids hydro %s: %s", muni.codigo_ibge, exc)
     # 17g.2d — hidro-condicionamento antes do D8; 21b.5 — DEM já condicionado na fonte
     # (MERIT-Hydro/ANADEM) dispensa o Priority-Flood interno.
     if meta.get("hydro_dem"):
@@ -1380,7 +1467,21 @@ def enrich_rainfall_simulation(
                 "version": hydro_calib.get("version"),
                 "hit_rate": hydro_calib.get("hit_rate"),
                 "nota": hydro_calib.get("nota"),
+                "soil_runoff_scale": hydro_calib.get("soil_runoff_scale"),
+                "grupo_hidrologico_solo": hydro_calib.get("grupo_hidrologico_solo")
+                or soil_meta.get("grupo_hidrologico_solo"),
             },
+            "soilgrids": {
+                "fonte": soil_meta.get("fonte"),
+                "grupo_hidrologico_solo": soil_meta.get("grupo_hidrologico_solo"),
+                "texture": soil_meta.get("texture"),
+                "sand_pct": soil_meta.get("sand_pct"),
+                "silt_pct": soil_meta.get("silt_pct"),
+                "clay_pct": soil_meta.get("clay_pct"),
+                "runoff_scale": soil_meta.get("runoff_scale"),
+            } if soil_meta else None,
+            "hidrografia_osm": hydro_osm_meta,
+            "river_shapes_count": len(river_shapes),
             "flood_patches": len(flood_features),
             "landslide_method": "slope_rainfall_trigger",
             "landslide_zones": len(landslide_features),

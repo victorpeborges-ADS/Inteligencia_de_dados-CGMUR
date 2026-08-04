@@ -1,7 +1,7 @@
-"""SCS Curve Number proxy a partir de MapBiomas + grupo hidrológico default (Fase 21d.3).
+"""SCS Curve Number a partir de MapBiomas + grupo hidrológico (Fase 21d.3).
 
-Sem pedologia Embrapa/SoilGrids ainda — usa grupo C (moderadamente alto potencial
-de escoamento) como default urbano-brasileiro, documentado e substituível.
+Grupo hidrológico: SoilGrids/ISRIC (areia/silte/argila 0–5 cm) quando disponível;
+fallback grupo C (moderadamente alto potencial de escoamento).
 """
 
 from __future__ import annotations
@@ -75,16 +75,33 @@ def municipal_cn_features(
     db: Session,
     codigo_ibge: str,
     *,
-    soil_group: str = DEFAULT_SOIL_GROUP,
+    soil_group: str | None = None,
     precip_ref_mm: float = 50.0,
 ) -> dict[str, Any]:
     """CN ponderado por área MapBiomas + escoamento de referência (50 mm)."""
     code = str(codigo_ibge).zfill(7)[:7]
+    soil_meta: dict[str, Any] = {}
+    if soil_group is None:
+        try:
+            from app.services.soilgrids_service import resolve_municipal_soil_group
+
+            soil_meta = resolve_municipal_soil_group(db, code)
+            soil_group = str(soil_meta.get("grupo_hidrologico_solo") or DEFAULT_SOIL_GROUP)
+        except Exception as exc:
+            logger.info("SoilGrids CN %s: %s — default C", code, exc)
+            soil_group = DEFAULT_SOIL_GROUP
+    g = (soil_group or DEFAULT_SOIL_GROUP).upper()[:1]
+    if g not in "ABCD":
+        g = DEFAULT_SOIL_GROUP
+
     defaults = {
         "curve_number": 85.0,
-        "grupo_hidrologico_solo": soil_group,
+        "grupo_hidrologico_solo": g,
         "escoamento_ref_50mm": scs_runoff_mm(precip_ref_mm, 85.0),
         "cn_fonte": "default_urbano",
+        "soil_fonte": soil_meta.get("fonte") or "default_grupo_C",
+        "soil_texture": soil_meta.get("texture"),
+        "runoff_scale_solo": float(soil_meta.get("runoff_scale") or 1.0),
     }
     muni = db.query(Municipio).filter(Municipio.codigo_ibge == code).first()
     if not muni:
@@ -109,17 +126,24 @@ def municipal_cn_features(
         if a <= 0:
             continue
         total += a
-        weighted += a * cn_for_class(str(classe), soil_group)
+        weighted += a * cn_for_class(str(classe), g)
 
     if total <= 0:
         return defaults
 
     cn = round(weighted / total, 2)
+    soil_src = soil_meta.get("fonte") or "default_grupo_C"
     return {
         "curve_number": cn,
-        "grupo_hidrologico_solo": soil_group.upper()[:1],
+        "grupo_hidrologico_solo": g,
         "escoamento_ref_50mm": scs_runoff_mm(precip_ref_mm, cn),
-        "cn_fonte": "mapbiomas_proxy_grupo_" + soil_group.upper()[:1],
+        "cn_fonte": f"mapbiomas_x_{soil_src}_grupo_{g}",
+        "soil_fonte": soil_src,
+        "soil_texture": soil_meta.get("texture"),
+        "sand_pct": soil_meta.get("sand_pct"),
+        "silt_pct": soil_meta.get("silt_pct"),
+        "clay_pct": soil_meta.get("clay_pct"),
+        "runoff_scale_solo": float(soil_meta.get("runoff_scale") or 1.0),
     }
 
 

@@ -84,7 +84,7 @@ def test_hydro_regression_d8_golden():
 
 def test_hydro_regression_model_version_pinned():
     """Garante que a versão do motor não muda silenciosamente."""
-    assert HYDRO_MODEL_VERSION == "2.8"
+    assert HYDRO_MODEL_VERSION == "2.10"
 
 
 def test_hydro_regression_flood_bands_golden():

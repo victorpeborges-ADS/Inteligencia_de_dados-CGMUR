@@ -177,11 +177,92 @@ def load_microdados_rows(codigo_ibge: str, cache_path: Path | None = None) -> li
     return rows
 
 
-def fetch_school_rows(codigo_ibge: str) -> list[dict[str, Any]]:
+def fetch_osm_school_rows(db: Session, muni: Municipio) -> list[dict[str, Any]]:
+    """Fallback aberto (Overpass amenity=school) quando microdados/seed INEP faltam."""
+    import json
+
+    import requests
+    from shapely.geometry import shape
+
+    if muni.geom is None:
+        return []
+    try:
+        west, south, east, north = shape(json.loads(db.scalar(muni.geom.ST_AsGeoJSON()))).bounds
+    except Exception:
+        return []
+    bbox = f"{south},{west},{north},{east}"
+    query = f"""
+    [out:json][timeout:25];
+    (
+      node["amenity"="school"]({bbox});
+      way["amenity"="school"]({bbox});
+      node["amenity"="kindergarten"]({bbox});
+    );
+    out center tags;
+    """
+    endpoints = (
+        "https://overpass-api.de/api/interpreter",
+        "https://overpass.kumi.systems/api/interpreter",
+    )
+    elements: list[dict[str, Any]] = []
+    headers = {"User-Agent": "SiniduClima/1.0 (escolas-osm; contact=sinidu)"}
+    for url in endpoints:
+        try:
+            resp = requests.post(url, data={"data": query}, headers=headers, timeout=35)
+            if resp.status_code != 200:
+                continue
+            elements = resp.json().get("elements") or []
+            if elements:
+                break
+        except Exception as exc:
+            logger.warning("Overpass escolas %s: %s", url, exc)
+    code = str(muni.codigo_ibge).zfill(7)[:7]
+    rows: list[dict[str, Any]] = []
+    for i, el in enumerate(elements):
+        tags = el.get("tags") or {}
+        if el.get("type") == "node":
+            lat, lng = el.get("lat"), el.get("lon")
+        else:
+            c = el.get("center") or {}
+            lat, lng = c.get("lat"), c.get("lon")
+        if lat is None or lng is None:
+            continue
+        osm_id = el.get("id")
+        nome = tags.get("name") or tags.get("official_name") or f"Escola OSM {osm_id}"
+        rows.append({
+            "codigo_ibge": code,
+            "codigo_inep": f"osm-{osm_id}",
+            "nome": nome,
+            "dependencia": None,
+            "localizacao": "urbana",
+            "ano": CENSO_ANO_DEFAULT,
+            "matriculas_total": 0,
+            "matriculas_infantil": 0,
+            "matriculas_fundamental": 0,
+            "matriculas_medio": 0,
+            "latitude": float(lat),
+            "longitude": float(lng),
+            "data_quality": "referencia",
+            "fonte": "osm_overpass_school",
+        })
+        if len(rows) >= 80:
+            break
+    return rows
+
+
+def fetch_school_rows(codigo_ibge: str, db: Session | None = None, muni: Municipio | None = None) -> list[dict[str, Any]]:
     micro = load_microdados_rows(codigo_ibge)
     if micro:
         return micro
-    return load_seed_rows(codigo_ibge)
+    seed = load_seed_rows(codigo_ibge)
+    if seed:
+        return seed
+    if db is not None and muni is not None:
+        osm = fetch_osm_school_rows(db, muni)
+        if osm:
+            logger.info("Escolas %s: fallback OSM (%s)", codigo_ibge, len(osm))
+            return osm
+    return []
 
 
 def upsert_escolas(db: Session, muni: Municipio, rows: list[dict[str, Any]]) -> int:
@@ -212,7 +293,7 @@ def upsert_escolas(db: Session, muni: Municipio, rows: list[dict[str, Any]]) -> 
             "matriculas_infantil": row.get("matriculas_infantil", 0),
             "matriculas_fundamental": row.get("matriculas_fundamental", 0),
             "matriculas_medio": row.get("matriculas_medio", 0),
-            "fonte": CENSO_FONTE,
+            "fonte": row.get("fonte") or CENSO_FONTE,
             "data_quality": row.get("data_quality") or "oficial",
             "atualizado_em": now,
             "geom": func.ST_SetSRID(func.ST_MakePoint(lng, lat), 4326),
@@ -233,12 +314,13 @@ def upsert_escolas(db: Session, muni: Municipio, rows: list[dict[str, Any]]) -> 
 
 
 def sync_educacao_municipio(db: Session, muni: Municipio) -> dict[str, Any]:
-    rows = fetch_school_rows(muni.codigo_ibge)
+    rows = fetch_school_rows(muni.codigo_ibge, db=db, muni=muni)
     count = upsert_escolas(db, muni, rows)
+    fonte = (rows[0].get("fonte") if rows else CENSO_FONTE) or CENSO_FONTE
     return {
         "codigo_ibge": muni.codigo_ibge,
         "escolas_atualizadas": count,
-        "fonte": CENSO_FONTE,
+        "fonte": fonte,
         "ano": CENSO_ANO_DEFAULT,
         "disponivel": count > 0,
     }

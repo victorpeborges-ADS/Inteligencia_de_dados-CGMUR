@@ -17,6 +17,7 @@ from app.models import (
     MunicipioIbge,
     MunicipioSaneamento,
     MunicipioSeed,
+    SetorCensitario,
     WeatherForecastCache,
 )
 from app.services.mitigation_planner import PLAN_DIRECTOR_SOURCES
@@ -204,6 +205,21 @@ def _eval_bairros(db: Session, muni: Municipio | None, seed: MunicipioSeed | Non
         return _source_result(
             "bairros", "Bairros", "Territorio", "ESTIMADO",
             detail=f"{len(names)} setores em grade estimada.",
+        )
+    setores_n = (
+        db.query(SetorCensitario)
+        .filter(SetorCensitario.municipio_id == muni.id)
+        .count()
+    )
+    geom = (seed.geom_fonte or "") if seed else ""
+    # Município pequeno com sede única + setores IBGE oficiais → DERIVADO (não exige 4 bairros)
+    if "ibge" in geom.lower() and setores_n >= 8:
+        return _source_result(
+            "bairros",
+            "Bairros",
+            "Territorio",
+            "DERIVADO",
+            detail=f"{len(names)} bairro(s) · {setores_n} setores IBGE.",
         )
     if len(names) >= 4:
         return _source_result("bairros", "Bairros", "Territorio", "DERIVADO", detail=f"{len(names)} bairros mapeados.")

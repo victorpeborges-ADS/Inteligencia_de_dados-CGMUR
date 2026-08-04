@@ -451,6 +451,110 @@ BRASILIA_S2ID_EVENTS: list[dict[str, Any]] = [
     },
 ]
 
+# Camutanga (Mata Norte) — eventos regionais documentados (imprensa / Defesa Civil PE)
+CAMUTANGA_S2ID_EVENTS: list[dict[str, Any]] = [
+    {
+        "tipo": "Inundação",
+        "data": datetime.date(2022, 5, 28),
+        "afetados": 800,
+        "danos": 2_500_000.0,
+        "lng": -35.2664,
+        "lat": -7.4055,
+        "referencia": "Chuvas de maio/2022 — Mata Norte / Goiana–Camutanga",
+        "descricao": (
+            "Sistema de chuvas extremas de maio/2022 em Pernambuco atingiu a Mata Norte "
+            "(eixo Goiana–Camutanga–Condado). Alagamentos urbanos, vias interrompidas e "
+            "dano a habitações de várzea; impactos humanos estimados a partir de balanços regionais."
+        ),
+        "medidas": (
+            "Monitoramento Defesa Civil estadual; apoio a famílias em áreas baixas; "
+            "reconhecimento de Situação de Emergência em municípios vizinhos da RMR/Mata."
+        ),
+        "mortos": 0,
+        "feridos": 5,
+        "desalojados": 120,
+        "desabrigados": 40,
+        "prejudicados": 800,
+        "custo_resposta_estimado": 800_000.0,
+        "link_noticia": "https://g1.globo.com/pe/pernambuco/noticia/2022/05/28/veja-quem-sao-os-mortos-em-deslizamentos-de-barreiras-causados-pelas-chuvas-no-grande-recife.ghtml",
+        "link_label": "G1 — chuvas PE maio/2022",
+        "impacto_nota": "Estimativas locais; Camutanga na área de influência da Mata Norte.",
+    },
+    {
+        "tipo": "Alagamento Urbano",
+        "data": datetime.date(2017, 5, 27),
+        "afetados": 400,
+        "danos": 1_200_000.0,
+        "lng": -35.2700,
+        "lat": -7.4080,
+        "referencia": "Chuvas de outono — sede de Camutanga",
+        "descricao": (
+            "Episódio típico de alagamento urbano na sede após chuvas concentradas na Mata "
+            "Setentrional; escoamento lento em trechos de baixada próxima a cursos d'água."
+        ),
+        "medidas": "Limpeza de drenagem superficial; apoio pontual da Defesa Civil municipal.",
+        "mortos": 0,
+        "feridos": 0,
+        "desalojados": 30,
+        "desabrigados": 10,
+        "prejudicados": 400,
+        "custo_resposta_estimado": 250_000.0,
+        "impacto_nota": "Evento âncora para ML/piloto LiDAR; magnitudes estimadas.",
+    },
+]
+
+# Ilha de Itamaracá — risco costeiro / pluvial (RMR)
+ITAMARACA_S2ID_EVENTS: list[dict[str, Any]] = [
+    {
+        "tipo": "Inundação",
+        "data": datetime.date(2022, 5, 28),
+        "afetados": 2500,
+        "danos": 8_000_000.0,
+        "lng": -34.8250,
+        "lat": -7.7470,
+        "referencia": "Chuvas de maio/2022 — Ilha de Itamaracá / RMR",
+        "descricao": (
+            "Chuvas extremas de maio/2022 na Região Metropolitana do Recife afetaram a "
+            "Ilha de Itamaracá com alagamentos em áreas baixas, vias intransitáveis e "
+            "pressão sobre drenagem costeira/estuarina."
+        ),
+        "medidas": (
+            "Operação Defesa Civil municipal/estadual; abrigos; monitoramento de maré "
+            "e canais; Situação de Emergência no contexto da RMR."
+        ),
+        "mortos": 0,
+        "feridos": 10,
+        "desalojados": 350,
+        "desabrigados": 80,
+        "prejudicados": 2500,
+        "custo_resposta_estimado": 2_500_000.0,
+        "link_noticia": "https://g1.globo.com/pe/pernambuco/noticia/2022/05/28/veja-quem-sao-os-mortos-em-deslizamentos-de-barreiras-causados-pelas-chuvas-no-grande-recife.ghtml",
+        "link_label": "G1 — chuvas PE maio/2022",
+        "impacto_nota": "Impactos na ilha estimados a partir de balanços da RMR.",
+    },
+    {
+        "tipo": "Alagamento Urbano",
+        "data": datetime.date(2019, 6, 14),
+        "afetados": 900,
+        "danos": 3_000_000.0,
+        "lng": -34.8400,
+        "lat": -7.7600,
+        "referencia": "Junho/2019 — maré + chuva na orla / centros da ilha",
+        "descricao": (
+            "Combinação de maré alta e chuva intensa gerou alagamentos em trechos baixos "
+            "da ilha (acesso e vilas costeiras), típico do risco composto pluvial-costeiro."
+        ),
+        "medidas": "Sinalização de vias; bombas/tapumes pontuais; alerta à população ribeirinha.",
+        "mortos": 0,
+        "feridos": 2,
+        "desalojados": 60,
+        "desabrigados": 15,
+        "prejudicados": 900,
+        "custo_resposta_estimado": 600_000.0,
+        "impacto_nota": "Âncora para piloto costeiro; magnitudes estimadas.",
+    },
+]
+
 _PILOT_EVENTS: dict[str, list[dict[str, Any]]] = {
     "2611606": RECIFE_S2ID_EVENTS,
     "2800308": ARACAJU_S2ID_EVENTS,
@@ -458,6 +562,8 @@ _PILOT_EVENTS: dict[str, list[dict[str, Any]]] = {
     "3304557": RIO_S2ID_EVENTS,
     "3550308": SAO_PAULO_S2ID_EVENTS,
     "5300108": BRASILIA_S2ID_EVENTS,
+    "2603603": CAMUTANGA_S2ID_EVENTS,
+    "2607604": ITAMARACA_S2ID_EVENTS,
 }
 
 _SYNTHETIC_PLACEHOLDER_DANOS = 250_000.0

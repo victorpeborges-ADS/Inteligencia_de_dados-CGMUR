@@ -41,6 +41,8 @@ PILOT_UF_BY_IBGE: dict[str, str] = {
     "3304557": "RJ",  # Rio de Janeiro
     "3550308": "SP",  # São Paulo
     "5300108": "DF",  # Brasília
+    "2603603": "PE",  # Camutanga
+    "2607604": "PE",  # Ilha de Itamaracá
 }
 
 

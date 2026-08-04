@@ -1,4 +1,40 @@
 codigo_ibge,ano,classe_uso,area_ha
+2603603,1985,Corpo d'água,47.171
+2603603,1985,Vegetação / Floresta,1842.733
+2603603,1985,Área Urbana,46.109
+2603603,1995,Corpo d'água,45.487
+2603603,1995,Vegetação / Floresta,1531.608
+2603603,1995,Área Urbana,61.892
+2603603,2005,Corpo d'água,49.033
+2603603,2005,Vegetação / Floresta,1895.672
+2603603,2005,Área Urbana,86.631
+2603603,2015,Corpo d'água,40.078
+2603603,2015,Vegetação / Floresta,1740.861
+2603603,2015,Área Urbana,103.567
+2603603,2020,Corpo d'água,43.181
+2603603,2020,Vegetação / Floresta,1609.281
+2603603,2020,Área Urbana,114.385
+2603603,2024,Corpo d'água,43.713
+2603603,2024,Vegetação / Floresta,1570.268
+2603603,2024,Área Urbana,118.907
+2607604,1985,Corpo d'água,986.832
+2607604,1985,Vegetação / Floresta,2030.827
+2607604,1985,Área Urbana,290.964
+2607604,1995,Corpo d'água,935.972
+2607604,1995,Vegetação / Floresta,2257.372
+2607604,1995,Área Urbana,562.969
+2607604,2005,Corpo d'água,878.824
+2607604,2005,Vegetação / Floresta,2535.935
+2607604,2005,Área Urbana,723.07
+2607604,2015,Corpo d'água,806.259
+2607604,2015,Vegetação / Floresta,2773.829
+2607604,2015,Área Urbana,824.516
+2607604,2020,Corpo d'água,804.843
+2607604,2020,Vegetação / Floresta,2777.465
+2607604,2020,Área Urbana,929.509
+2607604,2024,Corpo d'água,841.259
+2607604,2024,Vegetação / Floresta,2962.902
+2607604,2024,Área Urbana,953.874
 2611606,1985,Corpo d'água,1127.237
 2611606,1985,Vegetação / Floresta,2785.142
 2611606,1985,Área Urbana,9873.2

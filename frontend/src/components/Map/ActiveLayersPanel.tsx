@@ -14,6 +14,8 @@ type Props = {
   moveActiveLayer: (layerId: string, direction: 'up' | 'down') => void;
   toggleLayer: (layerId: string) => void;
   showRegionalOverlay?: boolean;
+  /** No Terreno 3D o painel de camadas já lista tudo — começa recolhido. */
+  defaultCollapsed?: boolean;
   className?: string;
 };
 
@@ -25,9 +27,10 @@ export default function ActiveLayersPanel({
   moveActiveLayer,
   toggleLayer,
   showRegionalOverlay = false,
+  defaultCollapsed = false,
   className = '',
 }: Props) {
-  const [collapsed, setCollapsed] = useState(false);
+  const [collapsed, setCollapsed] = useState(defaultCollapsed);
 
   const labelById = useMemo(
     () => Object.fromEntries(layerOptions.map((opt) => [opt.id, opt.label])),

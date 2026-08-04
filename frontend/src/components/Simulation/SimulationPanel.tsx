@@ -15,12 +15,16 @@ export type SimOverlayOptions = {
   showFlood: boolean;
   showContours: boolean;
   showFlow: boolean;
+  showImpassableRoads: boolean;
+  showCriticalAssets: boolean;
 };
 
 export const DEFAULT_SIM_OVERLAYS: SimOverlayOptions = {
   showFlood: true,
   showContours: true,
   showFlow: true,
+  showImpassableRoads: true,
+  showCriticalAssets: true,
 };
 
 // 17g.3 — escala de tempo do evento simulado: 1h a 7 dias (índices mapeiam para minutos).
@@ -145,7 +149,7 @@ export default function SimulationPanel({
   const [planLoading, setPlanLoading] = useState(false);
   const [contingencyLoading, setContingencyLoading] = useState(false);
   const [mitigationPlan, setMitigationPlan] = useState<MitigationPlan | null>(null);
-  const [exportLoading, setExportLoading] = useState<'geojson' | 'pdf' | 'kmz' | null>(null);
+  const [exportLoading, setExportLoading] = useState<'geojson' | 'pdf' | 'kmz' | 'csv' | null>(null);
   const [simInterpret, setSimInterpret] = useState<SimulationInterpret | null>(null);
   const [slopeInterpret, setSlopeInterpret] = useState<SlopeInterpretation | null>(null);
   const [analysisLoading, setAnalysisLoading] = useState(false);
@@ -617,6 +621,19 @@ export default function SimulationPanel({
       await api.downloadReport(meta.download_url, meta.nome_arquivo);
     } catch (err) {
       console.error('Export KMZ failed:', err);
+    } finally {
+      setExportLoading(null);
+    }
+  };
+
+  const handleExportImpactsCsv = async () => {
+    if (!result) return;
+    setExportLoading('csv');
+    try {
+      const meta = await api.exportSimulationImpactsCsv(result, codigoIbge);
+      await api.downloadReport(meta.download_url, meta.nome_arquivo);
+    } catch (err) {
+      console.error('Export impacts CSV failed:', err);
     } finally {
       setExportLoading(null);
     }
@@ -1816,6 +1833,7 @@ export default function SimulationPanel({
         handleExportGeojson={handleExportGeojson}
         handleExportKmz={handleExportKmz}
         handleExportPdf={handleExportPdf}
+        handleExportImpactsCsv={handleExportImpactsCsv}
         handleIncludeInReport={handleIncludeInReport}
         handleCopyInterpret={handleCopyInterpret}
         simulationTipo={simulationTipo}

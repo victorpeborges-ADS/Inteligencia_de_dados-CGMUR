@@ -2,7 +2,7 @@ from __future__ import annotations
 
 FLOOD_EVENT_TYPES = ("Inundação", "Alagamento Urbano", "Enxurrada")
 
-# Modelos dedicados alinhados ao catálogo piloto (6 municípios).
+# Modelos dedicados alinhados ao catálogo piloto (8 municípios).
 ML_TARGET_IBGE_CODES = [
     "2611606",  # Recife
     "2800308",  # Aracaju
@@ -10,6 +10,8 @@ ML_TARGET_IBGE_CODES = [
     "3550308",  # São Paulo
     "3304557",  # Rio de Janeiro
     "5300108",  # Brasília
+    "2603603",  # Camutanga
+    "2607604",  # Ilha de Itamaracá
 ]
 
 MUNICIPALITY_SLUGS: dict[str, str] = {
@@ -19,6 +21,8 @@ MUNICIPALITY_SLUGS: dict[str, str] = {
     "sao_paulo": "3550308",
     "rio_de_janeiro": "3304557",
     "brasilia": "5300108",
+    "camutanga": "2603603",
+    "ilha_de_itamaraca": "2607604",
 }
 
 SLUG_BY_IBGE = {v: k for k, v in MUNICIPALITY_SLUGS.items()}

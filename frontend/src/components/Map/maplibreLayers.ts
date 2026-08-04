@@ -58,22 +58,34 @@ function upsertFillLayer(map: MapLibreMap, layerName: string, opts?: { flatOpaci
   }
 }
 
-function upsertExtrusionLayer(map: MapLibreMap, layerName: string, opts?: { minzoom?: number }) {
+function upsertExtrusionLayer(
+  map: MapLibreMap,
+  layerName: string,
+  opts?: { minzoom?: number; opacity?: number; filter?: any },
+) {
   const id = extrusionId(layerName);
   if (!map.getLayer(id)) {
     map.addLayer({
       id,
       type: 'fill-extrusion',
       source: sourceId(layerName),
-      filter: POLYGON_FILTER,
+      filter: opts?.filter ?? POLYGON_FILTER,
       minzoom: opts?.minzoom,
       paint: {
         'fill-extrusion-color': ['coalesce', ['get', '_fill'], '#0284c7'],
         'fill-extrusion-height': ['coalesce', ['get', '_extrusionHeightM'], 0.25],
-        'fill-extrusion-opacity': 0.78,
+        'fill-extrusion-opacity':
+          opts?.opacity
+          ?? (layerName === 'edificacoes' ? 0.94 : layerName === 'simulation' ? 0.58 : 0.78),
         'fill-extrusion-base': 0,
       },
     });
+  } else if (opts?.opacity != null) {
+    try {
+      map.setPaintProperty(id, 'fill-extrusion-opacity', opts.opacity);
+    } catch {
+      /* ignore */
+    }
   }
 }
 
@@ -159,6 +171,10 @@ export type SimOverlayOptions3D = {
   showFlood?: boolean;
   showContours?: boolean;
   showFlow?: boolean;
+  showImpassableRoads?: boolean;
+  showCriticalAssets?: boolean;
+  /** Multiplicador visual da lâmina (acompanha relevo exagerado). */
+  floodVisualGain?: number;
 };
 
 function applyLayerOpacity(map: MapLibreMap, layerName: string, opacity: number) {
@@ -170,7 +186,24 @@ function applyLayerOpacity(map: MapLibreMap, layerName: string, opacity: number)
   try {
     if (map.getLayer(fill)) {
       if (layerName === 'simulation') {
-        map.setPaintProperty(fill, 'fill-opacity', 0.5 * o);
+        map.setPaintProperty(fill, 'fill-opacity', [
+          '*',
+          o,
+          [
+            'coalesce',
+            ['get', '_fillOpacity'],
+            [
+              'case',
+              ['==', ['get', 'layer_type'], 'landslide'],
+              0.18,
+              ['==', ['get', 'depth_band'], 'critica'],
+              0.62,
+              ['==', ['get', 'depth_band'], 'moderada'],
+              0.52,
+              0.38,
+            ],
+          ],
+        ]);
       } else {
         map.setPaintProperty(fill, 'fill-opacity', [
           '*',
@@ -190,7 +223,9 @@ function applyLayerOpacity(map: MapLibreMap, layerName: string, opacity: number)
       ]);
     }
     if (map.getLayer(extrusion)) {
-      map.setPaintProperty(extrusion, 'fill-extrusion-opacity', 0.78 * o);
+      const base =
+        layerName === 'edificacoes' ? 0.94 : layerName === 'simulation' ? 0.62 : 0.78;
+      map.setPaintProperty(extrusion, 'fill-extrusion-opacity', base * o);
     }
   } catch {
     /* style may be mid-transition */
@@ -214,6 +249,8 @@ export function syncThematicLayers(
     layerOpacityById?: Record<string, number>;
     simOverlays?: SimOverlayOptions3D;
     contingency?: ContingencyLayers3D;
+    simImpassableRoads?: any | null;
+    simCriticalAssets?: any | null;
   },
 ) {
   const wanted = new Set<string>();
@@ -222,7 +259,11 @@ export function syncThematicLayers(
   const showFlood = overlays.showFlood !== false;
   const showContours = overlays.showContours !== false;
   const showFlow = overlays.showFlow !== false;
+  const showImpassableRoads = overlays.showImpassableRoads !== false;
+  const showCriticalAssets = overlays.showCriticalAssets !== false;
   const contingency = options?.contingency;
+  const simImpassableRoads = options?.simImpassableRoads;
+  const simCriticalAssets = options?.simCriticalAssets;
 
   activeLayers.forEach((layerName) => {
     const raw = layerData[layerName];
@@ -238,6 +279,23 @@ export function syncThematicLayers(
     const hasLines = types.some((t) => t === 'LineString' || t === 'MultiLineString');
     const hasPoints = types.some((t) => t === 'Point' || t === 'MultiPoint');
 
+    // LOD1: extrusão 3D (estilo GeoSampa simplificado) — sem fill plano por cima
+    if (layerName === 'edificacoes' && hasPolygons) {
+      upsertExtrusionLayer(map, layerName, { minzoom: 11 });
+      upsertLineLayer(map, layerName);
+      applyLayerOpacity(map, layerName, opacityById[layerName] ?? 1);
+      for (const id of [lineId(layerName), extrusionId(layerName)]) {
+        if (map.getLayer(id)) {
+          try {
+            map.moveLayer(id);
+          } catch {
+            /* ignore */
+          }
+        }
+      }
+      return;
+    }
+
     if (hasPolygons || hasLines) {
       upsertFillLayer(map, layerName);
       upsertLineLayer(map, layerName);
@@ -250,12 +308,99 @@ export function syncThematicLayers(
 
   if (showFlood && simGeoJSON?.features?.length) {
     wanted.add('simulation');
-    upsertSource(map, sourceId('simulation'), enrichSimulationGeoJSON(simGeoJSON));
-    upsertFillLayer(map, 'simulation', { flatOpacity: 0.5 });
-    upsertExtrusionLayer(map, 'simulation');
+    const gain = options?.simOverlays?.floodVisualGain ?? 1;
+    upsertSource(map, sourceId('simulation'), enrichSimulationGeoJSON(simGeoJSON, { visualGain: gain }));
+
+    // Deslizamento/calor: fill vermelho/laranja (por baixo)
+    // Água: fill ciano + extrusão (visível mesmo com terreno)
+    upsertFillLayer(map, 'simulation', { flatOpacity: 0.48 });
+    try {
+      if (map.getLayer(fillId('simulation'))) {
+        map.setFilter(fillId('simulation'), POLYGON_FILTER);
+        map.setPaintProperty(fillId('simulation'), 'fill-color', [
+          'coalesce',
+          ['get', '_fill'],
+          '#0ea5e9',
+        ]);
+        map.setPaintProperty(fillId('simulation'), 'fill-opacity', [
+          'coalesce',
+          ['get', '_fillOpacity'],
+          [
+            'case',
+            ['==', ['get', 'layer_type'], 'landslide'],
+            0.18,
+            ['==', ['get', 'depth_band'], 'critica'],
+            0.62,
+            ['==', ['get', 'depth_band'], 'moderada'],
+            0.52,
+            ['==', ['get', 'depth_band'], 'superficial'],
+            0.38,
+            0.48,
+          ],
+        ]);
+      }
+    } catch {
+      /* ignore */
+    }
+
+    upsertExtrusionLayer(map, 'simulation', {
+      opacity: 0.62,
+      filter: [
+        'all',
+        POLYGON_FILTER,
+        [
+          'any',
+          ['==', ['get', 'layer_type'], 'flood_band'],
+          ['has', 'depth_band'],
+        ],
+      ],
+    });
+    // Se a layer já existia com filtro antigo, reaplica
+    try {
+      if (map.getLayer(extrusionId('simulation'))) {
+        map.setFilter(extrusionId('simulation'), [
+          'all',
+          POLYGON_FILTER,
+          [
+            'any',
+            ['==', ['get', 'layer_type'], 'flood_band'],
+            ['has', 'depth_band'],
+          ],
+        ]);
+        map.setPaintProperty(extrusionId('simulation'), 'fill-extrusion-opacity', 0.62);
+      }
+    } catch {
+      /* ignore */
+    }
+
     upsertLineLayer(map, 'simulation');
+    try {
+      if (map.getLayer(lineId('simulation'))) {
+        map.setPaintProperty(lineId('simulation'), 'line-color', [
+          'case',
+          ['==', ['get', 'layer_type'], 'landslide'],
+          '#f87171',
+          '#38bdf8',
+        ]);
+        map.setPaintProperty(lineId('simulation'), 'line-width', 1.2);
+        map.setPaintProperty(lineId('simulation'), 'line-opacity', 0.65);
+      }
+    } catch {
+      /* ignore */
+    }
     applyLayerOpacity(map, 'simulation', opacityById.simulation ?? 1);
-    for (const id of [lineId('simulation'), extrusionId('simulation'), fillId('simulation')]) {
+
+    // Ordem: deslizamento/água no chão → extrusão água → prédios por cima
+    for (const id of [fillId('simulation'), lineId('simulation'), extrusionId('simulation')]) {
+      if (map.getLayer(id)) {
+        try {
+          map.moveLayer(id);
+        } catch {
+          /* ignore */
+        }
+      }
+    }
+    for (const id of [extrusionId('edificacoes'), lineId('edificacoes')]) {
       if (map.getLayer(id)) {
         try {
           map.moveLayer(id);
@@ -278,6 +423,60 @@ export function syncThematicLayers(
     upsertSource(map, sourceId('sim-flow'), enrichFlowPathGeoJSON(simFlowPaths));
     upsertLineLayer(map, 'sim-flow');
     applyLayerOpacity(map, 'sim-flow', opacityById['sim-flow'] ?? 1);
+  }
+
+  if (showImpassableRoads && simImpassableRoads?.features?.length) {
+    wanted.add('sim-impassable');
+    const enriched = {
+      ...simImpassableRoads,
+      features: (simImpassableRoads.features || []).map((f: any) => ({
+        ...f,
+        properties: {
+          ...(f.properties || {}),
+          _stroke: '#ef4444',
+          _lineWidth: 3.2,
+        },
+      })),
+    };
+    upsertSource(map, sourceId('sim-impassable'), enriched);
+    upsertLineLayer(map, 'sim-impassable');
+    try {
+      if (map.getLayer(lineId('sim-impassable'))) {
+        map.setPaintProperty(lineId('sim-impassable'), 'line-color', '#ef4444');
+        map.setPaintProperty(lineId('sim-impassable'), 'line-width', 3.2);
+        map.setPaintProperty(lineId('sim-impassable'), 'line-opacity', 0.92);
+      }
+    } catch {
+      /* ignore */
+    }
+    applyLayerOpacity(map, 'sim-impassable', opacityById['sim-impassable'] ?? 1);
+  }
+
+  if (showCriticalAssets && simCriticalAssets?.features?.length) {
+    wanted.add('sim-critical-assets');
+    upsertSource(map, sourceId('sim-critical-assets'), simCriticalAssets);
+    upsertCircleLayer(map, 'sim-critical-assets');
+    try {
+      if (map.getLayer(circleId('sim-critical-assets'))) {
+        map.setPaintProperty(circleId('sim-critical-assets'), 'circle-color', [
+          'coalesce',
+          ['get', '_fill'],
+          '#fbbf24',
+        ]);
+        map.setPaintProperty(circleId('sim-critical-assets'), 'circle-radius', [
+          'case',
+          ['==', ['get', 'depth_band'], 'critica'],
+          9,
+          7,
+        ]);
+        map.setPaintProperty(circleId('sim-critical-assets'), 'circle-stroke-color', '#7f1d1d');
+        map.setPaintProperty(circleId('sim-critical-assets'), 'circle-stroke-width', 1.5);
+        map.setPaintProperty(circleId('sim-critical-assets'), 'circle-opacity', 0.95);
+      }
+    } catch {
+      /* ignore */
+    }
+    applyLayerOpacity(map, 'sim-critical-assets', opacityById['sim-critical-assets'] ?? 1);
   }
 
   if (contingency?.zonas?.features?.length) {

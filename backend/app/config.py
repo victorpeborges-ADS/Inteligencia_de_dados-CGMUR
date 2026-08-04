@@ -56,6 +56,8 @@ class Settings:
         "3550308",  # São Paulo
         "3304557",  # Rio de Janeiro
         "5300108",  # Brasília
+        "2603603",  # Camutanga (PE LiDAR / PE3D)
+        "2607604",  # Ilha de Itamaracá (PE LiDAR / PE3D)
     ]
 
     REPORTS_DIR: str = os.getenv("REPORTS_DIR", "/data/reports")

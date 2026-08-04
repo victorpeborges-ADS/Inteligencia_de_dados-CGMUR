@@ -43,6 +43,9 @@ POPULACAO_ESTIMADA = {
     "1302603": 2063000,
     "5208707": 1437000,
     "4106902": 1777000,
+    # PE LiDAR (Censo 2022) — evita fallback max(50000, …) no seed
+    "2603603": 7750,   # Camutanga
+    "2607604": 24540,  # Ilha de Itamaracá
 }
 
 

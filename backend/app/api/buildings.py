@@ -251,6 +251,32 @@ def sync_buildings(
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
+@router.post("/{codigo_ibge}/sync-microsoft")
+def sync_buildings_microsoft(
+    codigo_ibge: str,
+    request: Request,
+    force: bool = Query(default=True),
+    db: Session = Depends(get_db),
+    _admin: User = Depends(require_role(Role.ADMIN)),
+):
+    """Ingere Microsoft Global Building Footprints (fallback quando OSM é escasso)."""
+    muni = get_accessible_municipio(db, codigo_ibge, request=request)
+    try:
+        from app.data_connectors.microsoft_buildings_collector import (
+            collect_microsoft_buildings_municipality,
+        )
+
+        out = collect_microsoft_buildings_municipality(
+            db, muni.codigo_ibge, force=force
+        )
+        invalidate_gemeo_tile_cache(muni.codigo_ibge)
+        return out
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
 @router.post("/{codigo_ibge}/refine-ndsm")
 def refine_ndsm_heights(
     codigo_ibge: str,

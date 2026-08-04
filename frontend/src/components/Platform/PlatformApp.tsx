@@ -53,6 +53,7 @@ import ThemeToggle from '@/components/UI/ThemeToggle';
 import { isInstitutionalMode } from '@/config/branding';
 import LayerPanel from '@/components/Map/LayerPanel';
 import { LAYER_PRESETS } from '@/components/Map/LayerPanel';
+import { MAP_CENTER_LEFT } from '@/config/mapOverlayLayout';
 
 const MapContainer = dynamic(
   () => import('@/components/Map/MapContainer'),
@@ -138,10 +139,6 @@ export default function PlatformApp({ initialTab }: PlatformAppProps) {
   }, []);
 
   useEffect(() => {
-    setActiveLayers((prev) => prev.filter((id) => id !== 'edificacoes'));
-  }, [setActiveLayers]);
-
-  useEffect(() => {
     try {
       if (localStorage.getItem(FOCUS_MODE_STORAGE_KEY) === 'true') {
         setFocusMode(true);
@@ -181,11 +178,26 @@ export default function PlatformApp({ initialTab }: PlatformAppProps) {
   const [simGeoJSON, setSimGeoJSON] = useState<any>(null);
   const [simContours, setSimContours] = useState<any>(null);
   const [simFlowPaths, setSimFlowPaths] = useState<any>(null);
+  const [simImpassableRoads, setSimImpassableRoads] = useState<any>(null);
+  const [simCriticalAssets, setSimCriticalAssets] = useState<any>(null);
   const [simOverlays, setSimOverlays] = useState<SimOverlayOptions>(DEFAULT_SIM_OVERLAYS);
   const [diagnostic, setDiagnostic] = useState<WorkshopDiagnostic | null>(null);
   const [socioRanking, setSocioRanking] = useState<SocioeconomicRanking | null>(null);
   const [mapMode, setMapMode] = useState<'2d' | '3d' | 'swipe'>('2d');
   const [swipeMode, setSwipeMode] = useState<SwipeCompareMode>('2d3d');
+
+  // Ao entrar no Terreno 3D, mostra a massa urbana LOD1 (sem a malha cobrindo os prédios)
+  useEffect(() => {
+    if (mapMode !== '3d') return;
+    setActiveLayers((prev) => {
+      const hasEdif = prev.includes('edificacoes');
+      const hasBairros = prev.includes('bairros');
+      if (hasEdif && !hasBairros) return prev;
+      const next = prev.filter((id) => id !== 'bairros');
+      if (!next.includes('edificacoes')) next.push('edificacoes');
+      return next;
+    });
+  }, [mapMode, setActiveLayers]);
 
   useEffect(() => {
     if (mapMode === 'swipe' && swipeMode === 'antes_depois' && !simGeoJSON?.features?.length) {
@@ -339,6 +351,8 @@ export default function PlatformApp({ initialTab }: PlatformAppProps) {
     setSimGeoJSON(null);
     setSimContours(null);
     setSimFlowPaths(null);
+    setSimImpassableRoads(null);
+    setSimCriticalAssets(null);
     setFloodClock(null);
     setActiveLayers([...DEFAULT_MAP_LAYERS]);
 
@@ -395,14 +409,22 @@ export default function PlatformApp({ initialTab }: PlatformAppProps) {
     setSimGeoJSON(geojson);
     setSimContours(payload?.contours ?? null);
     setSimFlowPaths(payload?.flow_paths ?? null);
+    setSimImpassableRoads(payload?.vias_intransitaveis ?? null);
+    setSimCriticalAssets(payload?.ativos_criticos_atingidos ?? null);
 
-    // Manchas no mapa 2D (mais confiável); 3D permanece opcional via botão Terreno 3D
-    setMapMode('2d');
+    // Vista tipo referência: lâmina nas ruas + prédios LOD1 emergindo
+    setMapMode('3d');
+    setActiveLayers((prev) => {
+      const next = prev.filter((id) => id !== 'bairros');
+      if (!next.includes('edificacoes')) next.push('edificacoes');
+      if (!next.includes('municipio')) next.unshift('municipio');
+      return next;
+    });
 
     const center = getGeoJsonCenter(geojson);
     if (center) {
       setMapFocus(center);
-      setZoom(14);
+      setZoom(15);
     }
   };
 
@@ -410,6 +432,8 @@ export default function PlatformApp({ initialTab }: PlatformAppProps) {
     setSimGeoJSON(null);
     setSimContours(null);
     setSimFlowPaths(null);
+    setSimImpassableRoads(null);
+    setSimCriticalAssets(null);
     setFloodClock(null);
     const center = await resolveMunicipalityCenter(selectedMunicipio);
     setMapFocus(center);
@@ -759,7 +783,7 @@ export default function PlatformApp({ initialTab }: PlatformAppProps) {
           <span>
             Backend offline — verifique a API em <strong>{getApiBaseUrl()}</strong>.
             {authEnabled ? ' Faça login para carregar KPIs e mapa quando a API voltar.' : ''}
-            {' '}O seletor lista os 6 municípios do catálogo piloto mesmo sem API.
+            {' '}O seletor lista os 8 municípios do catálogo piloto mesmo sem API.
           </span>
           {authEnabled && (
             <button
@@ -883,10 +907,22 @@ export default function PlatformApp({ initialTab }: PlatformAppProps) {
                 overlayOptions={simOverlays}
                 onOverlayChange={setSimOverlays}
                 mapMode3dActive={mapMode === '3d' || (mapMode === 'swipe' && swipeMode === '2d3d')}
-                onView3D={() => setMapMode('3d')}
+                onView3D={() => {
+                  setMapMode('3d');
+                  setActiveLayers((prev) => {
+                    const next = prev.filter((id) => id !== 'bairros');
+                    if (!next.includes('edificacoes')) next.push('edificacoes');
+                    return next;
+                  });
+                }}
                 onFocusWorkshop={() => {
                   setMapMode('3d');
                   setFocusMode(true);
+                  setActiveLayers((prev) => {
+                    const next = prev.filter((id) => id !== 'bairros');
+                    if (!next.includes('edificacoes')) next.push('edificacoes');
+                    return next;
+                  });
                 }}
                 onCrossRiskLayers={() => setActiveLayers([...LAYER_PRESETS.cruzarRiscos.layers])}
               />
@@ -960,7 +996,10 @@ export default function PlatformApp({ initialTab }: PlatformAppProps) {
           )}
 
           {floodClock && activeTab === 'simulation' && !focusMode && (
-            <div className="map-ui-chrome absolute bottom-4 left-4 z-[1100] max-w-sm rounded-xl border border-sky-500/35 bg-zinc-950/92 px-3 py-2.5 shadow-2xl backdrop-blur-md">
+            <div
+              className="map-ui-chrome absolute bottom-4 z-[1100] max-w-xs rounded-xl border border-sky-500/35 bg-zinc-950/92 px-3 py-2 shadow-2xl backdrop-blur-md"
+              style={{ left: MAP_CENTER_LEFT }}
+            >
               <p className="text-[10px] font-extrabold uppercase tracking-wider text-sky-200">
                 Evolução no tempo
                 {floodClock.playing ? (
@@ -975,18 +1014,12 @@ export default function PlatformApp({ initialTab }: PlatformAppProps) {
                   / {floodClock.duration_h} h
                 </span>
               </p>
-              <p className="mt-0.5 text-[11px] leading-snug text-zinc-300">{floodClock.narrativa}</p>
-              <p className="mt-1.5 font-mono text-[10px] text-zinc-500">
+              <p className="mt-0.5 line-clamp-2 text-[11px] leading-snug text-zinc-300">
+                {floodClock.narrativa}
+              </p>
+              <p className="mt-1 font-mono text-[10px] text-zinc-500">
                 {floodClock.max_depth_m != null ? `até ${floodClock.max_depth_m} m` : '—'}
                 {floodClock.flood_patches != null ? ` · ${floodClock.flood_patches} manchas` : ''}
-              </p>
-              {!floodClock.has_features && (
-                <p className="mt-1 text-[9px] text-amber-300">
-                  Frames da mancha indisponíveis — rode a simulação de novo.
-                </p>
-              )}
-              <p className="mt-1 text-[8px] leading-snug text-zinc-600">
-                Aproximação por hidrograma triangular (selo Derivado) — não é modelo hidrodinâmico 2D.
               </p>
             </div>
           )}
@@ -1074,7 +1107,15 @@ export default function PlatformApp({ initialTab }: PlatformAppProps) {
               </button>
               <button
                 type="button"
-                onClick={() => setMapMode('3d')}
+                onClick={() => {
+                  setMapMode('3d');
+                  // Cidade LOD1: ativa edificações e tira a malha que tapa os prédios
+                  setActiveLayers((prev) => {
+                    const next = prev.filter((id) => id !== 'bairros');
+                    if (!next.includes('edificacoes')) next.push('edificacoes');
+                    return next;
+                  });
+                }}
                 className={`flex items-center gap-1.5 rounded-lg border px-3 py-2 text-[10px] font-bold uppercase tracking-wider ${
                   mapMode === '3d'
                     ? 'border-teal-400/50 bg-teal-500/20 text-teal-200'
@@ -1159,6 +1200,8 @@ export default function PlatformApp({ initialTab }: PlatformAppProps) {
             simGeoJSON={simGeoJSON}
             simContours={simContours}
             simFlowPaths={simFlowPaths}
+            simImpassableRoads={simImpassableRoads}
+            simCriticalAssets={simCriticalAssets}
             simOverlays={simOverlays}
             contingencyOverlay={contingencyOverlay}
             showContingencyOnMap={showContingencyOnMap}
@@ -1179,6 +1222,8 @@ export default function PlatformApp({ initialTab }: PlatformAppProps) {
             simGeoJSON={simGeoJSON}
             simContours={simContours}
             simFlowPaths={simFlowPaths}
+            simImpassableRoads={simImpassableRoads}
+            simCriticalAssets={simCriticalAssets}
             simOverlays={simOverlays}
             contingencyOverlay={contingencyOverlay}
             showContingencyOnMap={showContingencyOnMap}
@@ -1201,6 +1246,8 @@ export default function PlatformApp({ initialTab }: PlatformAppProps) {
                   simGeoJSON={swipeMode === 'antes_depois' ? null : simGeoJSON}
                   simContours={swipeMode === 'antes_depois' ? null : simContours}
                   simFlowPaths={swipeMode === 'antes_depois' ? null : simFlowPaths}
+                  simImpassableRoads={swipeMode === 'antes_depois' ? null : simImpassableRoads}
+                  simCriticalAssets={swipeMode === 'antes_depois' ? null : simCriticalAssets}
                   simOverlays={simOverlays}
                   contingencyOverlay={contingencyOverlay}
                   showContingencyOnMap={showContingencyOnMap}
@@ -1222,6 +1269,8 @@ export default function PlatformApp({ initialTab }: PlatformAppProps) {
                     simGeoJSON={simGeoJSON}
                     simContours={simContours}
                     simFlowPaths={simFlowPaths}
+                    simImpassableRoads={simImpassableRoads}
+                    simCriticalAssets={simCriticalAssets}
                     simOverlays={simOverlays}
                     contingencyOverlay={contingencyOverlay}
                     showContingencyOnMap={showContingencyOnMap}
@@ -1238,6 +1287,8 @@ export default function PlatformApp({ initialTab }: PlatformAppProps) {
                     simGeoJSON={simGeoJSON}
                     simContours={simContours}
                     simFlowPaths={simFlowPaths}
+                    simImpassableRoads={simImpassableRoads}
+                    simCriticalAssets={simCriticalAssets}
                     simOverlays={simOverlays}
                     contingencyOverlay={contingencyOverlay}
                     showContingencyOnMap={showContingencyOnMap}
